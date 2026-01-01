@@ -177,6 +177,26 @@ print_header "Step 10: Vault Initialization"
 vault_initialize
 print_success "Vault fully configured"
 
+# CRITICAL: Update mira.service immediately if it exists
+# This ensures credentials are synced even if later migration phases fail
+if [ "$OS" = "linux" ] && [ -f /etc/systemd/system/mira.service ]; then
+    echo -ne "${DIM}${ARROW}${RESET} Syncing credentials to mira.service... "
+
+    # Read fresh credentials from files
+    NEW_ROLE_ID=$(cat /opt/vault/role-id.txt 2>/dev/null)
+    NEW_SECRET_ID=$(cat /opt/vault/secret-id.txt 2>/dev/null)
+
+    if [ -n "$NEW_ROLE_ID" ] && [ -n "$NEW_SECRET_ID" ]; then
+        # Update the Environment lines in the existing service file
+        sudo sed -i "s|^Environment=\"VAULT_ROLE_ID=.*\"|Environment=\"VAULT_ROLE_ID=$NEW_ROLE_ID\"|" /etc/systemd/system/mira.service
+        sudo sed -i "s|^Environment=\"VAULT_SECRET_ID=.*\"|Environment=\"VAULT_SECRET_ID=$NEW_SECRET_ID\"|" /etc/systemd/system/mira.service
+        sudo systemctl daemon-reload
+        echo -e "${CHECKMARK}"
+    else
+        echo -e "${WARNING} ${DIM}(credential files not ready)${RESET}"
+    fi
+fi
+
 print_header "Step 11: Auto-Unseal Configuration"
 
 echo -ne "${DIM}${ARROW}${RESET} Creating unseal script... "
