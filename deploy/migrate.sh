@@ -440,8 +440,12 @@ else
     # Restore PostgreSQL data
     restore_postgresql_data || exit 1
 
-    # Restore user data files
+    # Restore user data files (before migrate_user_ids so dirs exist)
     restore_user_data_files || exit 1
+
+    # Migrate user IDs (fresh installs create new UUIDs for same emails)
+    # Must run after restore_user_data_files to rename UUID directories
+    migrate_user_ids || exit 1
 
     print_success "Data restored"
 fi
@@ -545,6 +549,14 @@ else
     print_warning "After verifying everything works, delete the backup:"
     print_info "  sudo rm -rf $BACKUP_DIR"
     echo ""
+
+    # Flush Valkey cache (stale user/continuum IDs cause issues after migration)
+    echo -ne "${DIM}${ARROW}${RESET} Flushing Valkey cache... "
+    if valkey-cli FLUSHALL > /dev/null 2>&1; then
+        echo -e "${CHECKMARK}"
+    else
+        echo -e "${DIM}(skipped - valkey not running)${RESET}"
+    fi
 
     # Restart MIRA if it was running before migration
     if [ "$MIRA_WAS_RUNNING" = "yes" ]; then

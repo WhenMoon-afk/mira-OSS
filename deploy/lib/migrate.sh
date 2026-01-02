@@ -1503,6 +1503,63 @@ restore_vault_secrets() {
         return 1
     fi
 
+    # Apply key migrations for schema changes
+    migrate_vault_api_keys
+
+    return 0
+}
+
+# Migrate Vault API keys to handle schema renames between versions
+# This ensures old key names are mapped to new expected names
+migrate_vault_api_keys() {
+    echo -ne "${DIM}${ARROW}${RESET} Checking for API key migrations... "
+
+    local migrations_applied=0
+
+    # Get current api_keys as JSON
+    local current_keys
+    current_keys=$(vault kv get -format=json secret/mira/api_keys 2>/dev/null | jq -c '.data.data // {}' 2>/dev/null || echo "{}")
+
+    if [ "$current_keys" = "{}" ] || [ -z "$current_keys" ]; then
+        echo -e "${DIM}(no keys to migrate)${RESET}"
+        return 0
+    fi
+
+    # Define key migrations: old_name -> new_name
+    # Add new mappings here as schema evolves
+    local -a KEY_MIGRATIONS=(
+        "groq_key:provider_key"
+    )
+
+    for mapping in "${KEY_MIGRATIONS[@]}"; do
+        local old_key="${mapping%%:*}"
+        local new_key="${mapping##*:}"
+
+        # Check if new key is missing but old key exists
+        local has_old has_new
+        has_old=$(echo "$current_keys" | jq -r "has(\"$old_key\")" 2>/dev/null)
+        has_new=$(echo "$current_keys" | jq -r "has(\"$new_key\")" 2>/dev/null)
+
+        if [ "$has_old" = "true" ] && [ "$has_new" = "false" ]; then
+            # Copy old key value to new key name
+            local old_value
+            old_value=$(echo "$current_keys" | jq -r ".\"$old_key\"" 2>/dev/null)
+
+            if [ -n "$old_value" ] && [ "$old_value" != "null" ]; then
+                vault kv patch secret/mira/api_keys "${new_key}=${old_value}" > /dev/null 2>&1 && {
+                    migrations_applied=$((migrations_applied + 1))
+                    [ "$LOUD_MODE" = true ] && echo -e "\n${DIM}  Migrated: ${old_key} -> ${new_key}${RESET}"
+                }
+            fi
+        fi
+    done
+
+    if [ "$migrations_applied" -gt 0 ]; then
+        echo -e "${CHECKMARK} ${DIM}($migrations_applied key(s) migrated)${RESET}"
+    else
+        echo -e "${DIM}(none needed)${RESET}"
+    fi
+
     return 0
 }
 
@@ -1616,6 +1673,48 @@ restore_postgresql_data() {
             ;;
     esac
 
+    return 0
+}
+
+# Migrate user IDs after restore to handle UUID changes between installations
+# Fresh installs create new UUIDs for users even if email is the same
+migrate_user_ids() {
+    echo -ne "${DIM}${ARROW}${RESET} Checking for user ID migrations... "
+
+    local snapshot="${BACKUP_DIR}/db_snapshot.json"
+    [ ! -f "$snapshot" ] && { echo -e "${DIM}(no snapshot)${RESET}"; return 0; }
+
+    local user_data_dir="/opt/mira/app/data/users"
+
+    # For each old user, remap if UUID changed
+    jq -r '.structural_data.users[]? | "\(.id) \(.email)"' "$snapshot" 2>/dev/null | while read -r old_id old_email; do
+        [ -z "$old_id" ] || [ -z "$old_email" ] && continue
+
+        local new_id=$(run_psql "SELECT id FROM users WHERE email = '$old_email'" | tr -d ' ')
+        [ -z "$new_id" ] || [ "$old_id" = "$new_id" ] && continue
+
+        local orphans=$(run_psql "SELECT COUNT(*) FROM messages WHERE user_id = '$old_id'" | tr -d ' ')
+        [ "$orphans" = "0" ] && continue
+
+        [ "$LOUD_MODE" = true ] && echo -e "\n${DIM}  $old_email: $old_id -> $new_id${RESET}"
+
+        # Delete new continuum (unique constraint), then remap all old records
+        run_psql "DELETE FROM continuums WHERE user_id = '$new_id'" > /dev/null
+        for tbl in continuums messages memories entities api_tokens domain_knowledge_blocks user_activity_days; do
+            run_psql "UPDATE $tbl SET user_id = '$new_id' WHERE user_id = '$old_id'" > /dev/null
+        done
+
+        # Migrate user data files (SQLite) from old UUID dir to new UUID dir
+        local old_dir="${user_data_dir}/${old_id}"
+        local new_dir="${user_data_dir}/${new_id}"
+        if [ -d "$old_dir" ] && [ -d "$new_dir" ]; then
+            cp -a "$old_dir"/* "$new_dir"/ 2>/dev/null && rm -rf "$old_dir"
+            [ "$LOUD_MODE" = true ] && echo -e "${DIM}    Migrated user data files${RESET}"
+        fi
+    done
+
+    local remaining=$(run_psql "SELECT COUNT(*) FROM messages WHERE user_id NOT IN (SELECT id FROM users)" | tr -d ' ')
+    [ "$remaining" = "0" ] && echo -e "${CHECKMARK}" || echo -e "${WARNING} ${DIM}($remaining orphaned)${RESET}"
     return 0
 }
 
