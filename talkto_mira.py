@@ -6,9 +6,6 @@ Usage:
     python talkto_mira.py              # Interactive chat
     python talkto_mira.py --headless "message"  # One-shot query
     python talkto_mira.py --show-key   # Display API key for curl/API usage
-
-TODO: Consider adding `questionary` for arrow-key selection menus on /model and /think.
-      Works with Rich but has its own styling (prompt_toolkit-based).
 """
 
 import argparse
@@ -21,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 project_root = Path(__file__).parent
@@ -28,10 +26,9 @@ sys.path.insert(0, str(project_root))
 
 import requests
 from rich.console import Console
-from rich.panel import Panel
-from rich.align import Align
 from rich.text import Text
-
+from prompt_toolkit import PromptSession
+from prompt_toolkit.formatted_text import ANSI
 from clients.vault_client import get_api_key
 
 MIRA_API_URL = os.getenv("MIRA_API_URL", "http://localhost:1993")
@@ -75,34 +72,164 @@ def call_action(token: str, domain: str, action: str, data: dict = None) -> dict
         return {"success": False, "error": {"message": str(e)}}
 
 
+def fetch_history(token: str, limit: int = 20) -> list[dict]:
+    """Fetch recent message history from API."""
+    url = f"{MIRA_API_URL}/v0/api/data"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, params={"type": "history", "limit": limit}, timeout=10)
+        result = response.json()
+        if result.get("success"):
+            return result.get("data", {}).get("messages", [])
+        return []
+    except Exception:
+        return []  # Graceful degradation - empty history is acceptable
+
+
+def fetch_health(token: str) -> dict:
+    """Fetch system health from API."""
+    url = f"{MIRA_API_URL}/v0/api/health"
+    headers = {"Authorization": f"Bearer {token}"}
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        return response.json()
+    except Exception:
+        return {"data": {"status": "unknown"}}
+
+
+def fetch_memory_stats(token: str) -> tuple[int, bool]:
+    """Fetch memory count. Returns (count, has_more)."""
+    url = f"{MIRA_API_URL}/v0/api/data"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, params={"type": "memories", "limit": 100}, timeout=5)
+        result = response.json()
+        if result.get("success"):
+            meta = result.get("data", {}).get("meta", {})
+            return meta.get("total_returned", 0), meta.get("has_more", False)
+    except Exception:
+        pass
+    return 0, False
+
+
+def fetch_user_info(token: str) -> dict | None:
+    """Fetch user profile info."""
+    url = f"{MIRA_API_URL}/v0/api/data"
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    try:
+        response = requests.get(url, headers=headers, params={"type": "user"}, timeout=5)
+        result = response.json()
+        if result.get("success"):
+            return result.get("data", {})
+    except Exception:
+        pass
+    return None
+
+
+def fetch_segment_status(token: str) -> dict | None:
+    """Fetch segment timeout status via actions API."""
+    resp = call_action(token, "continuum", "get_segment_status", {})
+    if resp.get("success"):
+        return resp.get("data", {})
+    return None
+
+
+def format_time_remaining(collapse_at_iso: str) -> str:
+    """Format time remaining until collapse as human-readable string."""
+    from datetime import datetime, timezone
+    try:
+        collapse_at = datetime.fromisoformat(collapse_at_iso.replace('Z', '+00:00'))
+        now = datetime.now(timezone.utc)
+        remaining = collapse_at - now
+
+        total_seconds = int(remaining.total_seconds())
+        if total_seconds <= 0:
+            return "expired"
+
+        hours, remainder = divmod(total_seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+
+        if hours > 0:
+            return f"{hours}h {minutes}m"
+        return f"{minutes}m"
+    except Exception:
+        return "unknown"
+
+
+def load_recent_pairs(token: str, pair_count: int = 5) -> list[tuple[str, list[str], str]]:
+    """Load recent user/assistant message pairs for history display.
+
+    Fetches extra messages to account for tool messages, then extracts
+    the most recent N complete user→assistant pairs. Historical pairs
+    don't include tool call info (empty list) since we didn't see them live.
+    """
+    messages = fetch_history(token, limit=pair_count * 4)  # Newest-first
+
+    # Work backwards from newest: find assistant, then its preceding user message
+    pairs = []
+    i = 0
+    while i < len(messages) and len(pairs) < pair_count:
+        msg = messages[i]
+        if msg.get("role") == "assistant":
+            # Look backwards (older) for the user message that prompted this
+            for j in range(i + 1, len(messages)):
+                if messages[j].get("role") == "user":
+                    user_content = messages[j].get("content", "")
+                    assistant_content = msg.get("content", "")
+                    # Handle multimodal content (arrays)
+                    if isinstance(user_content, list):
+                        user_content = next((b.get("text", "") for b in user_content if b.get("type") == "text"), "[media]")
+                    if isinstance(assistant_content, list):
+                        assistant_content = next((b.get("text", "") for b in assistant_content if b.get("type") == "text"), "")
+                    pairs.append((user_content, [], strip_emotion_tag(assistant_content)))
+                    i = j + 1
+                    break
+            else:
+                i += 1
+        else:
+            i += 1
+
+    # Reverse to chronological order for display (oldest first)
+    pairs.reverse()
+    return pairs
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Preferences (LLM Tier System)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Tier definitions:
-# - fast: Haiku with quick thinking (1024 tokens)
-# - balanced: Sonnet with light reasoning (1024 tokens)
-# - nuanced: Opus with nuanced reasoning (8192 tokens)
-TIER_OPTIONS = ["fast", "balanced", "nuanced"]
-TIER_DESCRIPTIONS = {
-    "fast": "Haiku • Fast",
-    "balanced": "Sonnet • Balanced",
-    "nuanced": "Opus • Nuanced"
-}
+@dataclass
+class TierInfo:
+    """Tier information from API."""
+    name: str
+    model: str
+    description: str
+    accessible: bool
+    locked_message: str | None = None
 
 
-def get_tier(token: str) -> str:
-    """Get current LLM tier preference."""
+def get_tier_info(token: str) -> tuple[str, list[TierInfo]]:
+    """Get current tier and available tiers from API."""
     resp = call_action(token, "continuum", "get_llm_tier")
     if resp.get("success"):
-        return resp.get("tier", "balanced")
-    return "balanced"
+        data = resp.get("data", {})
+        current = data.get("tier", "balanced")
+        tiers = [
+            TierInfo(
+                name=t["name"],
+                model=t.get("model", t.get("description", t["name"])),
+                description=t.get("description", t["name"]),
+                accessible=t["accessible"],
+                locked_message=t.get("locked_message")
+            )
+            for t in data.get("available_tiers", [])
+        ]
+        return current, tiers
+    return "balanced", []
 
 
 def set_tier(token: str, tier: str) -> bool:
     """Set LLM tier preference."""
-    if tier not in TIER_OPTIONS:
-        return False
     resp = call_action(token, "continuum", "set_llm_tier", {"tier": tier})
     return resp.get("success", False)
 
@@ -246,25 +373,43 @@ def show_splashscreen(start_server: bool = False) -> bool:
 # Rendering
 # ─────────────────────────────────────────────────────────────────────────────
 
+def render_delimiter() -> None:
+    """Render a delimiter between message exchanges - dark grey ═══ line."""
+    console.print("═" * console.width, style="dim")
+
+
+def render_message(text: str, prefix: str, style: str) -> None:
+    """Render a message with colored prefix, left-aligned with proper continuation indent."""
+    lines = text.split('\n')
+    content = Text()
+    content.append(f"{prefix}: ", style=f"{style} bold")
+    content.append(lines[0])
+    indent = " " * (len(prefix) + 2)  # +2 for ": "
+    for line in lines[1:]:
+        content.append(f"\n{indent}{line}")
+    console.print(content)
+
+
 def render_user_message(text: str) -> None:
-    """Render a user message - cyan border, right-aligned."""
-    width = min(len(text) + 4, int(console.width * 0.6))
-    panel = Panel(text, border_style="cyan", width=max(width, 20), padding=(0, 1))
-    console.print(Align.right(panel))
+    """Render a user message - magenta YOU: prefix, left-aligned."""
+    render_message(text, "YOU", "magenta")
 
 
 def render_mira_message(text: str, is_error: bool = False) -> None:
-    """Render a MIRA message - magenta border, left-aligned."""
-    width = min(len(max(text.split('\n'), key=len)) + 4, int(console.width * 0.7))
-    style = "red" if is_error else "magenta"
-    panel = Panel(text, border_style=style, width=max(width, 20), padding=(0, 1))
-    console.print(panel)
+    """Render a MIRA message - green MIRA: prefix, left-aligned."""
+    render_message(text, "MIRA", "red" if is_error else "bright_green")
 
 
-def render_status_bar(tier: str, enabled_docs: list[str] = None) -> None:
-    """Render status bar with tier (always shown) and enabled domaindocs."""
-    # Always show tier in magenta (matches MIRA response color)
-    left_parts = [Text(f" {TIER_DESCRIPTIONS.get(tier, tier)}", style="magenta")]
+def render_tool_message(tool_name: str) -> None:
+    """Render a tool call indicator - cyan TOOL: prefix, left-aligned."""
+    render_message(f"⚙ {tool_name}", "TOOL", "cyan")
+
+
+def render_status_bar(tier: str, available_tiers: list[TierInfo], enabled_docs: list[str] = None) -> None:
+    """Render status bar with friendly tier name and enabled domaindocs."""
+    # Find friendly description for current tier from available_tiers
+    tier_display = next((t.description for t in available_tiers if t.name == tier), tier)
+    left_parts = [Text(f" {tier_display}", style="magenta")]
 
     # Add enabled domaindocs pipe-separated in bright yellow
     if enabled_docs:
@@ -281,8 +426,9 @@ def render_status_bar(tier: str, enabled_docs: list[str] = None) -> None:
 
 
 def render_screen(
-    history: list[tuple[str, str]],
+    history: list[tuple[str, list[str], str]],
     tier: str,
+    available_tiers: list[TierInfo],
     pending_user_msg: str = None,
     show_thinking: bool = False,
     enabled_docs: list[str] = None
@@ -304,14 +450,21 @@ def render_screen(
         console.print("\n" * blank_lines, end="")
 
     # Render history
-    for user_msg, mira_msg in history:
+    for i, (user_msg, tools_used, mira_msg) in enumerate(history):
         render_user_message(user_msg)
-        console.print()
+        for tool in tools_used:
+            render_tool_message(tool)
         render_mira_message(mira_msg)
-        console.print()
+        console.print()  # Blank line after MIRA's response
+        if i < len(history) - 1:
+            render_delimiter()
+            console.print()  # Blank line after delimiter
 
     # Render pending message (not yet in history)
     if pending_user_msg:
+        if history:
+            render_delimiter()
+            console.print()
         render_user_message(pending_user_msg)
         console.print()
 
@@ -321,7 +474,7 @@ def render_screen(
         console.print()
 
     # Status bar always last
-    render_status_bar(tier, enabled_docs)
+    render_status_bar(tier, available_tiers, enabled_docs)
 
 
 class ThinkingAnimation:
@@ -383,29 +536,65 @@ def render_thinking() -> None:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Input
+# ─────────────────────────────────────────────────────────────────────────────
+
+_prompt_session: PromptSession | None = None
+
+
+def get_user_input(prompt_text: str = "\x1b[36m>\x1b[0m ") -> str:
+    """Get user input with paste support and backslash line continuation.
+
+    Uses prompt_toolkit for robust terminal handling:
+    - Proper bracketed paste support (fixes macOS libedit issues)
+    - Backslash continuation: end line with \\ to continue on next line
+    - Command history preserved across prompts
+    """
+    global _prompt_session
+    if _prompt_session is None:
+        _prompt_session = PromptSession()
+
+    lines = []
+    current_prompt = prompt_text
+    continuation_prompt = "  "  # Indent for continuation lines
+
+    while True:
+        line = _prompt_session.prompt(ANSI(current_prompt))
+        if line.rstrip().endswith('\\'):
+            # Line continuation - remove trailing backslash, keep collecting
+            lines.append(line.rstrip()[:-1])
+            current_prompt = continuation_prompt
+        else:
+            lines.append(line)
+            break
+
+    return '\n'.join(lines).strip()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Chat Loop
 # ─────────────────────────────────────────────────────────────────────────────
 
 def chat_loop(token: str) -> None:
-    history: list[tuple[str, str]] = []
-    current_tier = get_tier(token)
+    history: list[tuple[str, list[str], str]] = load_recent_pairs(token, pair_count=5)
+    current_tier, available_tiers = get_tier_info(token)
     enabled_docs = get_enabled_domaindocs(token)
 
     # Mutable state for resize handler (closures capture by reference for mutables)
-    prefs = {'tier': current_tier, 'docs': enabled_docs}
+    prefs = {'tier': current_tier, 'tiers': available_tiers, 'docs': enabled_docs}
 
     def handle_resize(signum, frame):
-        render_screen(history, prefs['tier'], enabled_docs=prefs['docs'])
+        render_screen(history, prefs['tier'], prefs['tiers'], enabled_docs=prefs['docs'])
 
     # SIGWINCH is Unix-only (terminal window resize)
     if hasattr(signal, 'SIGWINCH'):
         signal.signal(signal.SIGWINCH, handle_resize)
 
-    render_screen(history, current_tier, enabled_docs=enabled_docs)
+    render_screen(history, current_tier, available_tiers, enabled_docs=enabled_docs)
 
     while True:
         try:
-            user_input = console.input("[cyan]>[/cyan] ").strip()
+            user_input = get_user_input()
         except (KeyboardInterrupt, EOFError):
             console.print("\n[dim]Goodbye![/dim]")
             break
@@ -425,40 +614,141 @@ def chat_loop(token: str) -> None:
 
             if cmd == "help":
                 console.print()
-                render_mira_message("/tier [fast|balanced|nuanced]\n/domaindoc list|create|enable|disable\n/status\n/clear\nquit, exit, bye")
+                render_mira_message("/tier [name] - view or change model tier\n/domaindoc list|create|enable|disable\n/collapse - end current conversation segment\n/status\n/clear\nquit, exit, bye")
                 console.print()
 
             elif cmd == "status":
-                current_tier = get_tier(token)
+                # Fetch all status data
+                health = fetch_health(token)
+                memory_count, has_more = fetch_memory_stats(token)
+                user_info = fetch_user_info(token)
+                segment_status = fetch_segment_status(token)
+                current_tier, available_tiers = get_tier_info(token)
                 prefs['tier'] = current_tier
-                tier_desc = TIER_DESCRIPTIONS.get(current_tier, current_tier)
+                prefs['tiers'] = available_tiers
+
+                # Find current tier details
+                tier_desc = next((t.description for t in available_tiers if t.name == current_tier), current_tier)
+
+                # Build status lines
+                lines = []
+
+                # System health
+                health_data = health.get("data", {})
+                system_status = health_data.get("status", "unknown")
+                db_latency = health_data.get("components", {}).get("database", {}).get("latency_ms")
+                latency_str = f" ({db_latency}ms)" if db_latency else ""
+                lines.append(f"System      {system_status}{latency_str}")
+
+                # Memory count - show "100+" if there are more
+                count_str = f"{memory_count}+" if has_more else str(memory_count)
+                lines.append(f"Memories    {count_str} stored")
+
+                # Segment timeout info
+                if segment_status:
+                    if segment_status.get("has_active_segment"):
+                        collapse_at = segment_status.get("collapse_at")
+                        if collapse_at:
+                            time_remaining = format_time_remaining(collapse_at)
+                            postponed = " (extended)" if segment_status.get("is_postponed") else ""
+                            lines.append(f"Segment     collapses in {time_remaining}{postponed}")
+                        else:
+                            lines.append("Segment     active")
+                    else:
+                        lines.append("Segment     collapsed")
+
+                lines.append("")  # Spacer
+
+                # Tier info
+                lines.append(f"Tier        {current_tier} ({tier_desc})")
+
+                lines.append("")  # Spacer
+
+                # User info
+                if user_info:
+                    profile = user_info.get("profile", {})
+                    user_prefs = user_info.get("preferences", {})
+                    if profile.get("email"):
+                        lines.append(f"User        {profile['email']}")
+                    if user_prefs.get("timezone"):
+                        lines.append(f"Timezone    {user_prefs['timezone']}")
+
                 console.print()
-                render_mira_message(f"Tier: {current_tier} ({tier_desc})")
+                render_mira_message("\n".join(lines))
                 console.print()
 
             elif cmd == "tier":
-                if arg and arg in TIER_OPTIONS:
-                    if set_tier(token, arg):
-                        current_tier = prefs['tier'] = arg
-                        render_screen(history, current_tier, enabled_docs=enabled_docs)
+                # Refresh tier info from API
+                current_tier, available_tiers = get_tier_info(token)
+                prefs['tier'] = current_tier
+                prefs['tiers'] = available_tiers
+                accessible_tiers = [t for t in available_tiers if t.accessible]
+                accessible_names = [t.name for t in accessible_tiers]
+
+                # Resolve arg to tier name (accept either tier name or model string)
+                resolved_tier = None
+                if arg:
+                    if arg in accessible_names:
+                        resolved_tier = arg
+                    else:
+                        # Check if arg matches a model string
+                        matched = next((t.name for t in accessible_tiers if t.model == arg), None)
+                        if matched:
+                            resolved_tier = matched
+
+                if resolved_tier:
+                    if set_tier(token, resolved_tier):
+                        current_tier = prefs['tier'] = resolved_tier
+                        render_screen(history, current_tier, available_tiers, enabled_docs=enabled_docs)
                     else:
                         console.print()
                         render_mira_message("Failed to set tier", is_error=True)
                         console.print()
                 elif arg:
-                    console.print()
-                    render_mira_message("Options: fast, balanced, nuanced", is_error=True)
-                    console.print()
+                    # Check if tier exists but is locked
+                    locked_tier = next((t for t in available_tiers if (t.name == arg or t.model == arg) and not t.accessible), None)
+                    if locked_tier and locked_tier.locked_message:
+                        console.print()
+                        render_mira_message(f"Tier '{arg}' is locked: {locked_tier.locked_message}", is_error=True)
+                        console.print()
+                    else:
+                        options = ", ".join(accessible_names)
+                        console.print()
+                        render_mira_message(f"Options: {options}", is_error=True)
+                        console.print()
                 else:
-                    tier_desc = TIER_DESCRIPTIONS.get(current_tier, current_tier)
-                    tier_list = "\n".join([f"  {t}: {TIER_DESCRIPTIONS[t]}" for t in TIER_OPTIONS])
+                    # Show current tier and available options with model names
+                    current_model = next((t.model for t in available_tiers if t.name == current_tier), current_tier)
+                    tier_lines = [f"Current: {current_tier} ({current_model})", ""]
+                    for t in available_tiers:
+                        if t.accessible:
+                            marker = "→" if t.name == current_tier else " "
+                            tier_lines.append(f"  {marker} {t.name}: {t.model}")
+                    tier_lines.append("")
+                    tier_lines.append("Use /tier <name> to switch")
                     console.print()
-                    render_mira_message(f"Current: {current_tier} ({tier_desc})\n\nOptions:\n{tier_list}")
+                    render_mira_message("\n".join(tier_lines))
                     console.print()
 
             elif cmd == "clear":
                 history.clear()
-                render_screen(history, current_tier, enabled_docs=enabled_docs)
+                render_screen(history, current_tier, available_tiers, enabled_docs=enabled_docs)
+
+            elif cmd == "collapse":
+                resp = call_action(token, "continuum", "collapse_segment", {})
+                if resp.get("collapsed"):
+                    collapse_msg = (
+                        "The previous conversation segment has been collapsed. "
+                        "Feel free to continue in a new direction or come back later. "
+                        "MIRA will be ready when you return."
+                    )
+                    history.append(("/collapse", [], collapse_msg))
+                    render_screen(history, current_tier, available_tiers, enabled_docs=enabled_docs)
+                else:
+                    error_msg = resp.get("error", {}).get("message", "No active segment to collapse")
+                    console.print()
+                    render_mira_message(f"Failed to collapse segment: {error_msg}", is_error=True)
+                    console.print()
 
             elif cmd == "domaindoc":
                 # Get original (non-lowercased) arg for create description
@@ -528,7 +818,7 @@ def chat_loop(token: str) -> None:
                         if resp.get("success"):
                             enabled_docs = get_enabled_domaindocs(token)
                             prefs['docs'] = enabled_docs
-                            render_screen(history, current_tier, enabled_docs=enabled_docs)
+                            render_screen(history, current_tier, available_tiers, enabled_docs=enabled_docs)
                         else:
                             console.print()
                             render_mira_message(f"Error: {resp.get('error', {}).get('message', 'Unknown')}", is_error=True)
@@ -545,7 +835,7 @@ def chat_loop(token: str) -> None:
                     if resp.get("success"):
                         enabled_docs = get_enabled_domaindocs(token)
                         prefs['docs'] = enabled_docs
-                        render_screen(history, current_tier, enabled_docs=enabled_docs)
+                        render_screen(history, current_tier, available_tiers, enabled_docs=enabled_docs)
                     else:
                         console.print()
                         render_mira_message(f"Error: {resp.get('error', {}).get('message', 'Unknown')}", is_error=True)
@@ -566,20 +856,22 @@ def chat_loop(token: str) -> None:
         # Regular message - show thinking animation
         # Note: Don't use show_thinking=True here - the animation handles its own rendering
         # Using both creates duplicate indicators (one static above status bar, one animated below)
-        render_screen(history, current_tier, pending_user_msg=user_input, show_thinking=False, enabled_docs=enabled_docs)
+        render_screen(history, current_tier, available_tiers, pending_user_msg=user_input, show_thinking=False, enabled_docs=enabled_docs)
         _thinking_animation.start()
 
         result = send_message(token, user_input)
         _thinking_animation.stop()
 
         if result.get("success"):
-            response = strip_emotion_tag(result.get("data", {}).get("response", ""))
-            history.append((user_input, response))
+            data = result.get("data", {})
+            response = strip_emotion_tag(data.get("response", ""))
+            tools_used = data.get("metadata", {}).get("tools_used", [])
+            history.append((user_input, tools_used, response))
         else:
             error = result.get("error", {}).get("message", "Unknown error")
-            history.append((user_input, f"Error: {error}"))
+            history.append((user_input, [], f"Error: {error}"))
 
-        render_screen(history, current_tier, enabled_docs=enabled_docs)
+        render_screen(history, current_tier, available_tiers, enabled_docs=enabled_docs)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

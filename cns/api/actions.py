@@ -1560,6 +1560,7 @@ class ContinuumDomainHandler(BaseDomainHandler):
                 if is_accessible or tier.show_locked:
                     tier_list.append({
                         "name": tier.name,
+                        "model": tier.model,
                         "description": tier.description,
                         "accessible": is_accessible,
                         "locked_message": tier.locked_message if not is_accessible else None
