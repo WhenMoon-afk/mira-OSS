@@ -76,12 +76,20 @@ elif [ "$OS" = "linux" ] && [ "$DISTRO" = "fedora" ]; then
     # Disable built-in PostgreSQL module to avoid conflicts
     run_quiet sudo dnf -qy module disable postgresql || true
 
+    # Determine correct development tools group name
+    # Fedora uses "development-tools", RHEL/Rocky/Alma use "Development Tools"
+    if [ -f /etc/fedora-release ]; then
+        DEV_TOOLS_GROUP="@development-tools"
+    else
+        DEV_TOOLS_GROUP="@Development Tools"
+    fi
+
     if [ "$LOUD_MODE" = true ]; then
         print_step "Updating package lists..."
         sudo dnf makecache
         print_step "Installing system packages..."
         sudo dnf install -y \
-            @development-tools \
+            "$DEV_TOOLS_GROUP" \
             python3-devel \
             python3-pip \
             libpq-devel \
@@ -103,7 +111,7 @@ elif [ "$OS" = "linux" ] && [ "$DISTRO" = "fedora" ]; then
         show_progress $! "Updating package lists"
 
         (sudo dnf install -y \
-            @development-tools python3-devel python3-pip libpq-devel \
+            "$DEV_TOOLS_GROUP" python3-devel python3-pip libpq-devel \
             postgresql17-server postgresql17-contrib postgresql17-devel pgvector_17 \
             unzip wget curl valkey \
             atk at-spi2-atk at-spi2-core libXcomposite > /dev/null 2>&1) &
@@ -178,6 +186,22 @@ elif [ "$OS" = "macos" ]; then
     fi
 
     print_info "Playwright will install its own browser dependencies"
+elif [ "$OS" = "linux" ]; then
+    # Unsupported Linux distribution
+    print_error "Unsupported Linux distribution: $DISTRO"
+    print_info "Supported distributions:"
+    print_info "  - Debian/Ubuntu and derivatives (apt)"
+    print_info "  - Fedora/RHEL/Rocky/Alma/CentOS (dnf)"
+    print_info ""
+    print_info "For other distributions, install these dependencies manually:"
+    print_info "  - Python 3.12+ with venv and dev headers"
+    print_info "  - PostgreSQL 17 with pgvector extension"
+    print_info "  - Valkey (Redis-compatible)"
+    print_info "  - Build tools (gcc, make, etc.)"
+    print_info "  - libpq development headers"
+    print_info ""
+    print_info "Then re-run with: DISTRO=debian ./deploy.sh (to skip package install)"
+    exit 1
 fi
 
 print_success "System dependencies installed"
