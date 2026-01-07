@@ -9,7 +9,11 @@
 
 # Validate required variables
 : "${OS:?Error: OS must be set}"
-: "${DISTRO:?Error: DISTRO must be set (can be empty for macOS)}"
+# DISTRO can be empty for macOS, so just check if variable exists
+if [ -z "${DISTRO+x}" ]; then
+    echo "Error: DISTRO variable must be set (can be empty string for macOS)"
+    exit 1
+fi
 
 print_header "Step 1: System Dependencies"
 
