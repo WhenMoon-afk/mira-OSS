@@ -165,7 +165,19 @@ elif [ "$OS" = "macos" ]; then
     echo -e "${CHECKMARK}"
 
     # Detect Python version to use (newest available, 3.12+ required)
-    PYTHON_VER=$(python3 --version 2>&1 | sed -n 's/Python \([0-9]*\.[0-9]*\).*/\1/p')
+    # Check for Python 3.12+ in descending order of preference
+    PYTHON_VER=""
+    for ver in 3.14 3.13 3.12; do
+        if command -v python${ver} &> /dev/null; then
+            PYTHON_VER="${ver}"
+            break
+        fi
+    done
+    
+    # If no suitable version found, default to 3.12 for installation
+    if [ -z "$PYTHON_VER" ]; then
+        PYTHON_VER="3.12"
+    fi
 
     if [ "$LOUD_MODE" = true ]; then
         print_step "Updating Homebrew..."

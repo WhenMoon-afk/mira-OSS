@@ -23,9 +23,7 @@ if [ "$OS" = "linux" ]; then
     fi
     PYTHON_CMD="python${PYTHON_VER}"
 elif [ "$OS" = "macos" ]; then
-    # Detect macOS Python version
-    PYTHON_VER=$(python3 --version 2>&1 | sed -n 's/Python \([0-9]*\.[0-9]*\).*/\1/p')
-
+    # PYTHON_VER already set by dependencies.sh to 3.12+ version
     # Check common Homebrew locations
     if command -v python${PYTHON_VER} &> /dev/null; then
         PYTHON_CMD="python${PYTHON_VER}"
@@ -42,6 +40,15 @@ fi
 
 PYTHON_VERSION=$($PYTHON_CMD --version 2>&1 | awk '{print $2}')
 echo -e "${CHECKMARK} ${DIM}$PYTHON_VERSION${RESET}"
+
+# Validate Python version is 3.12 or higher
+PYTHON_MAJOR=$(echo "$PYTHON_VERSION" | cut -d. -f1)
+PYTHON_MINOR=$(echo "$PYTHON_VERSION" | cut -d. -f2)
+if [ "$PYTHON_MAJOR" -lt 3 ] || { [ "$PYTHON_MAJOR" -eq 3 ] && [ "$PYTHON_MINOR" -lt 12 ]; }; then
+    print_error "MIRA requires Python 3.12 or higher. Found: $PYTHON_VERSION"
+    print_info "Please install Python 3.12+ and re-run the deployment script."
+    exit 1
+fi
 
 print_header "Step 3: MIRA Download & Installation"
 
