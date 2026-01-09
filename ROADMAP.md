@@ -2,6 +2,13 @@
 
 This document outlines planned development for MIRA. If you're interested in contributing, look for issues tagged with `help wanted` or `good first issue`.
 
+## Want to Pitch In? Here are tasks that could be done and PR'd:
+- Import/Export API endpoint that collects messages and memories and puts them in a file that can be imported. Put them on the /actions endpoint. 
+- Identify dead code and include a reference to a grep that it is truly orphaned in the PR
+- OpenWebUI integration. the hosted version has the bespoke UI but some basic web UI would help lower the barrier to entry for new users
+- ADVANCED: writing tests. lord, if you can work through the directories writing pytests with strong precise assertations I will be forever grateful. 
+
+
 ## Q1 2025
 
 ### January: Codebase Cleanup
