@@ -114,16 +114,30 @@ if [ "$CONFIG_OFFLINE_MODE" = "yes" ]; then
         sed -i '' "s|'qwen/qwen3-32b'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
         sed -i '' "s|'moonshotai/kimi-k2-instruct-0905'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
         sed -i '' "s|, 'provider_key')|, NULL)|g" /opt/mira/app/deploy/mira_service_schema.sql
-        # Patch database schema - internal_llm for offline mode
+        # Patch database schema - internal_llm for offline mode (analysis)
         sed -i '' "s|'openai/gpt-oss-20b'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
+        # Patch database schema - internal_llm for offline mode (summary)
+        sed -i '' "s|'claude-haiku-4-5'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
+        sed -i '' "s|https://api.anthropic.com/v1/messages|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
+        sed -i '' "s|, 'anthropic_key',|, NULL,|g" /opt/mira/app/deploy/mira_service_schema.sql
+        # Patch database schema - internal_llm for offline mode (injection_defense)
+        sed -i '' "s|'meta-llama/llama-3.1-8b-instruct'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
+        sed -i '' "s|https://openrouter.ai/api/v1/chat/completions|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
     else
         # Patch database schema - account_tiers for offline mode (endpoint, model, api_key)
         sed -i "s|https://api.groq.com/openai/v1/chat/completions|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
         sed -i "s|'qwen/qwen3-32b'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
         sed -i "s|'moonshotai/kimi-k2-instruct-0905'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
         sed -i "s|, 'provider_key')|, NULL)|g" /opt/mira/app/deploy/mira_service_schema.sql
-        # Patch database schema - internal_llm for offline mode
+        # Patch database schema - internal_llm for offline mode (analysis)
         sed -i "s|'openai/gpt-oss-20b'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
+        # Patch database schema - internal_llm for offline mode (summary)
+        sed -i "s|'claude-haiku-4-5'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
+        sed -i "s|https://api.anthropic.com/v1/messages|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
+        sed -i "s|, 'anthropic_key',|, NULL,|g" /opt/mira/app/deploy/mira_service_schema.sql
+        # Patch database schema - internal_llm for offline mode (injection_defense)
+        sed -i "s|'meta-llama/llama-3.1-8b-instruct'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
+        sed -i "s|https://openrouter.ai/api/v1/chat/completions|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
     fi
     echo -e "${CHECKMARK}"
 

@@ -13,7 +13,7 @@ from pathlib import Path
 from cns.core.message import Message
 from cns.core.continuum import Continuum
 from cns.infrastructure.continuum_repository import ContinuumRepository
-from clients.llm_provider import LLMProvider
+from clients.llm_provider import LLMProvider, ContextOverflowError
 from utils.timezone_utils import utc_now
 from utils.tag_parser import TagParser
 from config.config_manager import config
@@ -59,20 +59,27 @@ class SummaryGenerator:
             llm_provider: Optional LLM provider (creates default if not provided)
         """
         self.repository = repository
-        self.llm_provider = llm_provider or self._create_default_llm()
+
+        # Load internal_llm config for summary generation
+        from utils.user_context import get_internal_llm
+        from clients.vault_client import get_api_key
+
+        self._llm_config = get_internal_llm('summary')
+
+        # Get API key (None for local providers like Ollama)
+        if self._llm_config.api_key_name:
+            self._api_key = get_api_key(self._llm_config.api_key_name)
+            if not self._api_key:
+                raise ValueError(f"API key '{self._llm_config.api_key_name}' not found in Vault")
+        else:
+            self._api_key = None
+
+        logger.info(f"SummaryGenerator initialized: {self._llm_config.model} @ {self._llm_config.endpoint_url}")
+
+        # Use provided LLM or create default (routing via per-call overrides)
+        self.llm_provider = llm_provider or LLMProvider(enable_prompt_caching=False)
         self.tag_parser = TagParser()
         self._load_prompts()
-        
-    def _create_default_llm(self) -> LLMProvider:
-        """Create default LLM provider for summary generation."""
-        from utils.user_context import get_internal_llm
-        summary_config = get_internal_llm('summary')
-        return LLMProvider(
-            model=summary_config.model,
-            temperature=1.0,
-            max_tokens=1000,  # Sufficient for rich summaries without extended thinking
-            enable_prompt_caching=False  # No caching needed for one-shot summaries
-        )
 
     def _load_prompts(self):
         """Load prompts from files."""
@@ -99,6 +106,17 @@ class SummaryGenerator:
                 temperature=1.0  # Higher temp for natural, varied summaries
             )
         }
+
+        # Load synthesis prompts (for merging chunk summaries of oversized segments)
+        # Optional at init - will fail at runtime if chunking needed but prompts missing
+        synthesis_system_path = prompts_dir / "synthesis_summary_system.txt"
+        synthesis_user_path = prompts_dir / "synthesis_summary_user.txt"
+        if synthesis_system_path.exists() and synthesis_user_path.exists():
+            self._synthesis_system_prompt = synthesis_system_path.read_text().strip()
+            self._synthesis_user_template = synthesis_user_path.read_text().strip()
+        else:
+            self._synthesis_system_prompt = None
+            self._synthesis_user_template = None
     
     def generate_summary(self,
                              messages: Optional[List[Message]],
@@ -121,34 +139,37 @@ class SummaryGenerator:
         Raises:
             ValueError: If summary generation fails
         """
-        try:
-            # Get prompt configuration
-            if summary_type in self.PROMPTS:
-                prompt_config = self.PROMPTS[summary_type]
-            else:
-                raise ValueError(f"No prompt defined for {summary_type}")
-            
-            # Prepare prompt based on summary type
-            if content_override:
-                # Use pre-formatted content (e.g., for coalescence)
-                prompt_text = prompt_config.format(conversation_text=content_override)
-            else:
-                prompt_text = self._prepare_prompt(messages, summary_type, prompt_config, tools_used)
-            
-            # Format system prompt with segment timestamp
-            segment_time = self._get_segment_time(messages)
-            formatted_system_prompt = prompt_config.system_prompt.format(
-                current_time=segment_time
-            )
-            
-            # Generate summary via LLM with system/user messages
-            llm_messages = [
-                {"role": "system", "content": formatted_system_prompt},
-                {"role": "user", "content": prompt_text}
-            ]
+        # Get prompt configuration
+        if summary_type in self.PROMPTS:
+            prompt_config = self.PROMPTS[summary_type]
+        else:
+            raise ValueError(f"No prompt defined for {summary_type}")
 
+        # Prepare prompt based on summary type
+        if content_override:
+            # Use pre-formatted content (e.g., for coalescence)
+            prompt_text = prompt_config.format(conversation_text=content_override)
+        else:
+            prompt_text = self._prepare_prompt(messages, summary_type, prompt_config, tools_used)
+
+        # Format system prompt with segment timestamp
+        segment_time = self._get_segment_time(messages)
+        formatted_system_prompt = prompt_config.system_prompt.format(
+            current_time=segment_time
+        )
+
+        # Generate summary via LLM with system/user messages
+        llm_messages = [
+            {"role": "system", "content": formatted_system_prompt},
+            {"role": "user", "content": prompt_text}
+        ]
+
+        try:
             response = self.llm_provider.generate_response(
                 messages=llm_messages,
+                endpoint_url=self._llm_config.endpoint_url,
+                model_override=self._llm_config.model,
+                api_key_override=self._api_key,
                 temperature=prompt_config.temperature,
                 max_tokens=prompt_config.max_tokens,
                 thinking_enabled=False  # Disable extended thinking for summaries
@@ -165,6 +186,20 @@ class SummaryGenerator:
             )
 
             return synopsis.strip(), display_title, complexity
+
+        except ContextOverflowError:
+            # Segment too large for single pass - use hierarchical summarization
+            if messages and summary_type == SummaryType.SEGMENT:
+                logger.info("Segment exceeded context limit, falling back to chunked summarization")
+                try:
+                    return self._generate_chunked_summary(messages, tools_used)
+                except Exception as e:
+                    logger.error(f"Chunked summarization also failed: {e}")
+                    return "[Segment content not summarized]", "Large segment archived", 1
+            else:
+                # Non-segment summaries can't be chunked
+                raise
+
         except Exception as e:
             logger.error(f"Failed to generate {summary_type.value}: {str(e)}")
             raise ValueError(f"Summary generation failed: {str(e)}") from e
@@ -190,7 +225,7 @@ class SummaryGenerator:
         return prompt_config.format(conversation_text=conversation_text)
     
     def _format_messages_for_llm(self, messages: List[Message]) -> str:
-        """Format messages into readable continuum text."""
+        """Format messages into readable continuum text, stripping binary/media content."""
         formatted_lines = []
 
         for msg in messages:
@@ -200,6 +235,34 @@ class SummaryGenerator:
 
             role_label = msg.role.upper()
             content = msg.content
+
+            # Handle structured content (multimodal messages with images, tool calls, etc.)
+            if isinstance(content, list):
+                text_parts = []
+                media_count = 0
+                for block in content:
+                    if isinstance(block, dict):
+                        block_type = block.get('type', '')
+                        if block_type == 'text':
+                            text_parts.append(block.get('text', ''))
+                        elif block_type in ('image', 'image_url', 'container_upload'):
+                            media_count += 1
+                        elif block_type == 'tool_use':
+                            text_parts.append(f"[Used tool: {block.get('name', 'unknown')}]")
+                        elif block_type == 'tool_result':
+                            # Summarize tool result briefly
+                            result = block.get('content', '')
+                            if isinstance(result, str) and len(result) > 200:
+                                result = result[:200] + '...'
+                            text_parts.append(f"[Tool result: {result}]")
+
+                # Combine text parts, note if media was present
+                content = ' '.join(text_parts)
+                if media_count > 0:
+                    content = f"[{media_count} image(s) shared] {content}".strip()
+                if not content:
+                    content = f"[{media_count} image(s) shared, no text]"
+
             formatted_lines.append(f"{role_label}: {content}")
 
         return "\n\n".join(formatted_lines)
@@ -230,16 +293,14 @@ class SummaryGenerator:
         synopsis = parsed.get('clean_text', summary_output).strip()
         complexity = parsed.get('complexity')
 
-        # Missing display_title indicates LLM instruction-following failure
+        # Missing display_title indicates LLM refused or failed to follow instructions
+        # Autocollapse with tombstone instead of retrying forever
         if not display_title:
-            logger.error(
-                f"LLM failed to generate <mira:display_title> tag. "
+            logger.warning(
+                f"LLM did not generate <mira:display_title> tag - autocollapsing with tombstone. "
                 f"Output (first 200 chars): {summary_output[:200]}"
             )
-            raise ValueError(
-                "Summary generation failed: LLM did not include required <mira:display_title> tag. "
-                "This indicates instruction-following failure."
-            )
+            return "[Segment content not summarized]", "Archived segment", 1
 
         # Default complexity to 2 (moderate) if missing or invalid
         if complexity is None or complexity not in [1, 2, 3]:
@@ -268,3 +329,99 @@ class SummaryGenerator:
         else:
             # Fallback to current time if no messages
             return utc_now().strftime("%B %d, %Y")
+
+    # --- Hierarchical summarization for oversized segments ---
+
+    # Target ~50k tokens per chunk, estimate 4 chars/token
+    _CHUNK_TARGET_CHARS = 200000
+
+    def _chunk_messages(self, messages: List[Message]) -> List[List[Message]]:
+        """Split messages into chunks of ~50k tokens each."""
+        chunks: List[List[Message]] = []
+        current_chunk: List[Message] = []
+        current_chars = 0
+
+        for msg in messages:
+            msg_chars = len(str(msg.content))
+            if current_chars + msg_chars > self._CHUNK_TARGET_CHARS and current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = [msg]
+                current_chars = msg_chars
+            else:
+                current_chunk.append(msg)
+                current_chars += msg_chars
+
+        if current_chunk:
+            chunks.append(current_chunk)
+
+        return chunks
+
+    def _summarize_chunk(self, messages: List[Message], tools_used: Optional[List[str]] = None) -> Tuple[str, str, int]:
+        """Generate summary for a single chunk using standard segment prompts."""
+        prompt_config = self.PROMPTS[SummaryType.SEGMENT]
+        prompt_text = self._prepare_prompt(messages, SummaryType.SEGMENT, prompt_config, tools_used)
+
+        segment_time = self._get_segment_time(messages)
+        formatted_system_prompt = prompt_config.system_prompt.format(current_time=segment_time)
+
+        response = self.llm_provider.generate_response(
+            messages=[
+                {"role": "system", "content": formatted_system_prompt},
+                {"role": "user", "content": prompt_text}
+            ],
+            endpoint_url=self._llm_config.endpoint_url,
+            model_override=self._llm_config.model,
+            api_key_override=self._api_key,
+            temperature=prompt_config.temperature,
+            max_tokens=prompt_config.max_tokens,
+            thinking_enabled=False
+        )
+
+        raw_output = self.llm_provider.extract_text_content(response)
+        return self._extract_summary_components(raw_output)
+
+    def _synthesize_chunk_summaries(self, chunk_summaries: List[str], tools_used: Optional[List[str]]) -> Tuple[str, str, int]:
+        """Combine chunk summaries into final synopsis + display_title + complexity."""
+        if not self._synthesis_system_prompt or not self._synthesis_user_template:
+            raise RuntimeError("Synthesis prompts not found - cannot merge chunk summaries")
+
+        combined_text = "\n\n---\n\n".join(
+            f"**Part {i+1}:**\n{summary}"
+            for i, summary in enumerate(chunk_summaries)
+        )
+        tools_text = "None" if not tools_used else ", ".join(tools_used)
+
+        user_prompt = self._synthesis_user_template.format(
+            chunk_summaries=combined_text,
+            tools_used=tools_text
+        )
+
+        response = self.llm_provider.generate_response(
+            messages=[
+                {"role": "system", "content": self._synthesis_system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            endpoint_url=self._llm_config.endpoint_url,
+            model_override=self._llm_config.model,
+            api_key_override=self._api_key,
+            temperature=1.0,
+            max_tokens=600,
+            thinking_enabled=False
+        )
+
+        raw_output = self.llm_provider.extract_text_content(response)
+        return self._extract_summary_components(raw_output)
+
+    def _generate_chunked_summary(self, messages: List[Message], tools_used: Optional[List[str]]) -> Tuple[str, str, int]:
+        """Hierarchical summarization for oversized segments."""
+        chunks = self._chunk_messages(messages)
+        logger.info(f"Split into {len(chunks)} chunks for hierarchical summarization")
+
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            logger.debug(f"Summarizing chunk {i+1}/{len(chunks)}")
+            synopsis, display_title, complexity = self._summarize_chunk(chunk, tools_used)
+            # Use just the synopsis text for synthesis (ignore per-chunk title/complexity)
+            chunk_summaries.append(synopsis)
+
+        return self._synthesize_chunk_summaries(chunk_summaries, tools_used)
