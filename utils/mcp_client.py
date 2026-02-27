@@ -4,19 +4,19 @@ This module provides MIRA-integrated wrappers for the MCP SDK with built-in auth
 
 Usage:
     from utils import mcp_client
-    
+
     # Create user-scoped client
     async with mcp_client.create_session("square", "https://mcp.squareup.com/sse") as session:
         tools = await session.list_tools()
         result = await session.call_tool("create_customer", params)
-    
+
     # Or use convenience functions
     result = await mcp_client.call_tool("square", "create_customer", params)
 """
 
 import logging
 import asyncio
-from typing import Dict, Any, Optional, List, Union, AsyncIterator
+from typing import Any, Callable, Dict, Optional, List, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import time
@@ -30,7 +30,7 @@ except ImportError:  # pragma: no cover - Python < 3.11
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
-from mcp.types import Tool, Resource, CallToolResult
+from mcp.types import Tool, Resource, CallToolResult, ReadResourceResult
 
 from utils.user_context import get_current_user_id
 from utils.user_credentials import UserCredentialService
@@ -110,7 +110,6 @@ class MCPServerConfig:
     transport: str = "sse"  # "sse", "stdio"
     command: Optional[List[str]] = None  # For stdio transport
     oauth_client_id: Optional[str] = None
-    oauth_client_secret: Optional[str] = None
     custom_headers: Optional[Dict[str, str]] = None
 
 
@@ -143,7 +142,7 @@ class MCPConnection:
     """
     Manages a single MCP connection with retry logic and credential handling.
     """
-    
+
     def __init__(self, server_config: MCPServerConfig, user_id: str):
         self.config = server_config
         self.user_id = user_id
@@ -154,18 +153,18 @@ class MCPConnection:
         self._read = None
         self._write = None
         self._transport_context = None
-        
+        self._session_context = None  # Tracks if we entered ClientSession context
+
     async def connect(self) -> ClientSession:
         """Establish connection to MCP server with authentication."""
         if self.session:
             return self.session
-            
+
         try:
             # Get OAuth token if needed
             headers = dict(self.config.custom_headers or {})
             if self.config.oauth_client_id:
                 token = self.credential_service.get_credential(
-                    self.user_id,
                     "oauth_token",
                     self.config.name
                 )
@@ -175,21 +174,25 @@ class MCPConnection:
                         f"Please authenticate first."
                     )
                 headers["Authorization"] = f"Bearer {token}"
-            
+
             # Create appropriate transport
             if self.config.transport == "sse":
                 if not self.config.url:
                     raise ValueError(f"SSE transport requires URL for {self.config.name}")
-                
+
                 self._transport_context = sse_client(self.config.url, headers=headers)
                 self._read, self._write = await self._enter_transport_context()
                 self.session = ClientSession(self._read, self._write)
+                # CRITICAL: ClientSession must be entered as async context manager
+                # to start _receive_loop which dispatches responses to waiting requests
+                self._session_context = self.session
+                await self._session_context.__aenter__()
                 await self.session.initialize()
-                    
+
             elif self.config.transport == "stdio":
                 if not self.config.command:
                     raise ValueError(f"Stdio transport requires command for {self.config.name}")
-                    
+
                 server_params = StdioServerParameters(
                     command=self.config.command[0],
                     args=self.config.command[1:] if len(self.config.command) > 1 else []
@@ -197,14 +200,18 @@ class MCPConnection:
                 self._transport_context = stdio_client(server_params)
                 self._read, self._write = await self._enter_transport_context()
                 self.session = ClientSession(self._read, self._write)
+                # CRITICAL: ClientSession must be entered as async context manager
+                # to start _receive_loop which dispatches responses to waiting requests
+                self._session_context = self.session
+                await self._session_context.__aenter__()
                 await self.session.initialize()
-                    
+
             else:
                 raise ValueError(f"Unsupported transport: {self.config.transport}")
-                
+
             logger.info(f"Connected to MCP server: {self.config.name}")
             return self.session
-            
+
         except Exception as e:
             root_exc = _unwrap_exception(e)
             try:
@@ -230,9 +237,17 @@ class MCPConnection:
                 raise MCPError(
                     f"Failed to connect to {self.config.name}: {message}"
                 ) from root_exc
-    
+
     async def disconnect(self):
         """Close the MCP connection."""
+        # First exit the ClientSession context (stops _receive_loop)
+        if self._session_context:
+            try:
+                await self._session_context.__aexit__(None, None, None)
+            except Exception as e:
+                logger.warning(f"Error exiting session context for {self.config.name}: {e}")
+            finally:
+                self._session_context = None
         if self.session:
             try:
                 if hasattr(self.session, 'close'):
@@ -252,39 +267,41 @@ class MCPConnection:
                 logger.warning(f"Error closing transport for {self.config.name}: {e}")
             finally:
                 self._transport_context = None
-    
+
     async def list_tools(self, use_cache: bool = True) -> List[Tool]:
         """List available tools from the MCP server."""
         if use_cache and self._tools_cache is not None:
             return self._tools_cache
-            
+
         session = await self.connect()
-        tools = await session.list_tools()
-        self._tools_cache = tools
-        return tools
-    
+        result = await session.list_tools()
+        # MCP SDK returns ListToolsResult with .tools attribute
+        self._tools_cache = result.tools
+        return self._tools_cache
+
     async def call_tool(self, name: str, arguments: Dict[str, Any]) -> CallToolResult:
         """Call a tool on the MCP server."""
         session = await self.connect()
-        
+
         # Verify tool exists
         tools = await self.list_tools()
         if not any(t.name == name for t in tools):
             raise MCPToolNotFoundError(f"Tool '{name}' not found on {self.config.name}")
-            
+
         return await session.call_tool(name, arguments)
-    
+
     async def list_resources(self, use_cache: bool = True) -> List[Resource]:
         """List available resources from the MCP server."""
         if use_cache and self._resources_cache is not None:
             return self._resources_cache
-            
+
         session = await self.connect()
-        resources = await session.list_resources()
-        self._resources_cache = resources
-        return resources
-    
-    async def get_resource(self, uri: str) -> Any:
+        result = await session.list_resources()
+        # MCP SDK returns ListResourcesResult with .resources attribute
+        self._resources_cache = result.resources
+        return self._resources_cache
+
+    async def get_resource(self, uri: str) -> ReadResourceResult:
         """Get a resource from the MCP server."""
         session = await self.connect()
         return await session.read_resource(uri)
@@ -316,22 +333,22 @@ class MCPConnection:
 
 class RetryableMCPConnection(MCPConnection):
     """MCPConnection with automatic retry logic for transient failures."""
-    
+
     def __init__(self, server_config: MCPServerConfig, user_id: str, max_retries: int = DEFAULT_MAX_RETRIES):
         super().__init__(server_config, user_id)
         self.max_retries = max_retries
-    
+
     def _calculate_delay(self, attempt: int) -> float:
         """Calculate retry delay with exponential backoff and jitter."""
         base_delay = 1.0
         delay = base_delay * (2 ** attempt) + random.uniform(0, 0.5)
         return min(delay, 30.0)  # Cap at 30 seconds
-    
+
     def _should_retry(self, exception: Exception, attempt: int) -> bool:
         """Determine if an operation should be retried."""
         if attempt >= self.max_retries:
             return False
-            
+
         # Check if it's a retryable error type
         if isinstance(exception, MCPConnectionError):
             return True
@@ -339,20 +356,20 @@ class RetryableMCPConnection(MCPConnection):
             return True
         if isinstance(exception, MCPError) and "timeout" in str(exception).lower():
             return True
-            
+
         return False
-    
-    async def _execute_with_retry(self, operation, *args, **kwargs):
+
+    async def _execute_with_retry(self, operation: Callable, *args: Any, **kwargs: Any):
         """Execute an operation with retry logic."""
         last_exception = None
-        
+
         for attempt in range(self.max_retries + 1):
             try:
                 return await operation(*args, **kwargs)
-                
+
             except Exception as e:
                 last_exception = e
-                
+
                 if self._should_retry(e, attempt):
                     delay = self._calculate_delay(attempt)
                     logger.warning(
@@ -361,34 +378,34 @@ class RetryableMCPConnection(MCPConnection):
                         f"retrying in {delay:.1f}s... Error: {str(e)}"
                     )
                     await asyncio.sleep(delay)
-                    
+
                     # Reset connection for next attempt
                     await self.disconnect()
                     continue
                 else:
                     raise
-        
+
         if last_exception:
             raise last_exception
-    
+
     async def connect(self) -> ClientSession:
         """Connect with retry logic."""
         return await self._execute_with_retry(super().connect)
-    
+
     async def call_tool(self, name: str, arguments: Dict[str, Any]) -> CallToolResult:
         """Call tool with retry logic."""
         return await self._execute_with_retry(super().call_tool, name, arguments)
-    
-    async def get_resource(self, uri: str) -> Any:
+
+    async def get_resource(self, uri: str) -> ReadResourceResult:
         """Get resource with retry logic."""
         return await self._execute_with_retry(super().get_resource, uri)
-    
+
     async def list_tools(self, use_cache: bool = True) -> List[Tool]:
         """List tools with retry logic."""
         if use_cache and self._tools_cache is not None:
             return self._tools_cache
         return await self._execute_with_retry(super().list_tools, use_cache=False)
-    
+
     async def list_resources(self, use_cache: bool = True) -> List[Resource]:
         """List resources with retry logic."""
         if use_cache and self._resources_cache is not None:
@@ -430,11 +447,11 @@ async def create_session(
     user_id = get_current_user_id()
     if not user_id:
         raise RuntimeError("No user context set. Ensure authentication is properly initialized.")
-    
+
     # Check connection pool
     if user_id not in _connection_pool:
         _connection_pool[user_id] = {}
-    
+
     if server_name in _connection_pool[user_id]:
         connection = _connection_pool[user_id][server_name]
     else:
@@ -449,12 +466,21 @@ async def create_session(
         )
         connection = RetryableMCPConnection(config, user_id, max_retries)
         _connection_pool[user_id][server_name] = connection
-    
+
     try:
         yield connection
     finally:
-        # Keep connection in pool for reuse
-        pass
+        # Disconnect the session when exiting the context
+        # SSE connections spawn background tasks that keep the event loop alive,
+        # so we must disconnect to allow clean shutdown (especially important
+        # when running in a temporary thread with its own event loop)
+        try:
+            await connection.disconnect()
+            # Remove from pool since it's now disconnected
+            if user_id in _connection_pool and server_name in _connection_pool[user_id]:
+                del _connection_pool[user_id][server_name]
+        except Exception as e:
+            logger.warning(f"Error disconnecting {server_name}: {e}")
 
 
 async def call_tool(
@@ -495,79 +521,7 @@ async def get_resource(
     resource_uri: str,
     server_url: Optional[str] = None,
     max_retries: int = DEFAULT_MAX_RETRIES
-) -> Any:
+) -> ReadResourceResult:
     """Get a resource from an MCP server."""
     async with create_session(server_name, server_url, max_retries=max_retries) as session:
         return await session.get_resource(resource_uri)
-
-
-# OAuth helper functions
-
-async def store_oauth_token(
-    server_name: str,
-    token: str
-) -> None:
-    """Store OAuth token for an MCP server."""
-    user_id = get_current_user_id()
-    if not user_id:
-        raise RuntimeError("No user context set.")
-
-    service = UserCredentialService(user_id)
-    service.store_credential(user_id, "oauth_token", server_name, token)
-    logger.info(f"Stored OAuth token for {server_name}")
-
-
-async def get_oauth_token(
-    server_name: str
-) -> Optional[str]:
-    """Get OAuth token for an MCP server."""
-    user_id = get_current_user_id()
-    if not user_id:
-        raise RuntimeError("No user context set.")
-
-    service = UserCredentialService(user_id)
-    return service.get_credential(user_id, "oauth_token", server_name)
-
-
-# Cleanup functions
-
-async def disconnect_all() -> None:
-    """Disconnect all MCP sessions for current user."""
-    user_id = get_current_user_id()
-    if user_id in _connection_pool:
-        for connection in _connection_pool[user_id].values():
-            await connection.disconnect()
-        del _connection_pool[user_id]
-        logger.info(f"Disconnected all MCP sessions for user {user_id}")
-
-
-async def disconnect_server(server_name: str) -> None:
-    """Disconnect a specific MCP server for current user."""
-    user_id = get_current_user_id()
-    if user_id in _connection_pool and server_name in _connection_pool[user_id]:
-        await _connection_pool[user_id][server_name].disconnect()
-        del _connection_pool[user_id][server_name]
-        logger.info(f"Disconnected MCP session for {server_name} (user: {user_id})")
-
-
-def configure_defaults(
-    max_retries: Optional[int] = None,
-    timeout: Optional[int] = None,
-    retryable_error_types: Optional[set] = None
-):
-    """
-    Configure module-level defaults for MCP client behavior.
-    
-    Args:
-        max_retries: Default number of retry attempts
-        timeout: Default timeout in seconds
-        retryable_error_types: Set of exception types that trigger retries
-    """
-    global DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, RETRYABLE_ERROR_TYPES
-    
-    if max_retries is not None:
-        DEFAULT_MAX_RETRIES = max_retries
-    if timeout is not None:
-        DEFAULT_TIMEOUT = timeout
-    if retryable_error_types is not None:
-        RETRYABLE_ERROR_TYPES = retryable_error_types

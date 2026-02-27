@@ -5,20 +5,28 @@ Executes state-changing operations through domain-specific handlers that
 call tools and services directly, just as MIRA does during continuums.
 """
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any, TYPE_CHECKING, TypedDict
 from enum import Enum
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel, Field, field_validator
 
 from utils.user_context import get_current_user_id, set_current_user_id
 from auth.api import get_current_user
+from auth.types import SessionData, APITokenContext
 from .base import BaseHandler, ValidationError, NotFoundError
 from utils.timezone_utils import utc_now, format_utc_iso
 from clients.valkey_client import get_valkey_client
 from working_memory.trinkets.base import TRINKET_KEY_PREFIX
+from utils.userdata_manager import UserDataManager
+
+if TYPE_CHECKING:
+    from cns.infrastructure.continuum_repository import ContinuumRepository
+    from cns.core.continuum import Continuum
+    from cns.core.message import Message
+    from config.config_manager import AppConfig
 
 logger = logging.getLogger(__name__)
 
@@ -34,13 +42,14 @@ class DomainType(str, Enum):
     CONTACTS = "contacts"
     DOMAIN_KNOWLEDGE = "domain_knowledge"
     CONTINUUM = "continuum"
+    LORA = "lora"
 
 
 class ActionRequest(BaseModel):
     """Action request schema."""
     domain: DomainType = Field(..., description="Domain for the action")
     action: str = Field(..., description="Action to perform")
-    data: Dict[str, Any] = Field(default_factory=dict, description="Action-specific data")
+    data: dict[str, Any] = Field(default_factory=dict, description="Action-specific data")
     
     @field_validator('action')
     @classmethod
@@ -50,18 +59,25 @@ class ActionRequest(BaseModel):
         return v.strip()
 
 
+class ActionSchema(TypedDict, total=False):
+    """Schema for action validation."""
+    required: list[str]
+    optional: list[str]
+    types: dict[str, type | tuple[type, ...] | str]
+
+
 class BaseDomainHandler(BaseHandler):
     """Base handler for domain-specific actions."""
-    
+
     # Define available actions and their required/optional fields
-    ACTIONS: Dict[str, Dict[str, Any]] = {}
+    ACTIONS: dict[str, ActionSchema] = {}
     
     def __init__(self):
         super().__init__()  # Initialize BaseHandler (logger, thread pool)
         from utils.user_context import get_current_user_id
         self.user_id = get_current_user_id()
     
-    def validate_action(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Validate action and its data against schema."""
         if action not in self.ACTIONS:
             available_actions = list(self.ACTIONS.keys())
@@ -110,7 +126,7 @@ class BaseDomainHandler(BaseHandler):
         
         return data
     
-    def execute_action(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute the action. Override in subclasses."""
         raise NotImplementedError(f"Action '{action}' not implemented")
 
@@ -159,7 +175,7 @@ class ReminderDomainHandler(BaseDomainHandler):
         }
     }
     
-    def execute_action(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute reminder actions using ReminderTool."""
         from tools.implementations.reminder_tool import ReminderTool
         reminder_tool = ReminderTool()
@@ -296,7 +312,7 @@ class MemoryDomainHandler(BaseDomainHandler):
         }
     }
     
-    def execute_action(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute memory actions using LTMemoryDB."""
         from lt_memory.db_access import LTMemoryDB
         from utils.database_session_manager import get_shared_session_manager
@@ -435,7 +451,7 @@ class ContactsDomainHandler(BaseDomainHandler):
         }
     }
     
-    def execute_action(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute contacts actions using ContactsTool."""
         from tools.implementations.contacts_tool import ContactsTool
         contacts_tool = ContactsTool()
@@ -519,8 +535,22 @@ class ContactsDomainHandler(BaseDomainHandler):
 
 class UserDomainHandler(BaseDomainHandler):
     """Handler for user preference/settings actions."""
-    
+
     ACTIONS = {
+        "get_profile": {
+            "required": [],
+            "optional": [],
+            "types": {}
+        },
+        "update_profile": {
+            "required": [],
+            "optional": ["first_name", "last_name", "timezone"],
+            "types": {
+                "first_name": str,
+                "last_name": str,
+                "timezone": str
+            }
+        },
         "update_preferences": {
             "required": [],
             "optional": ["theme", "timezone", "language", "calendar_url"],
@@ -542,12 +572,96 @@ class UserDomainHandler(BaseDomainHandler):
             "required": [],
             "optional": [],
             "types": {}
+        },
+        "store_http_credential": {
+            "required": ["name", "value"],
+            "optional": [],
+            "types": {
+                "name": str,
+                "value": str
+            }
+        },
+        "list_http_credentials": {
+            "required": [],
+            "optional": [],
+            "types": {}
+        },
+        "delete_http_credential": {
+            "required": ["name"],
+            "optional": [],
+            "types": {
+                "name": str
+            }
         }
     }
     
-    def execute_action(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute user preference actions."""
-        if action == "update_preferences":
+        if action == "get_profile":
+            from utils.user_context import get_user_preferences
+
+            prefs = get_user_preferences()
+            return {
+                "success": True,
+                "profile": {
+                    "first_name": prefs.first_name,
+                    "last_name": prefs.last_name,
+                    "timezone": prefs.timezone
+                }
+            }
+
+        elif action == "update_profile":
+            from utils.database_session_manager import get_shared_session_manager
+            from clients.valkey_client import get_valkey_client
+
+            # At least one field must be provided
+            if not any(k in data for k in ["first_name", "last_name", "timezone"]):
+                raise ValidationError("At least one field (first_name, last_name, timezone) must be provided")
+
+            # Validate timezone if provided
+            if "timezone" in data:
+                from utils.timezone_utils import validate_timezone
+                try:
+                    validate_timezone(data["timezone"])
+                except Exception:
+                    raise ValidationError(f"Invalid timezone: {data['timezone']}")
+
+            # Build UPDATE query dynamically based on provided fields
+            update_fields = []
+            params = {"user_id": self.user_id}
+
+            if "first_name" in data:
+                update_fields.append("first_name = %(first_name)s")
+                params["first_name"] = data["first_name"]
+
+            if "last_name" in data:
+                update_fields.append("last_name = %(last_name)s")
+                params["last_name"] = data["last_name"]
+
+            if "timezone" in data:
+                update_fields.append("timezone = %(timezone)s")
+                params["timezone"] = data["timezone"]
+
+            # Execute update
+            session_manager = get_shared_session_manager()
+            db = session_manager.get_session(self.user_id)
+            db.execute(
+                f"UPDATE users SET {', '.join(update_fields)} WHERE id = %(user_id)s",
+                params
+            )
+
+            # Invalidate user preferences cache so changes take effect immediately
+            valkey = get_valkey_client()
+            cache_key = f"user_prefs:{self.user_id}"
+            valkey.delete_with_retry(cache_key)
+
+            return {
+                "success": True,
+                "updated_fields": list(data.keys()),
+                "message": "Profile updated successfully"
+            }
+
+        elif action == "update_preferences":
             # Validate theme if provided
             if "theme" in data:
                 valid_themes = ["light", "dark", "auto"]
@@ -632,7 +746,68 @@ class UserDomainHandler(BaseDomainHandler):
                 "calendar_url": calendar_url if calendar_url else None,
                 "message": "Calendar configuration retrieved" if calendar_url else "No calendar URL configured"
             }
-        
+
+        elif action == "store_http_credential":
+            from utils.user_credentials import UserCredentialService
+
+            name = data["name"]
+            value = data["value"]
+
+            # Validate name format (alphanumeric + underscore/hyphen)
+            if not name or not name.replace("_", "").replace("-", "").isalnum():
+                raise ValidationError("Credential name must be alphanumeric (underscores/hyphens allowed)")
+
+            credential_service = UserCredentialService()
+            credential_service.store_credential(
+                credential_type="http_credential",
+                service_name=name,
+                credential_value=value
+            )
+
+            return {
+                "success": True,
+                "name": name,
+                "message": f"Credential '{name}' stored successfully"
+            }
+
+        elif action == "list_http_credentials":
+            from utils.user_credentials import UserCredentialService
+
+            credential_service = UserCredentialService()
+            all_creds = credential_service.list_user_credentials()
+
+            # Extract http_credentials - structure is {"http_credential": {"name": {...}}}
+            http_creds_dict = all_creds.get("http_credential", {})
+            http_creds = [
+                {"name": service_name, "created_at": cred_data.get("created_at")}
+                for service_name, cred_data in http_creds_dict.items()
+            ]
+
+            return {
+                "success": True,
+                "credentials": http_creds,
+                "count": len(http_creds)
+            }
+
+        elif action == "delete_http_credential":
+            from utils.user_credentials import UserCredentialService
+
+            name = data["name"]
+            credential_service = UserCredentialService()
+            deleted = credential_service.delete_credential(
+                credential_type="http_credential",
+                service_name=name
+            )
+
+            if not deleted:
+                raise NotFoundError("credential", name)
+
+            return {
+                "success": True,
+                "name": name,
+                "message": f"Credential '{name}' deleted"
+            }
+
         else:
             raise ValidationError(f"Unknown action: {action}")
 
@@ -661,10 +836,20 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "optional": [],
             "types": {"label": str}
         },
+        "archive": {
+            "required": ["label"],
+            "optional": [],
+            "types": {"label": str}
+        },
+        "unarchive": {
+            "required": ["label"],
+            "optional": [],
+            "types": {"label": str}
+        },
         "list": {
             "required": [],
-            "optional": [],
-            "types": {}
+            "optional": ["archived"],
+            "types": {"archived": bool}
         },
         "get": {
             "required": ["label"],
@@ -745,14 +930,14 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
         if not label.replace("_", "").isalnum():
             raise ValidationError(f"Invalid label '{label}'. Use only letters, numbers, and underscores.")
 
-    def _get_domaindoc(self, db, label: str) -> Dict[str, Any]:
+    def _get_domaindoc(self, db: UserDataManager, label: str) -> dict[str, Any]:
         """Get domaindoc by label, raising ValidationError if not found."""
         results = db.select("domaindocs", "label = :label", {"label": label})
         if not results:
             raise ValidationError(f"Domaindoc '{label}' not found")
         return results[0]
 
-    def _get_section(self, db, domaindoc_id: int, header: str, parent_header: str = None) -> Dict[str, Any]:
+    def _get_section(self, db: UserDataManager, domaindoc_id: int, header: str, parent_header: str | None = None) -> dict[str, Any]:
         """Get section by header, optionally under a parent."""
         if parent_header:
             parent = self._get_section(db, domaindoc_id, parent_header)
@@ -771,7 +956,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
                 raise ValidationError(f"Section '{header}' not found")
         return db._decrypt_dict(results[0])
 
-    def _get_all_sections(self, db, domaindoc_id: int, parent_id: int = None) -> list:
+    def _get_all_sections(self, db: UserDataManager, domaindoc_id: int, parent_id: int | None = None) -> list[dict[str, Any]]:
         """Get sections ordered by sort_order, optionally filtered by parent."""
         if parent_id is not None:
             results = db.fetchall(
@@ -785,7 +970,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             )
         return [db._decrypt_dict(row) for row in results]
 
-    def _get_subsections(self, db, parent_id: int) -> list:
+    def _get_subsections(self, db: UserDataManager, parent_id: int) -> list[dict[str, Any]]:
         """Get all subsections of a parent section."""
         results = db.fetchall(
             "SELECT * FROM domaindoc_sections WHERE parent_section_id = :parent_id ORDER BY sort_order",
@@ -793,7 +978,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
         )
         return [db._decrypt_dict(row) for row in results]
 
-    def _check_duplicate_section(self, db, domaindoc_id: int, header: str, parent_section_id: int | None, exclude_section_id: int | None = None) -> None:
+    def _check_duplicate_section(self, db: UserDataManager, domaindoc_id: int, header: str, parent_section_id: int | None, exclude_section_id: int | None = None) -> None:
         """Raise ValidationError if a section with this header already exists at the same level."""
         query = """
             SELECT id FROM domaindoc_sections
@@ -812,7 +997,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             level = "subsection" if parent_section_id else "section"
             raise ValidationError(f"A {level} named '{header}' already exists at this level")
 
-    def _record_version(self, db, domaindoc_id: int, operation: str, diff_data: dict, section_id: int = None) -> int:
+    def _record_version(self, db: UserDataManager, domaindoc_id: int, operation: str, diff_data: dict[str, str | int | None], section_id: int | None = None) -> int:
         """Record a version entry for an operation."""
         import json
         result = db.fetchone(
@@ -842,65 +1027,62 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
     # Read-only actions that don't require cache invalidation
     _READ_ONLY_ACTIONS = {"list", "get", "list_sections", "get_section", "get_section_history"}
 
-    def execute_action(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute domaindoc actions using SQLite storage."""
         import json
 
-        try:
-            db = self._get_db()
+        db = self._get_db()
 
-            if action == "create":
-                result = self._action_create(db, data)
-            elif action == "enable":
-                result = self._action_enable(db, data)
-            elif action == "disable":
-                result = self._action_disable(db, data)
-            elif action == "delete":
-                result = self._action_delete(db, data)
-            elif action == "list":
-                result = self._action_list(db)
-            elif action == "get":
-                result = self._action_get(db, data)
-            elif action == "modify_metadata":
-                result = self._action_modify_metadata(db, data)
-            elif action == "list_sections":
-                result = self._action_list_sections(db, data)
-            elif action == "get_section":
-                result = self._action_get_section(db, data)
-            elif action == "update_section":
-                result = self._action_update_section(db, data)
-            elif action == "create_section":
-                result = self._action_create_section(db, data)
-            elif action == "rename_section":
-                result = self._action_rename_section(db, data)
-            elif action == "delete_section":
-                result = self._action_delete_section(db, data)
-            elif action == "reorder_sections":
-                result = self._action_reorder_sections(db, data)
-            elif action == "expand_section":
-                result = self._action_expand_section(db, data)
-            elif action == "collapse_section":
-                result = self._action_collapse_section(db, data)
-            elif action == "get_section_history":
-                result = self._action_get_section_history(db, data)
-            elif action == "rollback_section":
-                result = self._action_rollback_section(db, data)
-            else:
-                raise ValidationError(f"Unknown action: {action}")
+        if action == "create":
+            result = self._action_create(db, data)
+        elif action == "enable":
+            result = self._action_enable(db, data)
+        elif action == "disable":
+            result = self._action_disable(db, data)
+        elif action == "delete":
+            result = self._action_delete(db, data)
+        elif action == "archive":
+            result = self._action_archive(db, data)
+        elif action == "unarchive":
+            result = self._action_unarchive(db, data)
+        elif action == "list":
+            result = self._action_list(db, data)
+        elif action == "get":
+            result = self._action_get(db, data)
+        elif action == "modify_metadata":
+            result = self._action_modify_metadata(db, data)
+        elif action == "list_sections":
+            result = self._action_list_sections(db, data)
+        elif action == "get_section":
+            result = self._action_get_section(db, data)
+        elif action == "update_section":
+            result = self._action_update_section(db, data)
+        elif action == "create_section":
+            result = self._action_create_section(db, data)
+        elif action == "rename_section":
+            result = self._action_rename_section(db, data)
+        elif action == "delete_section":
+            result = self._action_delete_section(db, data)
+        elif action == "reorder_sections":
+            result = self._action_reorder_sections(db, data)
+        elif action == "expand_section":
+            result = self._action_expand_section(db, data)
+        elif action == "collapse_section":
+            result = self._action_collapse_section(db, data)
+        elif action == "get_section_history":
+            result = self._action_get_section_history(db, data)
+        elif action == "rollback_section":
+            result = self._action_rollback_section(db, data)
+        else:
+            raise ValidationError(f"Unknown action: {action}")
 
-            # Invalidate trinket cache after write operations
-            if action not in self._READ_ONLY_ACTIONS:
-                self._invalidate_trinket_cache()
+        # Invalidate trinket cache after write operations
+        if action not in self._READ_ONLY_ACTIONS:
+            self._invalidate_trinket_cache()
 
-            return result
+        return result
 
-        except ValidationError:
-            raise
-        except Exception as e:
-            logger.error(f"Domaindoc action '{action}' failed: {e}", exc_info=True)
-            raise ValidationError(f"Action failed: {str(e)}")
-
-    def _action_create(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_create(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Create a new domaindoc."""
         label = data["label"]
         description = data["description"]
@@ -941,11 +1123,15 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "message": f"Domaindoc '{label}' created. Use enable action to activate it."
         }
 
-    def _action_enable(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_enable(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Enable a domaindoc. Collapses all sections except first."""
         label = data["label"]
         self._validate_label(label)
         doc = self._get_domaindoc(db, label)
+
+        if doc.get("archived", False):
+            raise ValidationError(f"Cannot enable archived domaindoc '{label}'. Unarchive it first.")
+
         now = format_utc_iso(utc_now())
 
         db.execute(
@@ -953,13 +1139,13 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             {"now": now, "id": doc["id"]}
         )
         db.execute(
-            "UPDATE domaindoc_sections SET collapsed = TRUE, updated_at = :now WHERE domaindoc_id = :doc_id AND sort_order > 0",
+            "UPDATE domaindoc_sections SET collapsed = TRUE, updated_at = :now WHERE domaindoc_id = :doc_id AND pinned = FALSE",
             {"now": now, "doc_id": doc["id"]}
         )
 
         return {"enabled": True, "label": label, "message": f"Domaindoc '{label}' enabled"}
 
-    def _action_disable(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_disable(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Disable a domaindoc."""
         label = data["label"]
         self._validate_label(label)
@@ -973,7 +1159,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
 
         return {"disabled": True, "label": label, "message": f"Domaindoc '{label}' disabled"}
 
-    def _action_delete(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_delete(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Delete a domaindoc and all its sections."""
         label = data["label"]
         self._validate_label(label)
@@ -983,9 +1169,49 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
 
         return {"deleted": True, "label": label, "message": f"Domaindoc '{label}' deleted"}
 
-    def _action_list(self, db) -> Dict[str, Any]:
-        """List all domaindocs."""
-        results = db.fetchall("SELECT * FROM domaindocs ORDER BY label")
+    def _action_archive(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
+        """Archive a domaindoc. Sets archived=TRUE and enabled=FALSE atomically."""
+        label = data["label"]
+        self._validate_label(label)
+        doc = self._get_domaindoc(db, label)
+
+        if doc.get("archived", False):
+            return {"archived": True, "label": label, "message": f"Domaindoc '{label}' is already archived"}
+
+        now = format_utc_iso(utc_now())
+        db.execute(
+            "UPDATE domaindocs SET archived = TRUE, enabled = FALSE, updated_at = :now WHERE id = :id",
+            {"now": now, "id": doc["id"]}
+        )
+
+        return {"archived": True, "label": label, "message": f"Domaindoc '{label}' archived"}
+
+    def _action_unarchive(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
+        """Unarchive a domaindoc. Sets archived=FALSE only (does NOT re-enable)."""
+        label = data["label"]
+        self._validate_label(label)
+        doc = self._get_domaindoc(db, label)
+
+        if not doc.get("archived", False):
+            return {"archived": False, "label": label, "message": f"Domaindoc '{label}' is not archived"}
+
+        now = format_utc_iso(utc_now())
+        db.execute(
+            "UPDATE domaindocs SET archived = FALSE, updated_at = :now WHERE id = :id",
+            {"now": now, "id": doc["id"]}
+        )
+
+        return {"archived": False, "label": label, "message": f"Domaindoc '{label}' unarchived (still disabled — enable separately)"}
+
+    def _action_list(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
+        """List domaindocs. Excludes archived by default; pass archived=True to see archived only."""
+        show_archived = data.get("archived", False)
+
+        if show_archived:
+            results = db.fetchall("SELECT * FROM domaindocs WHERE archived = TRUE ORDER BY label")
+        else:
+            results = db.fetchall("SELECT * FROM domaindocs WHERE archived = FALSE ORDER BY label")
+
         domaindocs = [db._decrypt_dict(row) for row in results]
 
         return {
@@ -994,6 +1220,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
                     "label": d["label"],
                     "description": d.get("encrypted__description", ""),
                     "enabled": d.get("enabled", False),
+                    "archived": d.get("archived", False),
                     "created_at": d.get("created_at"),
                     "updated_at": d.get("updated_at")
                 }
@@ -1003,7 +1230,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "message": f"Found {len(domaindocs)} domaindocs"
         }
 
-    def _action_get(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_get(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Get a domaindoc with all its sections (including subsections)."""
         label = data["label"]
         self._validate_label(label)
@@ -1020,6 +1247,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "label": label,
             "description": doc.get("encrypted__description", ""),
             "enabled": doc.get("enabled", False),
+            "archived": doc.get("archived", False),
             "created_at": doc.get("created_at"),
             "updated_at": doc.get("updated_at"),
             "sections": [
@@ -1038,7 +1266,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "message": f"Retrieved domaindoc '{label}'"
         }
 
-    def _action_modify_metadata(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_modify_metadata(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Modify domaindoc label or description."""
         label = data["label"]
         self._validate_label(label)
@@ -1074,7 +1302,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "message": f"Domaindoc metadata updated"
         }
 
-    def _action_list_sections(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_list_sections(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """List sections for a domaindoc, optionally under a parent."""
         label = data["label"]
         parent_header = data.get("parent")
@@ -1093,6 +1321,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "sections": [
                 {
                     "header": s["header"],
+                    "summary": s.get("encrypted__summary"),
                     "collapsed": s.get("collapsed", False),
                     "sort_order": s.get("sort_order", 0),
                     "char_count": len(s.get("encrypted__content", "")),
@@ -1103,7 +1332,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             ]
         }
 
-    def _action_get_section(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_get_section(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Get a single section's content."""
         label = data["label"]
         header = data["section"]
@@ -1118,13 +1347,14 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "section": header,
             "parent": parent_header,
             "content": section.get("encrypted__content", ""),
+            "summary": section.get("encrypted__summary"),
             "collapsed": section.get("collapsed", False),
             "sort_order": section.get("sort_order", 0),
             "has_children": len(subsections) > 0,
             "child_count": len(subsections)
         }
 
-    def _action_update_section(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_update_section(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Update a section's content (full replacement via UI)."""
         label = data["label"]
         header = data["section"]
@@ -1151,9 +1381,13 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "parent": parent_header
         }, section["id"])
 
+        # Update section summary
+        from cns.services.domaindoc_summary_service import update_section_summary
+        update_section_summary(db, section["id"], header, content)
+
         return {"updated": True, "label": label, "section": header, "parent": parent_header, "char_count": len(content)}
 
-    def _action_create_section(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_create_section(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Create a new section or subsection."""
         label = data["label"]
         header = data["section"]
@@ -1166,12 +1400,16 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
 
         parent_id = None
         if parent_header:
-            # Creating a subsection - validate depth
+            # Creating a nested section - validate depth (max 2 levels of nesting)
             parent = self._get_section(db, doc["id"], parent_header)
             if parent.get("parent_section_id") is not None:
-                raise ValidationError("Maximum nesting depth is 1. Cannot add subsection to a subsection.")
-            if parent["sort_order"] == 0:
-                raise ValidationError("Cannot add subsections to the overview section")
+                # Parent is already a subsection - check if grandparent exists
+                grandparent = db.fetchone(
+                    "SELECT parent_section_id FROM domaindoc_sections WHERE id = :id",
+                    {"id": parent["parent_section_id"]}
+                )
+                if grandparent and grandparent.get("parent_section_id") is not None:
+                    raise ValidationError("Maximum nesting depth is 2. Cannot add children to a sub-subsection.")
             parent_id = parent["id"]
 
         # Get sections at the target level (top-level or within parent)
@@ -1212,9 +1450,14 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "parent": parent_header
         }, int(section_id))
 
+        # Generate section summary (if content is provided)
+        if content:
+            from cns.services.domaindoc_summary_service import update_section_summary
+            update_section_summary(db, int(section_id), header, content)
+
         return {"created": True, "label": label, "section": header, "parent": parent_header, "sort_order": new_order}
 
-    def _action_rename_section(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_rename_section(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Rename a section or subsection header."""
         label = data["label"]
         header = data["section"]
@@ -1244,7 +1487,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
 
         return {"renamed": True, "label": label, "from": header, "to": new_name, "parent": parent_header}
 
-    def _action_delete_section(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_delete_section(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Delete a section or subsection."""
         label = data["label"]
         header = data["section"]
@@ -1253,9 +1496,9 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
         doc = self._get_domaindoc(db, label)
         section = self._get_section(db, doc["id"], header, parent_header)
 
-        # Can't delete overview (first top-level section)
-        if section["sort_order"] == 0 and section.get("parent_section_id") is None:
-            raise ValidationError("Cannot delete the first section (overview)")
+        # Can't delete pinned sections
+        if section.get("pinned"):
+            raise ValidationError(f"Cannot delete pinned section '{header}'. Unpin it first.")
 
         # For top-level sections, check if section AND all subsections are expanded
         deleted_children = []
@@ -1300,7 +1543,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             result["deleted_children"] = deleted_children
         return result
 
-    def _action_reorder_sections(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_reorder_sections(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Reorder sections at a level (top-level or within a parent)."""
         label = data["label"]
         order = data["order"]
@@ -1332,7 +1575,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
 
         return {"reordered": True, "label": label, "order": order, "parent": parent_header}
 
-    def _action_expand_section(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_expand_section(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Expand a section or subsection."""
         label = data["label"]
         header = data["section"]
@@ -1349,7 +1592,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
 
         return {"expanded": True, "label": label, "section": header, "parent": parent_header}
 
-    def _action_collapse_section(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_collapse_section(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Collapse a section or subsection."""
         label = data["label"]
         header = data["section"]
@@ -1358,9 +1601,9 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
         doc = self._get_domaindoc(db, label)
         section = self._get_section(db, doc["id"], header, parent_header)
 
-        # Can't collapse first top-level section (overview)
-        if section["sort_order"] == 0 and section.get("parent_section_id") is None:
-            return {"collapsed": False, "label": label, "section": header, "parent": parent_header, "note": "First section cannot be collapsed"}
+        # Can't collapse pinned sections
+        if section.get("pinned"):
+            return {"collapsed": False, "label": label, "section": header, "parent": parent_header, "note": "Pinned sections cannot be collapsed"}
 
         now = format_utc_iso(utc_now())
         db.execute(
@@ -1370,7 +1613,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
 
         return {"collapsed": True, "label": label, "section": header, "parent": parent_header}
 
-    def _action_get_section_history(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_get_section_history(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Get version history for a section or subsection."""
         import json
         label = data["label"]
@@ -1401,7 +1644,7 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             ]
         }
 
-    def _action_rollback_section(self, db, data: Dict[str, Any]) -> Dict[str, Any]:
+    def _action_rollback_section(self, db: UserDataManager, data: dict[str, Any]) -> dict[str, Any]:
         """Rollback a section or subsection to a previous version using stored previous_content."""
         import json
         label = data["label"]
@@ -1470,9 +1713,14 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
     def _expand_description(self, label: str, description: str) -> str:
         """Use LLM to expand a brief description into comprehensive guidance."""
         from clients.llm_provider import LLMProvider
+        from utils.user_context import get_user_preferences, resolve_tier
+
+        logger.info(f"_expand_description called for label='{label}', description='{description[:50]}...'")
 
         try:
-            llm = LLMProvider()
+            tier_config = resolve_tier(get_user_preferences().llm_tier)
+            llm = LLMProvider(model=tier_config.model)
+            logger.debug(f"LLMProvider created, model={llm.model}")
 
             prompt = f"""You are helping expand a brief description into comprehensive guidance for a knowledge document.
 
@@ -1489,21 +1737,24 @@ Example input: "plants, bugs, where I buy stuff"
 Example output: "Backyard garden management: current plantings with locations and planting dates, pest and disease observations with treatments applied, soil amendments and fertilizer schedules, preferred suppliers and product recommendations, and seasonal lessons learned."
 """
 
+            logger.debug("Calling LLM generate_response...")
             response = llm.generate_response(
-                messages=[{"role": "user", "content": prompt}],
-                thinking_enabled=False
+                messages=[{"role": "user", "content": prompt}]
             )
+            logger.debug(f"LLM response received: stop_reason={getattr(response, 'stop_reason', 'N/A')}, content_types={[b.type for b in getattr(response, 'content', [])]}")
 
             expanded = llm.extract_text_content(response).strip()
+            logger.debug(f"Extracted text length={len(expanded)}, preview='{expanded[:100] if expanded else '(empty)'}...'")
 
             if expanded and len(expanded) > 20:
+                logger.info(f"LLM expansion successful, length={len(expanded)}")
                 return expanded
             else:
-                logger.warning(f"LLM expansion too short, using original: {expanded}")
+                logger.warning(f"LLM expansion too short (len={len(expanded)}), using original: '{expanded}'")
                 return description
 
         except Exception as e:
-            logger.warning(f"Failed to expand description via LLM: {e}")
+            logger.warning(f"Failed to expand description via LLM: {e}", exc_info=True)
             return description
 
 
@@ -1539,45 +1790,42 @@ class ContinuumDomainHandler(BaseDomainHandler):
             "required": [],
             "optional": [],
             "types": {}
+        },
+        "resume_session": {
+            "required": ["minutes"],
+            "optional": [],
+            "types": {
+                "minutes": int
+            }
         }
     }
 
-    def execute_action(self, action: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute LLM tier actions."""
         if action == "get_llm_tier":
-            from utils.user_context import get_user_preferences, get_account_tiers, get_accessible_tiers
+            from utils.user_context import get_user_preferences, get_account_tiers
 
             prefs = get_user_preferences()
             all_tiers = get_account_tiers()
-            accessible = get_accessible_tiers(prefs.max_tier)
-            accessible_names = {t.name for t in accessible}
 
-            # Return tiers with access info: accessible ones + locked ones with show_locked=true
+            # Return non-hidden tiers sorted by display_order
             tier_list = []
             for tier in sorted(all_tiers.values(), key=lambda t: t.display_order):
-                is_accessible = tier.name in accessible_names
-                # Show tier if: accessible OR (not accessible but show_locked=true)
-                if is_accessible or tier.show_locked:
+                if not tier.hidden:
                     tier_list.append({
                         "name": tier.name,
                         "model": tier.model,
                         "description": tier.description,
-                        "accessible": is_accessible,
-                        "locked_message": tier.locked_message if not is_accessible else None
                     })
 
             return {
                 "success": True,
                 "tier": prefs.llm_tier,
-                "max_tier": prefs.max_tier,
                 "available_tiers": tier_list
             }
 
         elif action == "set_llm_tier":
-            from utils.user_context import (
-                update_user_preference, get_account_tiers,
-                can_access_tier, get_user_preferences
-            )
+            from utils.user_context import update_user_preference, get_account_tiers
 
             tier = data.get("tier")
             tiers = get_account_tiers()
@@ -1586,10 +1834,10 @@ class ContinuumDomainHandler(BaseDomainHandler):
                     f"Invalid tier. Must be one of: {list(tiers.keys())}"
                 )
 
-            prefs = get_user_preferences()
-            if not can_access_tier(tier, prefs.max_tier):
+            # Reject hidden tiers (admin-hidden from selector)
+            if tiers[tier].hidden:
                 raise ValidationError(
-                    f"Tier '{tier}' not available. Your account has access up to '{prefs.max_tier}'."
+                    f"Tier '{tier}' is not available."
                 )
 
             update_user_preference('llm_tier', tier)
@@ -1644,6 +1892,7 @@ class ContinuumDomainHandler(BaseDomainHandler):
             from cns.infrastructure.continuum_pool import get_continuum_pool
             from cns.infrastructure.continuum_repository import get_continuum_repository
             from datetime import timedelta
+            from config import config
 
             minutes = data.get("minutes")
             if not (1 <= minutes <= 1440):
@@ -1657,25 +1906,43 @@ class ContinuumDomainHandler(BaseDomainHandler):
             sentinel = continuum_repo.find_active_segment(continuum.id, self.user_id)
 
             if not sentinel:
-                raise NotFoundError("segment", "active")
+                # No active segment — try transparent resume of last collapsed segment
+                resumable = continuum_repo.find_resumable_segment(continuum.id, self.user_id)
+                if not resumable:
+                    raise NotFoundError("segment", "active")
+
+                return self._resume_segment(
+                    continuum_repo, continuum, resumable, minutes, config
+                )
 
             segment_id = sentinel.metadata.get("segment_id")
-
-            # Stack extensions: add to existing virtual time if it's in the future
-            existing_virtual_str = sentinel.metadata.get("virtual_last_message_time")
             now = utc_now()
+            timeout_minutes = config.system.segment_timeout
 
-            if existing_virtual_str:
-                from datetime import datetime
-                existing_virtual = datetime.fromisoformat(existing_virtual_str)
-                if existing_virtual > now:
-                    # Add to existing future time
-                    virtual_time = existing_virtual + timedelta(minutes=minutes)
-                else:
-                    # Existing time is in the past, start fresh
-                    virtual_time = now + timedelta(minutes=minutes)
+            # Compute current collapse_at (same logic as get_segment_status)
+            segment_messages = continuum_repo.load_segment_messages(
+                continuum.id, self.user_id, sentinel.created_at
+            )
+            if segment_messages:
+                last_activity = segment_messages[-1].created_at
             else:
-                virtual_time = now + timedelta(minutes=minutes)
+                last_activity = sentinel.created_at
+
+            virtual_time_str = sentinel.metadata.get("virtual_last_message_time")
+            if virtual_time_str:
+                from datetime import datetime
+                existing_virtual = datetime.fromisoformat(virtual_time_str)
+                if existing_virtual > last_activity:
+                    last_activity = existing_virtual
+
+            current_collapse_at = last_activity + timedelta(minutes=timeout_minutes)
+
+            # Add X minutes to the current collapse time (floor at now if already expired)
+            new_collapse_at = max(current_collapse_at, now) + timedelta(minutes=minutes)
+
+            # Back-calculate virtual_time so get_segment_status stays consistent
+            virtual_time = new_collapse_at - timedelta(minutes=timeout_minutes)
+
             success = continuum_repo.set_segment_virtual_last_message_time(
                 continuum.id,
                 self.user_id,
@@ -1688,7 +1955,7 @@ class ContinuumDomainHandler(BaseDomainHandler):
             return {
                 "postponed": True,
                 "segment_id": segment_id,
-                "virtual_last_message_time": format_utc_iso(virtual_time),
+                "collapse_at": format_utc_iso(new_collapse_at),
                 "minutes": minutes,
                 "message": f"Segment collapse postponed for {minutes} minutes"
             }
@@ -1707,11 +1974,24 @@ class ContinuumDomainHandler(BaseDomainHandler):
             sentinel = continuum_repo.find_active_segment(continuum.id, self.user_id)
 
             if not sentinel:
+                # Check for resumable collapsed segment
+                resumable = continuum_repo.find_resumable_segment(continuum.id, self.user_id)
+                if resumable:
+                    return {
+                        "has_active_segment": False,
+                        "segment_id": resumable.metadata.get("segment_id"),
+                        "collapse_at": None,
+                        "is_postponed": False,
+                        "is_resumable": True,
+                        "collapsed_at": resumable.metadata.get("collapsed_at")
+                    }
+
                 return {
                     "has_active_segment": False,
                     "segment_id": None,
                     "collapse_at": None,
-                    "is_postponed": False
+                    "is_postponed": False,
+                    "is_resumable": False
                 }
 
             segment_id = sentinel.metadata.get("segment_id")
@@ -1745,11 +2025,164 @@ class ContinuumDomainHandler(BaseDomainHandler):
                 "last_activity": format_utc_iso(last_activity),
                 "collapse_at": format_utc_iso(collapse_at),
                 "timeout_minutes": timeout_minutes,
-                "is_postponed": is_postponed
+                "is_postponed": is_postponed,
+                "is_resumable": False
+            }
+
+        elif action == "resume_session":
+            from cns.infrastructure.continuum_pool import get_continuum_pool
+            from cns.infrastructure.continuum_repository import get_continuum_repository
+            from config import config
+
+            minutes = data.get("minutes")
+            if not (1 <= minutes <= 1440):
+                raise ValidationError("minutes must be between 1 and 1440 (24 hours)")
+
+            continuum_pool = get_continuum_pool()
+            continuum = continuum_pool.get_or_create()
+            continuum_repo = get_continuum_repository()
+
+            # Block if an active segment already exists
+            active = continuum_repo.find_active_segment(continuum.id, self.user_id)
+            if active:
+                raise ValidationError("Cannot resume — an active segment already exists")
+
+            resumable = continuum_repo.find_resumable_segment(continuum.id, self.user_id)
+            if not resumable:
+                raise NotFoundError("segment", "resumable")
+
+            return self._resume_segment(
+                continuum_repo, continuum, resumable, minutes, config
+            )
+
+        else:
+            raise ValidationError(f"Unknown action: {action}")
+
+    def _resume_segment(self, continuum_repo: 'ContinuumRepository', continuum: 'Continuum', resumable: 'Message', minutes: int, config: 'AppConfig') -> dict[str, Any]:
+        """
+        Reactivate a collapsed segment, delete its stale memories, and invalidate cache.
+
+        Shared between postpone_collapse (transparent fallthrough) and resume_session (explicit).
+        """
+        from cns.infrastructure.continuum_pool import get_continuum_pool
+        from datetime import timedelta
+
+        segment_id = resumable.metadata.get("segment_id")
+        timeout_minutes = config.system.segment_timeout
+        now = utc_now()
+
+        # Back-calculate virtual_time for the requested extension
+        new_collapse_at = now + timedelta(minutes=minutes)
+        virtual_time = new_collapse_at - timedelta(minutes=timeout_minutes)
+
+        success = continuum_repo.reactivate_collapsed_segment(
+            continuum.id, segment_id, self.user_id, virtual_time
+        )
+        if not success:
+            raise ValidationError("Resume failed — segment may have been modified concurrently")
+
+        # Delete stale memories from previous collapse
+        deleted_count = continuum_repo.delete_segment_memories(segment_id, self.user_id)
+
+        # Invalidate session cache so next request loads the reactivated segment
+        continuum_pool = get_continuum_pool()
+        continuum_pool.invalidate()
+
+        logger.info(
+            f"Resumed segment {segment_id} for user {self.user_id}, "
+            f"deleted {deleted_count} stale memories"
+        )
+
+        return {
+            "postponed": True,
+            "resumed": True,
+            "segment_id": segment_id,
+            "collapse_at": format_utc_iso(new_collapse_at),
+            "minutes": minutes,
+            "memories_deleted": deleted_count,
+            "message": f"Session resumed with {minutes} minutes extension"
+        }
+
+
+class LoraDomainHandler(BaseDomainHandler):
+    """Handler for user model actions."""
+
+    ACTIONS = {
+        "get": {
+            "required": [],
+            "optional": [],
+            "types": {}
+        },
+        "update": {
+            "required": ["xml"],
+            "optional": [],
+            "types": {
+                "xml": str
+            }
+        },
+        "reset": {
+            "required": [],
+            "optional": [],
+            "types": {}
+        }
+    }
+
+    def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Execute LoRA actions."""
+        from cns.infrastructure.feedback_tracker import FeedbackTracker
+
+        tracker = FeedbackTracker()
+
+        if action == "get":
+            lora_content = tracker.get_lora_content(self.user_id)
+            tracking_status = tracker.get_tracking_status(self.user_id)
+
+            return {
+                "success": True,
+                "has_synthesis": lora_content['synthesis_xml'] is not None,
+                "xml": lora_content['synthesis_xml'],
+                "needs_checkin": lora_content['needs_checkin'],
+                "tracking": {
+                    "use_days_since_synthesis": tracking_status.get('use_days_since_synthesis', 0),
+                    "last_synthesis_at": format_utc_iso(tracking_status['last_synthesis_at']) if tracking_status.get('last_synthesis_at') else None
+                }
+            }
+
+        elif action == "update":
+            xml = data.get("xml")
+
+            if not xml or not xml.strip():
+                raise ValidationError("XML content cannot be empty")
+            if "<mira:user_model>" not in xml:
+                raise ValidationError("Invalid user model XML - must contain <mira:user_model> element")
+
+            tracker.set_synthesis_output(self.user_id, xml)
+            self._invalidate_lora_cache()
+
+            return {
+                "success": True,
+                "updated": True,
+                "message": "Updated user model"
+            }
+
+        elif action == "reset":
+            tracker.reset_synthesis(self.user_id)
+            self._invalidate_lora_cache()
+
+            return {
+                "success": True,
+                "reset": True,
+                "message": "User model reset"
             }
 
         else:
             raise ValidationError(f"Unknown action: {action}")
+
+    def _invalidate_lora_cache(self) -> None:
+        """Invalidate LoRA trinket cache after state changes."""
+        hash_key = f"{TRINKET_KEY_PREFIX}:{self.user_id}"
+        valkey = get_valkey_client()
+        valkey.hdel_with_retry(hash_key, "behavioral_directives")
 
 
 class ActionsEndpoint(BaseHandler):
@@ -1763,13 +2196,14 @@ class ActionsEndpoint(BaseHandler):
             DomainType.USER: UserDomainHandler,
             DomainType.CONTACTS: ContactsDomainHandler,
             DomainType.DOMAIN_KNOWLEDGE: DomainKnowledgeDomainHandler,
-            DomainType.CONTINUUM: ContinuumDomainHandler
+            DomainType.CONTINUUM: ContinuumDomainHandler,
+            DomainType.LORA: LoraDomainHandler
         }
     
-    def process_request(self, **params) -> Dict[str, Any]:
+    def process_request(self, **params) -> dict[str, Any]:
         """Route request to appropriate domain handler."""
         current_user = params['current_user']
-        user_id = current_user['user_id']
+        user_id = current_user.user_id
         request_data = params['request_data']
         
         # Set user context for any functions that need it
@@ -1812,7 +2246,7 @@ def get_actions_handler() -> ActionsEndpoint:
 @router.post("/actions")
 async def actions_endpoint(
     request_data: ActionRequest,
-    current_user: dict = Depends(get_current_user)
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
 ):
     """Execute state-changing operations through domain-routed actions."""
     try:
@@ -1891,9 +2325,9 @@ def _get_tool_instance(tool_name: str):
 async def query_tool(
     tool_name: str,
     operation: str = Query(..., description="Tool operation to execute"),
-    date_type: Optional[str] = Query(None, description="Date filter type (for reminder_tool)"),
-    category: Optional[str] = Query(None, description="Category filter (for reminder_tool)"),
-    current_user: dict = Depends(get_current_user)
+    date_type: str | None = Query(None, description="Date filter type (for reminder_tool)"),
+    category: str | None = Query(None, description="Category filter (for reminder_tool)"),
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
 ):
     """
     Query a tool directly for read-only operations.
@@ -1904,7 +2338,7 @@ async def query_tool(
     Only whitelisted tools can be queried.
     """
     # Set user context
-    set_current_user_id(current_user["user_id"])
+    set_current_user_id(current_user.user_id)
 
     if tool_name not in QUERYABLE_TOOLS:
         return JSONResponse(

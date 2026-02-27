@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-02-22 22:34:39",
+  "config": {
+    "model": "minimax/minimax-m2.5",
+    "temperature": 1.0,
+    "max_tokens": 16000,
+    "seed": 3,
+    "length_filter": null
+  },
+  "segment": {
+    "segment_id": "eb69a043-bbf4-4271-a29e-53fcf96156aa",
+    "continuum_id": "d7806ad8-92ed-41e4-bb8f-75f36e4cb6c1",
+    "display_title": "Memory refresh, tech demo restart, Marquette history",
+    "turn_count": 0,
+    "message_count": 16,
+    "complexity_score": 2,
+    "summary": "User requested memory refresh on persistent self-editing architecture for MIRA instances, referencing a December 1st conversation about deferred tool-loading for behavioral calibration injection via Anthropic's just-in-time tool descriptions to solve context-window overhead. After locating the relevant segment, user restarted a tech demo video and pivoted to requesting geographical and historical information about Marquette, Michigan (Lake Superior college town, population ~20,000, built on 1800s iron mining heritage, home to Northern Michigan University) and Jacques Marquette (1637\u20131675 French Jesuit missionary and explorer, led 1673 Mississippi River expedition with Louis Jolliet, documented Indigenous languages and cultures, died young but left detailed journals that became primary historical sources)."
+  },
+  "results": {
+    "memory_count": 2,
+    "parse_success": true,
+    "elapsed_ms": 10902,
+    "error": null,
+    "memories": [
+      {
+        "text": "Discussing persistent self-model architecture for MIRA using Anthropic's deferred tool-loading for just-in-time behavioral calibration injection, solving context-window tax problem"
+      },
+      {
+        "text": "Progressive call due at noon today \u2014 needs proof that user no longer has the Kei truck and has switched van insurance over"
+      }
+    ]
+  },
+  "raw_response": "[\n  {\n    \"text\": \"Discussing persistent self-model architecture for MIRA using Anthropic's deferred tool-loading for just-in-time behavioral calibration injection, solving context-window tax problem\"\n  },\n  {\n    \"text\": \"Progressive call due at noon today \u2014 needs proof that user no longer has the Kei truck and has switched van insurance over\"\n  }\n]"
+}

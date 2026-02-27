@@ -115,22 +115,15 @@ Be systematic and thorough."""
 
     def _get_llm_client(self):
         """Get LLM client using tool-specific config."""
-        from clients.llm_provider import GenericProviderClient
-        from clients.vault_client import get_api_key
+        from clients.llm_provider import LLMProvider
+        return LLMProvider()
 
-        # Get API key (None for local providers like Ollama)
+    def _get_api_key(self) -> Optional[str]:
+        """Get API key for generic provider (None for local providers like Ollama)."""
         if self.config.llm_api_key_name:
-            api_key = get_api_key(self.config.llm_api_key_name)
-        else:
-            api_key = None  # Local provider (Ollama) - no API key needed
-
-        return GenericProviderClient(
-            api_key=api_key,
-            model=self.config.llm_model,
-            api_endpoint=self.config.llm_endpoint,
-            temperature=0.3,
-            max_tokens=1000
-        )
+            from clients.vault_client import get_api_key
+            return get_api_key(self.config.llm_api_key_name)
+        return None
 
     def _safe_parse_json(self, content: str, fallback: Any = None) -> Any:
         """Parse JSON with repair fallback for malformed LLM responses.
@@ -173,15 +166,18 @@ Return JSON:
     "strategy": "brief strategy description"
 }}"""
 
-        client = self._get_llm_client()
-        response = client.generate_response(
+        llm = self._get_llm_client()
+        response = llm.generate_response(
             messages=[
                 {"role": "system", "content": self.SEARCH_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
-            ]
+            ],
+            endpoint_url=self.config.llm_endpoint,
+            model_override=self.config.llm_model,
+            api_key_override=self._get_api_key(),
         )
 
-        content = client.extract_text_content(response)
+        content = llm.extract_text_content(response)
         # Fallback plan if parsing fails
         fallback_plan = {
             "entities": [],
@@ -216,15 +212,18 @@ Return JSON or null if search is complete:
     "reason": "why this search is needed"
 }}"""
 
-        client = self._get_llm_client()
-        response = client.generate_response(
+        llm = self._get_llm_client()
+        response = llm.generate_response(
             messages=[
                 {"role": "system", "content": self.SEARCH_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
-            ]
+            ],
+            endpoint_url=self.config.llm_endpoint,
+            model_override=self.config.llm_model,
+            api_key_override=self._get_api_key(),
         )
 
-        content = client.extract_text_content(response).strip()
+        content = llm.extract_text_content(response).strip()
         if content == "null" or not content:
             return None
 
@@ -263,15 +262,18 @@ Return JSON:
     "missing": "what's still needed" (only if not complete)
 }}"""
 
-        client = self._get_llm_client()
-        response = client.generate_response(
+        llm = self._get_llm_client()
+        response = llm.generate_response(
             messages=[
                 {"role": "system", "content": self.SEARCH_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
-            ]
+            ],
+            endpoint_url=self.config.llm_endpoint,
+            model_override=self.config.llm_model,
+            api_key_override=self._get_api_key(),
         )
 
-        content = client.extract_text_content(response)
+        content = llm.extract_text_content(response)
         # Fallback: assume complete if parsing fails (avoid infinite loop)
         fallback = {"complete": True, "reason": "Evaluation parsing failed, assuming complete"}
         result = self._safe_parse_json(content, fallback)
@@ -336,15 +338,18 @@ Return JSON:
     "limitations": "any gaps or caveats"
 }}"""
 
-        client = self._get_llm_client()
-        response = client.generate_response(
+        llm = self._get_llm_client()
+        response = llm.generate_response(
             messages=[
                 {"role": "system", "content": self.SEARCH_SYSTEM_PROMPT},
                 {"role": "user", "content": prompt}
-            ]
+            ],
+            endpoint_url=self.config.llm_endpoint,
+            model_override=self.config.llm_model,
+            api_key_override=self._get_api_key(),
         )
 
-        content = client.extract_text_content(response)
+        content = llm.extract_text_content(response)
         # Fallback summary if parsing fails
         fallback = {
             "query": query,

@@ -1,0 +1,19 @@
+#!/bin/bash
+# Vault unseal oneshot for s6-overlay
+# Runs after vault service starts, unseals vault and sets up AppRole auth
+
+echo "Waiting for Vault to be ready..."
+
+# Wait for Vault to be listening (up to 30 seconds)
+attempts=0
+while ! curl -s http://127.0.0.1:8200/v1/sys/health > /dev/null 2>&1; do
+    attempts=$((attempts + 1))
+    if [ $attempts -gt 30 ]; then
+        echo "ERROR: Vault not responding after 30 seconds"
+        exit 1
+    fi
+    sleep 1
+done
+
+echo "Vault is listening, running unseal script..."
+exec /opt/mira/app/deploy/docker/scripts/vault-unseal.sh

@@ -3,14 +3,12 @@ Valkey-based message cache for continuum messages.
 
 Provides distributed caching with event-driven invalidation via segment timeout.
 """
+from __future__ import annotations
+
 import json
 import logging
-from typing import Optional, List, Dict, Any
-from datetime import datetime
 
 from cns.core.message import Message
-from clients.valkey_client import ValkeyClient
-from config import config
 from utils.user_context import get_current_user_id
 from utils.timezone_utils import parse_utc_time_string
 
@@ -25,21 +23,14 @@ class ValkeyMessageCache:
     not TTL-based. Cache miss indicates new session requiring boundary marker.
     """
 
-    def __init__(self, valkey_client: Optional[ValkeyClient] = None):
+    def __init__(self):
         """
         Initialize Valkey continuum cache.
 
         Cache invalidation is event-driven via segment timeout, not TTL-based.
-
-        Args:
-            valkey_client: Valkey client instance (creates one if not provided)
         """
-        # Get or create Valkey client
-        if valkey_client:
-            self.valkey = valkey_client
-        else:
-            from clients.valkey_client import get_valkey_client
-            self.valkey = get_valkey_client()
+        from clients.valkey_client import get_valkey_client
+        self.valkey = get_valkey_client()
 
         self.key_prefix = "continuum"
 
@@ -49,13 +40,13 @@ class ValkeyMessageCache:
         """Generate cache key for user continuum messages."""
         return f"{self.key_prefix}:{user_id}:messages"
 
-    def _serialize_messages(self, messages: List[Message]) -> str:
+    def _serialize_messages(self, messages: list[Message]) -> str:
         """
         Serialize messages to JSON for storage.
-        
+
         Args:
             messages: List of Message objects
-            
+
         Returns:
             JSON string representation
         """
@@ -65,44 +56,39 @@ class ValkeyMessageCache:
                 'id': str(msg.id),
                 'content': msg.content,
                 'role': msg.role,
-                'created_at': msg.created_at.isoformat() if msg.created_at else None,
+                'created_at': msg.created_at.isoformat(),
                 'metadata': msg.metadata
             }
             serialized.append(msg_dict)
-        
+
         return json.dumps(serialized)
-    
-    def _deserialize_messages(self, data: str) -> List[Message]:
+
+    def _deserialize_messages(self, data: str) -> list[Message]:
         """
         Deserialize JSON data back to Message objects.
-        
+
         Args:
             data: JSON string from Valkey
-            
+
         Returns:
             List of Message objects
         """
         messages = []
         serialized = json.loads(data)
-        
+
         for msg_dict in serialized:
-            # Parse created_at if present
-            created_at = None
-            if msg_dict.get('created_at'):
-                created_at = parse_utc_time_string(msg_dict['created_at'])
-            
             message = Message(
                 id=msg_dict['id'],
                 content=msg_dict['content'],
                 role=msg_dict['role'],
-                created_at=created_at,
+                created_at=parse_utc_time_string(msg_dict['created_at']),
                 metadata=msg_dict.get('metadata', {})
             )
             messages.append(message)
-        
+
         return messages
     
-    def get_continuum(self) -> Optional[List[Message]]:
+    def get_continuum(self) -> list[Message] | None:
         """
         Get continuum messages from Valkey cache.
 
@@ -128,7 +114,7 @@ class ValkeyMessageCache:
             logger.debug(f"No cached continuum found for user {user_id}")
             return None
 
-    def set_continuum(self, messages: List[Message]) -> None:
+    def set_continuum(self, messages: list[Message]) -> None:
         """
         Store continuum messages in Valkey.
 

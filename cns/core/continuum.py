@@ -1,15 +1,18 @@
 """
 Continuum aggregate root for CNS.
 
-Immutable continuum entity that encapsulates business logic
-and state transitions without external dependencies.
+Mutable aggregate that encapsulates business logic and state transitions.
+ContinuumState is frozen, but the aggregate itself maintains a mutable
+message cache that is appended to during processing and replaced on
+session reload.
 """
+from __future__ import annotations
+
 import logging
-from typing import Tuple, List, Optional, Union, Dict, Any
 from uuid import UUID, uuid4
 
-from .message import Message
-from .state import ContinuumState
+from .message import Message, MessageMetadata, ContentBlock
+from .state import ContinuumState, ContinuumStateDict
 from .events import ContinuumEvent
 
 logger = logging.getLogger(__name__)
@@ -19,17 +22,17 @@ class Continuum:
     """
     Continuum aggregate root.
 
-    Immutable entity that manages continuum state and business rules.
-    All state changes return new continuum instances and domain events.
+    Manages continuum state and message cache. ContinuumState is frozen,
+    but the message cache is mutable (appended during turns, replaced on reload).
     """
 
     def __init__(self, state: ContinuumState):
         """Initialize continuum with state."""
         self._state = state
-        self._message_cache = []  # Hot cache of recent messages
+        self._message_cache: list[Message] = []  # Hot cache of recent messages
 
     @classmethod
-    def create_new(cls, user_id: str) -> 'Continuum':
+    def create_new(cls, user_id: str) -> Continuum:
         """Create a new continuum for user."""
         state = ContinuumState(
             id=uuid4(),
@@ -48,23 +51,23 @@ class Continuum:
         return self._state.user_id
 
     @property
-    def messages(self) -> List[Message]:
+    def messages(self) -> list[Message]:
         """Get cached messages - must be initialized through ContinuumPool."""
         return self._message_cache
 
-    def apply_cache(self, messages: List[Message]) -> None:
+    def apply_cache(self, messages: list[Message]) -> None:
         """
         Apply an externally managed cache update.
         
-        Used by hot cache manager to update the cache after operations
-        like topic-based pruning and summary insertion.
+        Used by segment cache loader to update the cache after operations
+        like segment reconstruction and message loading.
         
         Args:
             messages: New message cache to apply
         """
         self._message_cache = messages
     
-    def add_user_message(self, content: Union[str, List[Dict[str, Any]]]) -> tuple[Message, List[ContinuumEvent]]:
+    def add_user_message(self, content: str | list[ContentBlock]) -> tuple[Message, list[ContinuumEvent]]:
         """
         Add user message to continuum.
 
@@ -79,7 +82,7 @@ class Continuum:
 
         return message, []
     
-    def add_assistant_message(self, content: str, metadata: dict = None) -> tuple[Message, List[ContinuumEvent]]:
+    def add_assistant_message(self, content: str, metadata: MessageMetadata | None = None) -> tuple[Message, list[ContinuumEvent]]:
         """
         Add assistant message to continuum.
 
@@ -98,7 +101,7 @@ class Continuum:
 
         return message, []
     
-    def add_tool_message(self, content: str, tool_call_id: str) -> List[ContinuumEvent]:
+    def add_tool_message(self, content: str, tool_call_id: str) -> list[ContinuumEvent]:
         """
         Add tool result message to continuum.
 
@@ -118,17 +121,14 @@ class Continuum:
         # Tool messages don't generate events by themselves
         return []
 
-    def get_messages_for_api(self) -> List[dict]:
+    def get_messages_for_api(self) -> list[dict[str, object]]:
         """Get messages formatted for LLM API with proper prefixes and cache control."""
         from cns.services.segment_helpers import format_segment_for_display
         from utils.timezone_utils import convert_from_utc
         from utils.user_context import get_user_preferences
 
-        # Get user timezone for timestamp injection - no fallback, skip if unavailable
-        try:
-            user_tz = get_user_preferences().timezone
-        except Exception:
-            user_tz = None
+        # Get user timezone for timestamp injection
+        user_tz = get_user_preferences().timezone
 
         formatted_messages = []
 
@@ -142,8 +142,7 @@ class Continuum:
                 content = format_segment_for_display(message)
 
             # Inject ephemeral timestamps for user/assistant messages (not persisted)
-            elif (user_tz is not None and
-                  message.role in ("user", "assistant") and
+            elif (message.role in ("user", "assistant") and
                   not message.metadata.get('is_segment_boundary') and
                   not message.metadata.get('system_notification')):
                 local_dt = convert_from_utc(message.created_at, user_tz)
@@ -151,14 +150,18 @@ class Continuum:
                 if isinstance(content, str):
                     content = f"[{timestamp}] {content}"
                 elif isinstance(content, list):
-                    # Multimodal: inject into first text block
+                    # Shallow copy to avoid mutating the frozen Message's content
+                    content = [block.copy() for block in content]
                     for block in content:
                         if block.get("type") == "text":
                             block["text"] = f"[{timestamp}] {block['text']}"
                             break
 
             if message.role == "assistant" and message.metadata.get("has_tool_calls", False):
-                # Assistant message with tool calls
+                # Assistant message with tool calls — always structured blocks
+                # for stable cache prefix when BP3 moves between messages
+                if isinstance(content, str):
+                    content = [{"type": "text", "text": content}]
                 msg_dict = {
                     "role": "assistant",
                     "content": content
@@ -166,6 +169,15 @@ class Continuum:
                 if "tool_calls" in message.metadata:
                     msg_dict["tool_calls"] = message.metadata["tool_calls"]
                 formatted_messages.append(msg_dict)
+            elif message.role == "assistant":
+                # Always use structured blocks so block format stays identical
+                # when cache_control moves to a newer message next turn
+                if isinstance(content, str):
+                    content = [{"type": "text", "text": content}]
+                formatted_messages.append({
+                    "role": "assistant",
+                    "content": content
+                })
             elif message.role == "tool":
                 # Tool result message
                 formatted_messages.append({
@@ -180,37 +192,31 @@ class Continuum:
                     "content": message.content  # Keep original for multimodal
                 })
             else:
-                # Standard text message
+                # Standard text message (user, system)
                 formatted_messages.append({
                     "role": message.role,
                     "content": content
                 })
 
-        # Apply cache_control to last assistant message for conversation history caching
-        # Anthropic ignores cache markers on content < 1024 tokens, so always mark
-        # and let the API handle threshold logic. This keeps us stateless per-request.
+        # Apply cache_control to last assistant message for conversation history caching.
+        # All assistant messages are already structured blocks (normalized above),
+        # so we just annotate the last one. Anthropic ignores cache markers on content
+        # below the minimum token threshold, so always mark and let the API decide.
         for i in range(len(formatted_messages) - 1, -1, -1):
             if formatted_messages[i]["role"] == "assistant":
                 content = formatted_messages[i]["content"]
-
-                # Ensure content is structured as blocks (required for cache_control)
-                if isinstance(content, str):
-                    content = [{"type": "text", "text": content}]
-
-                # Apply cache_control to the last content block
                 if isinstance(content, list) and len(content) > 0:
-                    content[-1]["cache_control"] = {"type": "ephemeral"}
-                    formatted_messages[i]["content"] = content
+                    content[-1]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
                 break
 
         return formatted_messages
     
-    def to_dict(self) -> dict:
+    def to_dict(self) -> ContinuumStateDict:
         """Convert continuum to dictionary for persistence."""
         return self._state.to_dict()
 
     @classmethod
-    def from_dict(cls, data: dict) -> 'Continuum':
+    def from_dict(cls, data: ContinuumStateDict) -> Continuum:
         """Create continuum from dictionary."""
         state = ContinuumState.from_dict(data)
         return cls(state)

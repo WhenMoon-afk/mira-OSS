@@ -4,15 +4,13 @@ Event Bus Implementation for CNS
 Provides event publishing and subscription for CNS components.
 Integrates CNS events with existing MIRA components for system coordination.
 """
+from __future__ import annotations
 
 import logging
-from typing import List, Callable, Dict, Any, Optional, Tuple
 import threading
+from collections.abc import Callable
 
-from ..core.events import (
-    ContinuumEvent,
-    WorkingMemoryUpdatedEvent
-)
+from ..core.events import ContinuumEvent
 
 logger = logging.getLogger(__name__)
 
@@ -25,32 +23,28 @@ class EventBus:
     between CNS and working memory, tool repository, and other MIRA components.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize event bus."""
-        self._subscribers: Dict[str, List[Callable]] = {}
+        self._subscribers: dict[str, list[Callable[[ContinuumEvent], None]]] = {}
 
         # Shutdown event for cleanup
         self._shutdown_event = threading.Event()
 
         # Register built-in MIRA integrations
         self._register_mira_integrations()
-        
-    def _register_mira_integrations(self):
+
+    def _register_mira_integrations(self) -> None:
         """Register built-in event handlers for MIRA component integration."""
-
-        # Working memory updated → could trigger system prompt refresh
-        self.subscribe('WorkingMemoryUpdatedEvent', self._handle_working_memory_updated)
-
         logger.info("Registered built-in MIRA component integrations")
-        
-    def publish(self, event: ContinuumEvent):
+
+    def publish(self, event: ContinuumEvent) -> None:
         """
         Publish an event to all subscribers.
-        
+
         Handles both sync and async callbacks appropriately:
         - Sync callbacks are executed immediately
         - Async callbacks are queued for processing in the event loop
-        
+
         Args:
             event: ContinuumEvent to publish
         """
@@ -68,23 +62,23 @@ class EventBus:
                     
         logger.debug(f"Event {event_type} published to {len(self._subscribers.get(event_type, []))} subscribers")
     
-    def subscribe(self, event_type: str, callback: Callable):
+    def subscribe(self, event_type: str, callback: Callable[[ContinuumEvent], None]) -> None:
         """
         Subscribe to events of a specific type.
-        
+
         Args:
             event_type: Name of event class to subscribe to
-            callback: Async function to call when event is published
+            callback: Function to call when event is published
         """
         if event_type not in self._subscribers:
             self._subscribers[event_type] = []
         self._subscribers[event_type].append(callback)
         logger.debug(f"Subscribed to {event_type} events")
     
-    def unsubscribe(self, event_type: str, callback: Callable):
+    def unsubscribe(self, event_type: str, callback: Callable[[ContinuumEvent], None]) -> None:
         """
         Unsubscribe from events of a specific type.
-        
+
         Args:
             event_type: Name of event class to unsubscribe from
             callback: Function to remove from subscribers
@@ -96,22 +90,15 @@ class EventBus:
             except ValueError:
                 logger.warning(f"Callback not found in {event_type} subscribers")
                 
-    # MIRA Component Integration Event Handlers
-
-    def _handle_working_memory_updated(self, event: WorkingMemoryUpdatedEvent):
-        """Handle working memory updates for monitoring."""
-        logger.info(f"Working memory updated for continuum {event.continuum_id}: {event.updated_categories}")
-        # Future: Could trigger system prompt refresh or other actions
-            
     def get_subscriber_count(self, event_type: str) -> int:
         """Get number of subscribers for an event type."""
         return len(self._subscribers.get(event_type, []))
-        
-    def get_all_event_types(self) -> List[str]:
+
+    def get_all_event_types(self) -> list[str]:
         """Get all event types with subscribers."""
         return list(self._subscribers.keys())
-        
-    def clear_subscribers(self, event_type: Optional[str] = None):
+
+    def clear_subscribers(self, event_type: str | None = None) -> None:
         """
         Clear subscribers for specific event type or all events.
         
@@ -129,7 +116,7 @@ class EventBus:
     
     
     
-    def shutdown(self):
+    def shutdown(self) -> None:
         """Shutdown the event bus and clean up resources."""
         logger.info("Shutting down event bus")
 

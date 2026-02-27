@@ -4,9 +4,12 @@ Stream event types for LLM provider streaming.
 Provides a clean, type-safe event hierarchy for streaming responses
 through the LLM pipeline.
 """
+from __future__ import annotations
+
 import time
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional
+
+import anthropic.types
 
 
 @dataclass
@@ -46,7 +49,7 @@ class ToolExecutingEvent(StreamEvent):
     """Tool execution started."""
     tool_name: str
     tool_id: str
-    arguments: Dict[str, Any]
+    arguments: dict[str, object]
     type: str = field(default="tool_executing", init=False)
     timestamp: float = field(default_factory=time.time, init=False)
 
@@ -74,7 +77,7 @@ class ToolErrorEvent(StreamEvent):
 @dataclass
 class CompleteEvent(StreamEvent):
     """Stream completed with final response."""
-    response: Dict[str, Any]
+    response: anthropic.types.Message
     type: str = field(default="complete", init=False)
     timestamp: float = field(default_factory=time.time, init=False)
 
@@ -83,7 +86,6 @@ class CompleteEvent(StreamEvent):
 class ErrorEvent(StreamEvent):
     """Stream error occurred."""
     error: str
-    technical_details: Optional[str] = None
     type: str = field(default="error", init=False)
     timestamp: float = field(default_factory=time.time, init=False)
 
@@ -103,4 +105,15 @@ class RetryEvent(StreamEvent):
     max_attempts: int
     reason: str
     type: str = field(default="retry", init=False)
+    timestamp: float = field(default_factory=time.time, init=False)
+
+
+@dataclass
+class FileArtifactEvent(StreamEvent):
+    """File artifact produced by code execution."""
+    file_id: str
+    filename: str
+    mime_type: str
+    size_bytes: int
+    type: str = field(default="file_artifact", init=False)
     timestamp: float = field(default_factory=time.time, init=False)

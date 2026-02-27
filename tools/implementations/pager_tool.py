@@ -13,24 +13,23 @@ Datetime handling follows the UTC-everywhere approach:
 """
 
 import logging
-import os
 import json
 import uuid
 import hashlib
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
+from datetime import timedelta
+from typing import Dict, Any, Optional
 from pydantic import BaseModel, Field
 
 from tools.repo import Tool
 from tools.registry import registry
 from config.config_manager import config
 from utils.timezone_utils import (
-    validate_timezone, get_default_timezone, convert_to_timezone,
-    format_datetime, parse_time_string, utc_now, ensure_utc
+    get_default_timezone,
+    format_datetime, utc_now
 )
 from clients.sqlite_client import get_sqlite_client
 from clients.llm_provider import LLMProvider
-from utils.user_context import get_current_user_id
+from utils.user_context import get_internal_llm
 
 # Define configuration class for PagerTool
 class PagerToolConfig(BaseModel):
@@ -272,7 +271,8 @@ class PagerTool(Tool):
     def __init__(self):
         """Initialize the pager tool with database access and LLM provider."""
         super().__init__()
-        self.llm = LLMProvider()
+        tidyup_llm = get_internal_llm('tidyup')
+        self.llm = LLMProvider(model=tidyup_llm.model)
         
         # Initialize logger
         self.logger = logging.getLogger(__name__)
@@ -328,9 +328,8 @@ class PagerTool(Tool):
             db_client = get_sqlite_client(str(user_db_path), self.user_id)
 
             # Look up the user's single active pager device
-            pager_devices = db_client.select(
-                'pager_devices',
-                'user_id = :user_id AND active = :active',
+            pager_devices = db_client.execute_query(
+                "SELECT * FROM pager_devices WHERE user_id = :user_id AND active = :active",
                 {'user_id': self.user_id, 'active': 1}
             )
 
@@ -361,7 +360,12 @@ class PagerTool(Tool):
             }
 
             # Insert message (WRITE-ONLY operation)
-            db_client.insert('pager_messages', message_data)
+            columns = ', '.join(message_data.keys())
+            placeholders = ', '.join(f':{k}' for k in message_data.keys())
+            db_client.execute_insert(
+                f"INSERT INTO pager_messages ({columns}) VALUES ({placeholders})",
+                message_data
+            )
 
             logger.info(
                 f"Delivered federated message {message_id} from {from_address} "
@@ -576,17 +580,17 @@ class PagerTool(Tool):
             "message": f"Pager device '{name}' registered successfully with ID {pager_id}"
         }
 
-    def _get_lattice_identity(self) -> Dict[str, Any]:
+    def _get_lattice_identity(self) -> "LatticeIdentity":
         """
         Get server identity from Lattice discovery daemon.
 
         Returns:
-            Dict with server_id, server_uuid, fingerprint
+            LatticeIdentity with server_id, server_uuid, fingerprint, public_key
 
         Raises:
             ValueError: If Lattice service unavailable or not configured
         """
-        from clients.lattice_client import get_lattice_client
+        from clients.lattice_client import get_lattice_client, LatticeIdentity
         import httpx
 
         try:
@@ -827,12 +831,12 @@ class PagerTool(Tool):
 
             self.logger.info(
                 f"Queued federated message from {from_address} to {recipient_address} "
-                f"(message_id: {result.get('message_id')})"
+                f"(message_id: {result['message_id']})"
             )
 
             return {
                 "success": True,
-                "message_id": result.get("message_id"),
+                "message_id": result["message_id"],
                 "status": "queued_for_federation",
                 "from_address": from_address,
                 "to_address": recipient_address,
@@ -1337,13 +1341,12 @@ Original message:
 Provide ONLY the distilled message, no explanations or meta-text."""
 
         try:
-            response = self.llm.chat(
+            response = self.llm.generate_response(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
                 max_tokens=200
             )
-            
-            distilled = response.content.strip()
+
+            distilled = self.llm.extract_text_content(response).strip()
             
             # Ensure it fits within max_length
             if len(distilled) > max_length:

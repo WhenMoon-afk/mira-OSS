@@ -5,11 +5,12 @@ Provides get_current_user dependency that validates Bearer token against
 the API key stored in Vault.
 """
 
-from typing import Optional, Dict, Any
+from typing import Optional
 
 from fastapi import HTTPException, Request, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
+from auth.types import APITokenContext
 from utils.user_context import set_current_user_id, set_current_user_data
 
 
@@ -20,7 +21,7 @@ security = HTTPBearer(auto_error=False)
 async def get_current_user(
     request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
-) -> Dict[str, Any]:
+) -> APITokenContext:
     """Verify Bearer token and inject single user context."""
     if not credentials or not credentials.credentials:
         raise HTTPException(status_code=401, detail="Missing authentication token")
@@ -37,7 +38,8 @@ async def get_current_user(
         "email": user_email
     })
 
-    return {
-        "user_id": user_id,
-        "email": user_email
-    }
+    return APITokenContext(
+        user_id=user_id,
+        token_type="api_key",
+        token_id="oss_single_user"
+    )

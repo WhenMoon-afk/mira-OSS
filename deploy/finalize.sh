@@ -14,19 +14,20 @@ print_header "Step 15: MIRA CLI Setup"
 echo -ne "${DIM}${ARROW}${RESET} Creating mira wrapper script... "
 
 # Create mira wrapper script that sets Vault environment variables
-cat > /opt/mira/mira.sh <<'WRAPPER_EOF'
+# Note: We use HEREDOC without quotes for the start so we can interpolate CONFIG_UPDATE_CHECK
+cat > /opt/mira/mira.sh <<WRAPPER_EOF
 #!/bin/bash
 # MIRA CLI wrapper - sets Vault environment variables for talkto_mira.py
 
 # Save original directory
-ORIGINAL_DIR="$(pwd)"
+ORIGINAL_DIR="\$(pwd)"
 
 # Set Vault address
 export VAULT_ADDR='http://127.0.0.1:8200'
 
 # Check if Vault is running and accessible
 if ! curl -s http://127.0.0.1:8200/v1/sys/health > /dev/null 2>&1; then
-    echo "Error: Vault is not running at $VAULT_ADDR"
+    echo "Error: Vault is not running at \$VAULT_ADDR"
     echo "Start Vault first:"
     echo "  Linux: sudo systemctl start vault"
     echo "  macOS: vault server -config=/opt/vault/config/vault.hcl &"
@@ -36,14 +37,14 @@ fi
 # Check if Vault is sealed and auto-unseal if needed
 # vault status exit codes: 0=unsealed, 2=sealed, 1=error
 vault status > /dev/null 2>&1
-VAULT_STATUS=$?
+VAULT_STATUS=\$?
 
-if [ $VAULT_STATUS -eq 2 ]; then
+if [ \$VAULT_STATUS -eq 2 ]; then
     echo "Vault is sealed. Attempting to unseal..."
     if [ -f /opt/vault/init-keys.txt ]; then
-        UNSEAL_KEY=$(grep 'Unseal Key 1:' /opt/vault/init-keys.txt | awk '{print $NF}')
-        if [ -n "$UNSEAL_KEY" ]; then
-            if vault operator unseal "$UNSEAL_KEY" > /dev/null 2>&1; then
+        UNSEAL_KEY=\$(grep 'Unseal Key 1:' /opt/vault/init-keys.txt | awk '{print \$NF}')
+        if [ -n "\$UNSEAL_KEY" ]; then
+            if vault operator unseal "\$UNSEAL_KEY" > /dev/null 2>&1; then
                 echo "Vault unsealed successfully."
             else
                 echo "Error: Failed to unseal Vault"
@@ -58,27 +59,38 @@ if [ $VAULT_STATUS -eq 2 ]; then
         echo "Run /opt/vault/unseal.sh manually or check Vault configuration."
         exit 1
     fi
-elif [ $VAULT_STATUS -eq 1 ]; then
+elif [ \$VAULT_STATUS -eq 1 ]; then
     echo "Error: Could not determine Vault status"
     exit 1
 fi
 
 # Set Vault credentials (files contain just the raw value)
-export VAULT_ROLE_ID=$(cat /opt/vault/role-id.txt)
-export VAULT_SECRET_ID=$(cat /opt/vault/secret-id.txt)
+export VAULT_ROLE_ID=\$(cat /opt/vault/role-id.txt)
+export VAULT_SECRET_ID=\$(cat /opt/vault/secret-id.txt)
 
 # Change to MIRA app directory
 cd /opt/mira/app
 
 # Launch MIRA CLI
-/opt/mira/app/venv/bin/python3 /opt/mira/app/talkto_mira.py "$@"
+/opt/mira/app/venv/bin/python3 /opt/mira/app/talkto_mira.py "\$@"
 
 # Return to original directory
-cd "$ORIGINAL_DIR"
+cd "\$ORIGINAL_DIR"
 WRAPPER_EOF
 echo -e "${CHECKMARK}"
 
 run_quiet chmod +x /opt/mira/mira.sh
+
+# Apply update check preference to talkto_mira.py
+if [ "${CONFIG_UPDATE_CHECK}" = "no" ]; then
+    echo -ne "${DIM}${ARROW}${RESET} Disabling update check in talkto_mira.py... "
+    if [ "$OS" = "macos" ]; then
+        sudo sed -i '' 's/^UPDATE_CHECK_ENABLED = True$/UPDATE_CHECK_ENABLED = False/' /opt/mira/app/talkto_mira.py
+    else
+        sudo sed -i 's/^UPDATE_CHECK_ENABLED = True$/UPDATE_CHECK_ENABLED = False/' /opt/mira/app/talkto_mira.py
+    fi
+    echo -e "${CHECKMARK}"
+fi
 
 # Add alias to shell RC
 if [ "$OS" = "linux" ]; then

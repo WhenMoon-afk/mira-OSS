@@ -3,11 +3,12 @@ Segment Cache Loader for CNS.
 
 Loads context for new sessions with segment summaries and session boundary markers.
 """
+from __future__ import annotations
+
 import logging
-from datetime import datetime
-from typing import List, Optional
 
 from cns.core.message import Message
+from cns.infrastructure.continuum_repository import ContinuumRepository
 from cns.services.segment_helpers import create_collapse_marker, create_session_boundary_marker
 from config import config
 
@@ -22,7 +23,7 @@ class SegmentCacheLoader:
     recent messages and adds a session boundary marker.
     """
 
-    def __init__(self, repository):
+    def __init__(self, repository: ContinuumRepository):
         """
         Initialize the cache manager.
 
@@ -31,7 +32,7 @@ class SegmentCacheLoader:
         """
         self.repository = repository
 
-    def load_session_cache(self, continuum_id: str, user_id: str) -> List[Message]:
+    def load_session_cache(self, continuum_id: str, user_id: str) -> list[Message]:
         """
         Load cache for a new session with boundary marker.
 
@@ -58,7 +59,7 @@ class SegmentCacheLoader:
         segment_summaries = self._load_segment_summaries(continuum_id)
 
         # Step 2: Load continuity messages (last 5 turns before active sentinel)
-        continuity_messages = self._load_continuity_messages(continuum_id, turn_count=5)
+        continuity_messages = self._load_continuity_messages(continuum_id, turn_count=4)
 
         # Step 3: Create collapse marker to indicate older searchable content
         collapse_marker = create_collapse_marker()
@@ -80,7 +81,7 @@ class SegmentCacheLoader:
 
         return messages
 
-    def _load_segment_summaries(self, continuum_id: str) -> List[Message]:
+    def _load_segment_summaries(self, continuum_id: str) -> list[Message]:
         """
         Load recent collapsed segment sentinels using complexity-based selection.
 
@@ -111,7 +112,7 @@ class SegmentCacheLoader:
         self,
         continuum_id: str,
         user_id: str
-    ) -> List[Message]:
+    ) -> list[Message]:
         """
         Select segment summaries based on complexity score accumulation.
 
@@ -186,7 +187,7 @@ class SegmentCacheLoader:
         # Candidates are newest-first, so reverse the selected slice
         return list(reversed(selected))
 
-    def _load_active_segment_messages(self, continuum_id: str) -> List[Message]:
+    def _load_active_segment_messages(self, continuum_id: str) -> list[Message]:
         """
         Load all messages from the active segment.
 
@@ -222,7 +223,7 @@ class SegmentCacheLoader:
         self,
         continuum_id: str,
         turn_count: int
-    ) -> List[Message]:
+    ) -> list[Message]:
         """
         Load last N user/assistant turns before the active segment sentinel.
 

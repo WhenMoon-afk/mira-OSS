@@ -56,17 +56,19 @@ FROM conv, first_message_time, (VALUES
     (4, 'user', 'Hi, my name is ' || :'user_name' || '.', '{"system_generated": true}'::jsonb),
     (5, 'assistant', 'Hi ' || :'user_name' || ', nice to meet you. My name is MIRA and I''m a stateful AI assistant. That means that unlike AIs like ChatGPT or Claude, you and I will have one continuous conversation thread for as long as you have an account. Just log into the miraos.org website and I''ll be here ready to help. I extract and save facts & context automatically just like a person would. If you need to reference information from past sessions you can use the History button, or you can simply ask me about it and I''ll be able to search our conversation history to bring myself up to speed. I look forward to working with you and I hope that you find value in our chats.
 
-So, now that that''s out of the way: What do you want to chat about first? I can help you with a work project, we can brainstorm an idea, or just chitchat for a bit.', '{"system_generated": true}'::jsonb)
+So, now that that''s out of the way: What do you want to chat about first? I can help you with a work project, we can brainstorm an idea, or just chitchat for a bit.
+
+<mira:my_emotion>🤗</mira:my_emotion>', '{"system_generated": true}'::jsonb)
 ) AS initial_messages(seq, role, content, metadata)
 ORDER BY seq;
 
 -- Insert initial memories (embeddings will be generated on first access)
-INSERT INTO memories (user_id, text, importance_score, confidence, is_refined, last_refined_at)
+INSERT INTO memories (user_id, text, importance_score, confidence)
 VALUES
-    (:'user_id'::uuid, 'The user''s name is ' || :'user_name' || '.', 0.9, 1.0, true, NOW()),
-    (:'user_id'::uuid, 'The user is in ' || :'user_timezone' || ' timezone.', 0.8, 1.0, true, NOW()),
-    (:'user_id'::uuid, 'The user''s current focus is: ' || :'current_focus', 0.8, 1.0, true, NOW()),
-    (:'user_id'::uuid, 'The user''s email address is ' || :'user_email' || '.', 0.7, 1.0, true, NOW());
+    (:'user_id'::uuid, 'The user''s name is ' || :'user_name' || '.', 0.9, 1.0),
+    (:'user_id'::uuid, 'The user is in ' || :'user_timezone' || ' timezone.', 0.8, 1.0),
+    (:'user_id'::uuid, 'The user''s current focus is: ' || :'current_focus', 0.8, 1.0),
+    (:'user_id'::uuid, 'The user''s email address is ' || :'user_email' || '.', 0.7, 1.0);
 
 COMMIT;
 

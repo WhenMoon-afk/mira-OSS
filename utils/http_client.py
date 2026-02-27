@@ -21,7 +21,7 @@ Usage:
 import logging
 import random
 import time
-from typing import Dict, Any, Optional, Union
+from typing import Any, Callable, Optional
 from contextlib import contextmanager
 
 import httpx
@@ -81,7 +81,7 @@ class RetryMixin:
         """Determine if a request should be retried based on status code and attempt number."""
         return status_code in RETRYABLE_STATUS_CODES and attempt < self.max_retries
     
-    def _execute_with_retry(self, request_func, *args, **kwargs):
+    def _execute_with_retry(self, request_func: Callable[..., Response], *args: Any, **kwargs: Any) -> Response:
         """Execute a request function with retry logic."""
         last_exception = None
         
@@ -209,89 +209,6 @@ class Client(RetryMixin, httpx.Client):
             raise last_exception
 
 
-class AsyncClient(RetryMixin, httpx.AsyncClient):
-    """
-    Drop-in replacement for httpx.AsyncClient with automatic retry logic.
-    
-    Automatically retries on the same errors as Client.
-    """
-    
-    def __init__(self, *args, max_retries: Optional[int] = None, **kwargs):
-        # Set default timeout if not provided
-        if 'timeout' not in kwargs:
-            kwargs['timeout'] = DEFAULT_TIMEOUT
-        super().__init__(*args, max_retries=max_retries, **kwargs)
-    
-    async def request(self, *args, **kwargs):
-        """Override request method to add retry logic."""
-        # For async, we need an async version of _execute_with_retry
-        return await self._async_execute_with_retry(super().request, *args, **kwargs)
-    
-    async def get(self, *args, **kwargs):
-        """GET request with retry logic."""
-        return await self._async_execute_with_retry(super().get, *args, **kwargs)
-    
-    async def post(self, *args, **kwargs):
-        """POST request with retry logic."""
-        return await self._async_execute_with_retry(super().post, *args, **kwargs)
-    
-    async def put(self, *args, **kwargs):
-        """PUT request with retry logic."""
-        return await self._async_execute_with_retry(super().put, *args, **kwargs)
-    
-    async def patch(self, *args, **kwargs):
-        """PATCH request with retry logic."""
-        return await self._async_execute_with_retry(super().patch, *args, **kwargs)
-    
-    async def delete(self, *args, **kwargs):
-        """DELETE request with retry logic."""
-        return await self._async_execute_with_retry(super().delete, *args, **kwargs)
-    
-    async def _async_execute_with_retry(self, request_func, *args, **kwargs):
-        """Execute an async request function with retry logic."""
-        import asyncio
-        last_exception = None
-        
-        for attempt in range(self.max_retries + 1):
-            try:
-                return await request_func(*args, **kwargs)
-                
-            except HTTPStatusError as e:
-                last_exception = e
-                status_code = e.response.status_code if e.response else 0
-                
-                if self._should_retry(status_code, attempt):
-                    delay = self._calculate_delay(attempt, status_code)
-                    
-                    if status_code == 529:
-                        logger.warning(f"Server overloaded (529), attempt {attempt + 1}/{self.max_retries + 1}, retrying in {delay:.1f}s...")
-                    elif status_code == 429:
-                        logger.warning(f"Rate limited (429), attempt {attempt + 1}/{self.max_retries + 1}, retrying in {delay:.1f}s...")
-                    else:
-                        logger.warning(f"Server error ({status_code}), attempt {attempt + 1}/{self.max_retries + 1}, retrying in {delay:.1f}s...")
-                    
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    raise
-                    
-            except (ConnectError, ConnectTimeout) as e:
-                last_exception = e
-                if attempt < self.max_retries:
-                    delay = self._calculate_delay(attempt, 503)
-                    logger.warning(f"Connection error, attempt {attempt + 1}/{self.max_retries + 1}, retrying in {delay:.1f}s...")
-                    await asyncio.sleep(delay)
-                    continue
-                else:
-                    raise
-                    
-            except (TimeoutException, RequestError) as e:
-                raise
-        
-        if last_exception:
-            raise last_exception
-
-
 # Convenience functions that mirror httpx module-level functions
 def get(url: str, **kwargs) -> Response:
     """
@@ -367,31 +284,3 @@ def stream(method: str, url: str, **kwargs):
     with Client(max_retries=max_retries, http2=http2) as client:
         with client.stream(method, url, **kwargs) as response:
             yield response
-
-
-# Module configuration functions
-def configure_defaults(
-    max_retries: Optional[int] = None,
-    timeout: Optional[int] = None,
-    retryable_status_codes: Optional[set] = None,
-    backoff_status_codes: Optional[set] = None
-):
-    """
-    Configure module-level defaults for retry behavior.
-    
-    Args:
-        max_retries: Default maximum number of retries
-        timeout: Default timeout in seconds
-        retryable_status_codes: Set of HTTP status codes that should trigger retry
-        backoff_status_codes: Set of HTTP status codes that need longer backoff
-    """
-    global DEFAULT_MAX_RETRIES, DEFAULT_TIMEOUT, RETRYABLE_STATUS_CODES, BACKOFF_STATUS_CODES
-    
-    if max_retries is not None:
-        DEFAULT_MAX_RETRIES = max_retries
-    if timeout is not None:
-        DEFAULT_TIMEOUT = timeout
-    if retryable_status_codes is not None:
-        RETRYABLE_STATUS_CODES = retryable_status_codes
-    if backoff_status_codes is not None:
-        BACKOFF_STATUS_CODES = backoff_status_codes

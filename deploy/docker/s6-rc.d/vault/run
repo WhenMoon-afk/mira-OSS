@@ -1,0 +1,7 @@
+#!/command/execlineb -P
+# Vault service runner for s6-overlay
+
+foreground { echo "Starting HashiCorp Vault..." }
+
+# Run Vault server
+/usr/local/bin/vault server -config=/opt/vault/config/vault.hcl

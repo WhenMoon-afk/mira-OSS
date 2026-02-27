@@ -11,7 +11,6 @@ This module owns user engagement concerns separate from authentication.
 """
 import logging
 import pytz
-from typing import Optional
 
 from utils.timezone_utils import utc_now
 from utils.user_context import get_current_user, update_current_user, get_user_preferences
@@ -168,19 +167,16 @@ def get_user_cumulative_activity_days(user_id: str) -> int:
         return result.get('cumulative_activity_days', 0) or 0
 
 
-def update_user_login(user_id: str) -> bool:
+def update_user_login(user_id: str) -> None:
     """
     Update user's last login timestamp.
 
     Args:
         user_id: User ID to update
-
-    Returns:
-        True if update successful
     """
     session_manager = get_shared_session_manager()
     with session_manager.get_admin_session() as session:
-        rows_updated = session.execute_update("""
+        session.execute_update("""
             UPDATE users
             SET last_login_at = %(login_time)s
             WHERE id = %(user_id)s
@@ -188,4 +184,3 @@ def update_user_login(user_id: str) -> bool:
             'user_id': user_id,
             'login_time': utc_now()
         })
-        return rows_updated > 0

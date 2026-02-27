@@ -33,6 +33,13 @@ class DomaindocTool(Tool):
 
     name = "domaindoc_tool"
 
+    # Operations without ordering dependencies — safe for concurrent execution
+    _parallel_safe_operations = frozenset({"search", "expand", "collapse"})
+
+    @classmethod
+    def is_call_parallel_safe(cls, tool_input: Dict[str, Any]) -> bool:
+        return tool_input.get("operation") in cls._parallel_safe_operations
+
     simple_description = """Section-aware editing for domain knowledge documents with expand/collapse support."""
 
     anthropic_schema = {
@@ -46,19 +53,26 @@ CRITICAL PARAMETER NAMES (use these exact names - do not use alternatives):
 • content (NOT "text" or "body") - Content to add/replace
 
 IMPORTANT: Collapsed sections show ONLY headers - content is hidden until expanded.
-First section is always expanded (overview). When a parent section is collapsed, ALL its subsections are hidden.
+Pinned sections are always expanded. When a parent section is collapsed, ALL its subsections are hidden.
 
-SUBSECTIONS: Use parent="ParentName" to work with subsections.
+SUBSECTIONS: Use parent="ParentName" to work with nested sections.
 • Top-level section: section="Research" (no parent)
 • Subsection: section="Competitors", parent="Research"
-Depth limit is 1 - subsections cannot have children. OVERVIEW section cannot have subsections.
+• Sub-subsection: section="Acme Corp", parent="Competitors" (where Competitors is under Research)
+Depth limit is 2 - three levels maximum (section → subsection → sub-subsection).
+
+DOCUMENT MANAGEMENT:
+• search - query="search terms", optional label="specific_doc". Returns matches with context snippets.
+• enable - label="doc_name". Enable a disabled domaindoc.
+• disable - label="doc_name". Disable an enabled domaindoc.
 
 SECTION MANAGEMENT:
 • expand/collapse - section="NAME" (add parent="X" for subsections), or sections=["A","B"] for batch.
-• set_expanded_by_default - section="NAME", expanded_by_default=true/false. Marks section to show expanded by default (still collapsible, unlike overview).
+• set_expanded_by_default - section="NAME", expanded_by_default=true/false. Marks section to show expanded by default (still collapsible).
+• pin/unpin - section="NAME". Pinned sections are always expanded and cannot be collapsed or deleted.
 • create_section - section="HEADER", content="...", optional parent="X", optional expanded_by_default=true.
 • rename_section - section="OLD", new_name="NEW".
-• delete_section - Remove section (must be expanded; if parent, all subsections must be expanded).
+• delete_section - Remove section (must be expanded and not pinned; if parent, all subsections must be expanded).
 • reorder_sections - order=["ALL","SECTIONS","IN","ORDER"] (add parent="X" to reorder subsections).
 
 CONTENT EDITING (all require section, add parent for subsections):
@@ -71,7 +85,9 @@ CONTENT EDITING (all require section, add parent for subsections):
                 "operation": {
                     "type": "string",
                     "enum": [
+                        "search", "enable", "disable",
                         "expand", "collapse", "set_expanded_by_default",
+                        "pin", "unpin",
                         "create_section", "rename_section",
                         "delete_section", "reorder_sections",
                         "append", "sed", "sed_all", "replace_section"
@@ -80,7 +96,11 @@ CONTENT EDITING (all require section, add parent for subsections):
                 },
                 "label": {
                     "type": "string",
-                    "description": "Domaindoc to edit (e.g., 'marketing_plan')"
+                    "description": "Domaindoc to target (e.g., 'marketing_plan'). Optional for search (searches all enabled docs)."
+                },
+                "query": {
+                    "type": "string",
+                    "description": "Search query (search operation). Case-insensitive substring match."
                 },
                 "section": {
                     "type": "string",
@@ -125,7 +145,7 @@ CONTENT EDITING (all require section, add parent for subsections):
                     "description": "All section headers in new order (reorder_sections)"
                 }
             },
-            "required": ["operation", "label"]
+            "required": ["operation"]
         }
     }
 
@@ -139,13 +159,20 @@ CONTENT EDITING (all require section, add parent for subsections):
             return name.split(' | ')[0].strip()
         return name.strip()
 
-    def _get_domaindoc(self, db: UserDataManager, label: str) -> Dict[str, Any]:
-        """Get domaindoc by label, raising ValueError if not found or disabled."""
+    def _get_domaindoc(self, db: UserDataManager, label: str, require_enabled: bool = True) -> Dict[str, Any]:
+        """Get domaindoc by label.
+
+        Args:
+            db: UserDataManager instance
+            label: Domaindoc label to find
+            require_enabled: If True, raises ValueError for disabled domaindocs.
+                            Set False for enable/disable operations.
+        """
         results = db.select("domaindocs", "label = :label", {"label": label})
         if not results:
             raise ValueError(f"Domaindoc '{label}' not found")
         doc = results[0]
-        if not doc.get("enabled", True):
+        if require_enabled and not doc.get("enabled", True):
             raise ValueError(f"Domaindoc '{label}' is not enabled")
         return doc
 
@@ -283,7 +310,8 @@ CONTENT EDITING (all require section, add parent for subsections):
     def run(
         self,
         operation: str,
-        label: str,
+        label: Optional[str] = None,
+        query: Optional[str] = None,
         section: Optional[str] = None,
         sections: Optional[List[str]] = None,
         content: Optional[str] = None,
@@ -297,6 +325,22 @@ CONTENT EDITING (all require section, add parent for subsections):
     ) -> Dict[str, Any]:
         """Execute an operation on a domaindoc. Use parent param to target subsections."""
         db = self.db  # Uses cached UserDataManager from Tool base class
+
+        # Operations that don't require an enabled domaindoc
+        if operation == "search":
+            return self._op_search(db, query, label)
+        elif operation == "enable":
+            if not label:
+                raise ValueError("enable requires 'label' parameter")
+            return self._op_enable(db, label)
+        elif operation == "disable":
+            if not label:
+                raise ValueError("disable requires 'label' parameter")
+            return self._op_disable(db, label)
+
+        # All other operations require a label and enabled domaindoc
+        if not label:
+            raise ValueError(f"{operation} requires 'label' parameter")
         doc = self._get_domaindoc(db, label)
         domaindoc_id = doc["id"]
 
@@ -306,6 +350,10 @@ CONTENT EDITING (all require section, add parent for subsections):
             return self._op_collapse(db, domaindoc_id, section, sections, parent)
         elif operation == "set_expanded_by_default":
             return self._op_set_expanded_by_default(db, domaindoc_id, section, sections, parent, expanded_by_default)
+        elif operation == "pin":
+            return self._op_pin(db, domaindoc_id, section, parent)
+        elif operation == "unpin":
+            return self._op_unpin(db, domaindoc_id, section, parent)
         elif operation == "create_section":
             return self._op_create_section(db, domaindoc_id, section, content, after, parent, expanded_by_default)
         elif operation == "rename_section":
@@ -324,6 +372,158 @@ CONTENT EDITING (all require section, add parent for subsections):
             return self._op_replace_section(db, domaindoc_id, section, content, parent)
         else:
             raise ValueError(f"Unknown operation: {operation}")
+
+    # =========================================================================
+    # Document Management Operations
+    # =========================================================================
+
+    def _op_search(
+        self,
+        db: UserDataManager,
+        query: Optional[str],
+        label: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Search for content within domaindocs.
+
+        If label is provided, searches only that domaindoc.
+        If no label, searches all enabled domaindocs.
+        Returns matches with section context and content snippets.
+        """
+        if not query:
+            raise ValueError("search requires 'query' parameter")
+
+        query_lower = query.lower()
+        matches: List[Dict[str, Any]] = []
+
+        if label:
+            # Search specific domaindoc (must be enabled)
+            doc = self._get_domaindoc(db, label)
+            docs_to_search = [doc]
+        else:
+            # Search all enabled, non-archived domaindocs
+            docs_to_search = db.fetchall(
+                "SELECT * FROM domaindocs WHERE enabled = TRUE AND archived = FALSE"
+            )
+            docs_to_search = [db._decrypt_dict(d) for d in docs_to_search]
+
+        for doc in docs_to_search:
+            domaindoc_id = doc["id"]
+            doc_label = doc["label"]
+
+            # Get all sections for this domaindoc (top-level and subsections)
+            all_sections = db.fetchall(
+                "SELECT * FROM domaindoc_sections WHERE domaindoc_id = :doc_id ORDER BY parent_section_id NULLS FIRST, sort_order",
+                {"doc_id": domaindoc_id}
+            )
+            all_sections = [db._decrypt_dict(s) for s in all_sections]
+
+            # Build parent lookup for subsection context
+            section_by_id = {s["id"]: s for s in all_sections}
+
+            for sec in all_sections:
+                content = sec.get("encrypted__content", "") or ""
+                header = sec.get("header", "")
+                content_lower = content.lower()
+                header_lower = header.lower()
+
+                # Check header match
+                header_match = query_lower in header_lower
+                # Check content match
+                content_match = query_lower in content_lower
+
+                if header_match or content_match:
+                    parent_header = None
+                    parent_id = sec.get("parent_section_id")
+                    if parent_id and parent_id in section_by_id:
+                        parent_header = section_by_id[parent_id]["header"]
+
+                    match_entry: Dict[str, Any] = {
+                        "domaindoc": doc_label,
+                        "section": header,
+                        "match_in": []
+                    }
+
+                    if parent_header:
+                        match_entry["parent"] = parent_header
+
+                    if header_match:
+                        match_entry["match_in"].append("header")
+
+                    if content_match:
+                        match_entry["match_in"].append("content")
+                        # Extract snippet around the match
+                        idx = content_lower.find(query_lower)
+                        start = max(0, idx - 50)
+                        end = min(len(content), idx + len(query) + 50)
+                        snippet = content[start:end]
+                        if start > 0:
+                            snippet = "..." + snippet
+                        if end < len(content):
+                            snippet = snippet + "..."
+                        match_entry["snippet"] = snippet
+
+                    matches.append(match_entry)
+
+        return {
+            "success": True,
+            "query": query,
+            "searched_domaindocs": [d["label"] for d in docs_to_search],
+            "matches": matches,
+            "total_matches": len(matches)
+        }
+
+    def _op_enable(self, db: UserDataManager, label: str) -> Dict[str, Any]:
+        """Enable a disabled domaindoc."""
+        doc = self._get_domaindoc(db, label, require_enabled=False)
+
+        if doc.get("archived", False):
+            raise ValueError(f"Cannot enable archived domaindoc '{label}'. Unarchive it first.")
+
+        if doc.get("enabled", True):
+            return {
+                "success": True,
+                "label": label,
+                "enabled": True,
+                "message": "Domaindoc was already enabled"
+            }
+
+        now = format_utc_iso(utc_now())
+        db.execute(
+            "UPDATE domaindocs SET enabled = TRUE, updated_at = :now WHERE id = :id",
+            {"now": now, "id": doc["id"]}
+        )
+
+        return {
+            "success": True,
+            "label": label,
+            "enabled": True,
+            "message": f"Domaindoc '{label}' is now enabled"
+        }
+
+    def _op_disable(self, db: UserDataManager, label: str) -> Dict[str, Any]:
+        """Disable an enabled domaindoc."""
+        doc = self._get_domaindoc(db, label, require_enabled=False)
+
+        if not doc.get("enabled", True):
+            return {
+                "success": True,
+                "label": label,
+                "enabled": False,
+                "message": "Domaindoc was already disabled"
+            }
+
+        now = format_utc_iso(utc_now())
+        db.execute(
+            "UPDATE domaindocs SET enabled = FALSE, updated_at = :now WHERE id = :id",
+            {"now": now, "id": doc["id"]}
+        )
+
+        return {
+            "success": True,
+            "label": label,
+            "enabled": False,
+            "message": f"Domaindoc '{label}' is now disabled"
+        }
 
     # =========================================================================
     # Section Management Operations
@@ -371,8 +571,8 @@ CONTENT EDITING (all require section, add parent for subsections):
         skipped = []
         for header in targets:
             sec = self._get_section(db, domaindoc_id, header, parent)
-            # First top-level section cannot be collapsed (subsections can be)
-            if sec["sort_order"] == 0 and sec.get("parent_section_id") is None:
+            # Pinned sections cannot be collapsed
+            if sec.get("pinned"):
                 skipped.append(sec["header"])
                 continue
             db.execute(
@@ -385,7 +585,7 @@ CONTENT EDITING (all require section, add parent for subsections):
         result = {"success": True, "collapsed": collapsed, "parent": parent}
         if skipped:
             result["skipped"] = skipped
-            result["note"] = "First section cannot be collapsed (serves as overview)"
+            result["note"] = "Pinned and auto-generated sections cannot be collapsed"
         return result
 
     def _op_set_expanded_by_default(
@@ -408,8 +608,8 @@ CONTENT EDITING (all require section, add parent for subsections):
         skipped = []
         for header in targets:
             sec = self._get_section(db, domaindoc_id, header, parent)
-            # First top-level section is always expanded - skip setting flag
-            if sec["sort_order"] == 0 and sec.get("parent_section_id") is None:
+            # Pinned sections are always expanded - skip setting flag
+            if sec.get("pinned"):
                 skipped.append(sec["header"])
                 continue
 
@@ -429,8 +629,64 @@ CONTENT EDITING (all require section, add parent for subsections):
         result = {"success": True, "updated": updated, "expanded_by_default": expanded_by_default, "parent": parent}
         if skipped:
             result["skipped"] = skipped
-            result["note"] = "First section is always expanded (overview)"
+            result["note"] = "Pinned sections are always expanded"
         return result
+
+    def _op_pin(
+        self,
+        db: UserDataManager,
+        domaindoc_id: int,
+        section: Optional[str],
+        parent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Pin a section so it's always expanded and cannot be collapsed or deleted."""
+        if not section:
+            raise ValueError("pin requires 'section' parameter")
+
+        sec = self._get_section(db, domaindoc_id, section, parent)
+
+        # Only top-level sections can be pinned
+        if sec.get("parent_section_id") is not None:
+            raise ValueError("Only top-level sections can be pinned, not subsections")
+
+        if sec.get("pinned"):
+            return {"success": True, "pinned": sec["header"], "note": "Section was already pinned"}
+
+        now = format_utc_iso(utc_now())
+        db.execute(
+            "UPDATE domaindoc_sections SET pinned = TRUE, collapsed = FALSE, updated_at = :now WHERE id = :id",
+            {"now": now, "id": sec["id"]}
+        )
+
+        self._record_version(db, domaindoc_id, "pin", {"section": sec["header"]}, sec["id"])
+        self._update_domaindoc_timestamp(db, domaindoc_id)
+        return {"success": True, "pinned": sec["header"]}
+
+    def _op_unpin(
+        self,
+        db: UserDataManager,
+        domaindoc_id: int,
+        section: Optional[str],
+        parent: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """Unpin a section so it can be collapsed and deleted."""
+        if not section:
+            raise ValueError("unpin requires 'section' parameter")
+
+        sec = self._get_section(db, domaindoc_id, section, parent)
+
+        if not sec.get("pinned"):
+            return {"success": True, "unpinned": sec["header"], "note": "Section was not pinned"}
+
+        now = format_utc_iso(utc_now())
+        db.execute(
+            "UPDATE domaindoc_sections SET pinned = FALSE, updated_at = :now WHERE id = :id",
+            {"now": now, "id": sec["id"]}
+        )
+
+        self._record_version(db, domaindoc_id, "unpin", {"section": sec["header"]}, sec["id"])
+        self._update_domaindoc_timestamp(db, domaindoc_id)
+        return {"success": True, "unpinned": sec["header"]}
 
     def _op_create_section(
         self,
@@ -453,26 +709,35 @@ CONTENT EDITING (all require section, add parent for subsections):
         parent_section_id = None
 
         if parent:
-            # Creating a subsection - validate parent exists and is top-level
+            # Creating a nested section - validate parent exists and depth limit
             try:
                 parent_sec = self._get_section(db, domaindoc_id, parent)
             except ValueError:
                 # Parent not found as top-level section - check if it's a subsection
                 subsec_check = db.fetchone(
-                    "SELECT parent_section_id FROM domaindoc_sections WHERE domaindoc_id = :doc_id AND header = :header",
+                    "SELECT id, parent_section_id FROM domaindoc_sections WHERE domaindoc_id = :doc_id AND header = :header",
                     {"doc_id": domaindoc_id, "header": self._normalize_section_name(parent)}
                 )
                 if subsec_check and subsec_check.get("parent_section_id") is not None:
-                    raise ValueError(f"Maximum nesting depth is 1. '{parent}' is already a subsection.")
-                raise  # Re-raise original "not found" error
+                    # Parent is a subsection - check if it's already at depth 2
+                    grandparent = db.fetchone(
+                        "SELECT parent_section_id FROM domaindoc_sections WHERE id = :id",
+                        {"id": subsec_check["parent_section_id"]}
+                    )
+                    if grandparent and grandparent.get("parent_section_id") is not None:
+                        raise ValueError(f"Maximum nesting depth is 2. '{parent}' is already a sub-subsection.")
+                    parent_sec = subsec_check  # Use subsection as parent
+                else:
+                    raise  # Section truly not found
 
-            # Depth check: parent cannot itself be a subsection
+            # Depth check: if parent has a parent, check grandparent depth
             if parent_sec.get("parent_section_id") is not None:
-                raise ValueError(f"Maximum nesting depth is 1. '{parent}' is already a subsection.")
-
-            # OVERVIEW exception: first section cannot have subsections
-            if parent_sec["sort_order"] == 0:
-                raise ValueError("Cannot add subsections to the overview section")
+                grandparent = db.fetchone(
+                    "SELECT parent_section_id FROM domaindoc_sections WHERE id = :id",
+                    {"id": parent_sec["parent_section_id"]}
+                )
+                if grandparent and grandparent.get("parent_section_id") is not None:
+                    raise ValueError(f"Maximum nesting depth is 2. '{parent}' is already a sub-subsection.")
 
             parent_section_id = parent_sec["id"]
             # Get siblings for ordering
@@ -492,6 +757,19 @@ CONTENT EDITING (all require section, add parent for subsections):
                     )
         else:
             new_order = max((s["sort_order"] for s in all_sections), default=-1) + 1
+
+        # Check if section already exists (same header at same level)
+        existing = db.fetchone(
+            """SELECT id FROM domaindoc_sections
+               WHERE domaindoc_id = :doc_id AND header = :header
+               AND (parent_section_id IS :parent_id OR (parent_section_id IS NULL AND :parent_id IS NULL))""",
+            {"doc_id": domaindoc_id, "header": header, "parent_id": parent_section_id}
+        )
+        if existing:
+            raise ValueError(
+                f"Section '{header}' already exists. Use 'replace_section' to overwrite content, "
+                f"'sed' to edit content, or 'rename_section' to change the header."
+            )
 
         # expanded_by_default sections start expanded; others start collapsed
         start_expanded = expanded_by_default is True
@@ -516,6 +794,11 @@ CONTENT EDITING (all require section, add parent for subsections):
         }, int(section_id))
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
+
+        # Generate section summary
+        from cns.services.domaindoc_summary_service import update_section_summary
+        update_section_summary(db, int(section_id), header, content)
+
         result = {"success": True, "created": header, "sort_order": new_order, "parent": parent}
         if start_expanded:
             result["expanded_by_default"] = True
@@ -572,9 +855,9 @@ CONTENT EDITING (all require section, add parent for subsections):
                 f"Please expand '{sec['header']}' before deleting to confirm you've reviewed its contents"
             )
 
-        # First top-level section cannot be deleted
-        if sec["sort_order"] == 0 and sec.get("parent_section_id") is None:
-            raise ValueError("Cannot delete the first section (overview)")
+        # Pinned sections cannot be deleted
+        if sec.get("pinned"):
+            raise ValueError(f"Cannot delete pinned section '{sec['header']}'. Unpin it first.")
 
         # If this is a parent with subsections, all subsections must be expanded
         subsections = self._get_subsections(db, sec["id"])
@@ -622,6 +905,7 @@ CONTENT EDITING (all require section, add parent for subsections):
                 )
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
+
         result = {"success": True, "deleted": sec["header"], "parent": parent}
         if deleted_children:
             result["deleted_children"] = deleted_children
@@ -711,6 +995,11 @@ CONTENT EDITING (all require section, add parent for subsections):
         }, sec["id"])
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
+
+        # Update section summary
+        from cns.services.domaindoc_summary_service import update_section_summary
+        update_section_summary(db, sec["id"], sec["header"], new_content)
+
         return {
             "success": True,
             "section": sec["header"],
@@ -772,6 +1061,11 @@ CONTENT EDITING (all require section, add parent for subsections):
         }, sec["id"])
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
+
+        # Update section summary
+        from cns.services.domaindoc_summary_service import update_section_summary
+        update_section_summary(db, sec["id"], sec["header"], new_content)
+
         return {
             "success": True,
             "section": sec["header"],
@@ -814,6 +1108,11 @@ CONTENT EDITING (all require section, add parent for subsections):
         }, sec["id"])
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
+
+        # Update section summary
+        from cns.services.domaindoc_summary_service import update_section_summary
+        update_section_summary(db, sec["id"], sec["header"], content)
+
         return {
             "success": True,
             "section": sec["header"],

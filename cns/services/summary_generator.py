@@ -5,18 +5,16 @@ Provides out-of-band summary generation with predefined prompts,
 proper message storage, and continuum integration.
 """
 import logging
-from typing import List, Dict, Any, Optional, Union, Tuple
+from typing import List, Optional
 from enum import Enum
 from dataclasses import dataclass
 from pathlib import Path
 
 from cns.core.message import Message
-from cns.core.continuum import Continuum
 from cns.infrastructure.continuum_repository import ContinuumRepository
 from clients.llm_provider import LLMProvider, ContextOverflowError
 from utils.timezone_utils import utc_now
 from utils.tag_parser import TagParser
-from config.config_manager import config
 
 logger = logging.getLogger(__name__)
 
@@ -31,13 +29,19 @@ class SummaryPrompt:
     """Predefined prompt configuration for summary generation."""
     system_prompt: str
     user_template: str
-    max_tokens: int = 400
-    temperature: float = 0.1
     include_metadata: bool = True
 
     def format(self, **kwargs) -> str:
         """Format the user template with provided values."""
         return self.user_template.format(**kwargs)
+
+
+@dataclass(frozen=True)
+class SummaryResult:
+    """Result of summary generation: synopsis, display title, and complexity score."""
+    synopsis: str
+    display_title: str
+    complexity: float
 
 
 class SummaryGenerator:
@@ -60,23 +64,7 @@ class SummaryGenerator:
         """
         self.repository = repository
 
-        # Load internal_llm config for summary generation
-        from utils.user_context import get_internal_llm
-        from clients.vault_client import get_api_key
-
-        self._llm_config = get_internal_llm('summary')
-
-        # Get API key (None for local providers like Ollama)
-        if self._llm_config.api_key_name:
-            self._api_key = get_api_key(self._llm_config.api_key_name)
-            if not self._api_key:
-                raise ValueError(f"API key '{self._llm_config.api_key_name}' not found in Vault")
-        else:
-            self._api_key = None
-
-        logger.info(f"SummaryGenerator initialized: {self._llm_config.model} @ {self._llm_config.endpoint_url}")
-
-        # Use provided LLM or create default (routing via per-call overrides)
+        # Use provided LLM or create default (routing via internal_llm= per-call)
         self.llm_provider = llm_provider or LLMProvider(enable_prompt_caching=False)
         self.tag_parser = TagParser()
         self._load_prompts()
@@ -102,8 +90,6 @@ class SummaryGenerator:
             SummaryType.SEGMENT: SummaryPrompt(
                 system_prompt=segment_system_prompt,
                 user_template=segment_user_template,
-                max_tokens=600,  # Rich synopsis + telegraphic title
-                temperature=1.0  # Higher temp for natural, varied summaries
             )
         }
 
@@ -122,7 +108,8 @@ class SummaryGenerator:
                              messages: Optional[List[Message]],
                              summary_type: SummaryType,
                              tools_used: Optional[List[str]] = None,
-                             content_override: Optional[str] = None) -> Tuple[str, str, int]:
+                             content_override: Optional[str] = None,
+                             previous_summaries: Optional[List[Message]] = None) -> SummaryResult:
         """
         Generate a summary (text only, does not persist).
 
@@ -131,10 +118,13 @@ class SummaryGenerator:
             summary_type: Type of summary to generate (SEGMENT)
             tools_used: List of tool names used in segment
             content_override: Pre-formatted content to summarize
+            previous_summaries: Recent collapsed segment sentinels for narrative continuity.
+                               The LLM sees these to enable connective phrases like
+                               "Building on the auth work from Tuesday..."
 
         Returns:
-            Tuple of (synopsis_text, display_title, complexity_score)
-            where complexity_score is 1 (simple), 2 (moderate), or 3 (complex)
+            SummaryResult with synopsis, display_title, and complexity score
+            (0.5=trivial, 1=simple, 2=moderate, 3=complex)
 
         Raises:
             ValueError: If summary generation fails
@@ -147,10 +137,12 @@ class SummaryGenerator:
 
         # Prepare prompt based on summary type
         if content_override:
-            # Use pre-formatted content (e.g., for coalescence)
+            # Use pre-formatted content (e.g., chunked synthesis)
             prompt_text = prompt_config.format(conversation_text=content_override)
         else:
-            prompt_text = self._prepare_prompt(messages, summary_type, prompt_config, tools_used)
+            prompt_text = self._prepare_prompt(
+                messages, summary_type, prompt_config, tools_used, previous_summaries
+            )
 
         # Format system prompt with segment timestamp
         segment_time = self._get_segment_time(messages)
@@ -167,12 +159,8 @@ class SummaryGenerator:
         try:
             response = self.llm_provider.generate_response(
                 messages=llm_messages,
-                endpoint_url=self._llm_config.endpoint_url,
-                model_override=self._llm_config.model,
-                api_key_override=self._api_key,
-                temperature=prompt_config.temperature,
-                max_tokens=prompt_config.max_tokens,
-                thinking_enabled=False  # Disable extended thinking for summaries
+                internal_llm='summary',
+                allow_negative=True  # System task — segment already paid for
             )
 
             raw_summary_output = self.llm_provider.extract_text_content(response)
@@ -185,17 +173,19 @@ class SummaryGenerator:
                 f"summarizing {len(messages) if messages else 'pre-formatted'} messages"
             )
 
-            return synopsis.strip(), display_title, complexity
+            return SummaryResult(synopsis=synopsis.strip(), display_title=display_title, complexity=complexity)
 
         except ContextOverflowError:
             # Segment too large for single pass - use hierarchical summarization
             if messages and summary_type == SummaryType.SEGMENT:
                 logger.info("Segment exceeded context limit, falling back to chunked summarization")
                 try:
-                    return self._generate_chunked_summary(messages, tools_used)
+                    return self._generate_chunked_summary(
+                        messages, tools_used, previous_summaries
+                    )
                 except Exception as e:
                     logger.error(f"Chunked summarization also failed: {e}")
-                    return "[Segment content not summarized]", "Large segment archived", 1
+                    return SummaryResult(synopsis="[Segment content not summarized]", display_title="Large segment archived", complexity=1.0)
             else:
                 # Non-segment summaries can't be chunked
                 raise
@@ -208,21 +198,52 @@ class SummaryGenerator:
                        messages: List[Message],
                        summary_type: SummaryType,
                        prompt_config: SummaryPrompt,
-                       tools_used: Optional[List[str]] = None) -> str:
-        """Prepare the prompt text based on summary type."""
+                       tools_used: Optional[List[str]] = None,
+                       previous_summaries: Optional[List[Message]] = None) -> str:
+        """
+        Prepare the prompt text based on summary type.
+
+        For segment summaries, includes previous summaries for narrative continuity.
+        The LLM can then use connective phrases like "Building on Tuesday's work..."
+        """
         # Format messages for summarization
         conversation_text = self._format_messages_for_llm(messages)
 
-        # For SEGMENT summaries, include tools_used information
+        # Format previous summaries for continuity (if provided)
+        previous_context = self._format_previous_summaries(previous_summaries)
+
+        # For SEGMENT summaries, include tools_used and previous_summaries
         if summary_type == SummaryType.SEGMENT:
             tools_text = "None" if not tools_used else ", ".join(tools_used)
             return prompt_config.format(
                 conversation_text=conversation_text,
-                tools_used=tools_text
+                tools_used=tools_text,
+                previous_summaries=previous_context
             )
 
         # For other summary types, just use conversation text
         return prompt_config.format(conversation_text=conversation_text)
+
+    def _format_previous_summaries(self, previous_summaries: Optional[List[Message]]) -> str:
+        """
+        Format previous segment summaries for narrative continuity.
+
+        Each summary includes the display title and timestamp so the LLM can
+        reference previous work naturally.
+        """
+        if not previous_summaries:
+            return "No previous segments in this continuum yet."
+
+        formatted_parts = []
+        for segment in previous_summaries:
+            title = segment.metadata.get('display_title', 'Untitled segment')
+            end_time = segment.metadata.get('segment_end_time', '')
+            summary_text = segment.content if isinstance(segment.content, str) else str(segment.content)
+
+            # Format as: **Title** (timestamp): summary
+            formatted_parts.append(f"**{title}** ({end_time}):\n{summary_text}")
+
+        return "\n\n".join(formatted_parts)
     
     def _format_messages_for_llm(self, messages: List[Message]) -> str:
         """Format messages into readable continuum text, stripping binary/media content."""
@@ -267,7 +288,7 @@ class SummaryGenerator:
 
         return "\n\n".join(formatted_lines)
 
-    def _extract_summary_components(self, summary_output: str) -> Tuple[str, str, int]:
+    def _extract_summary_components(self, summary_output: str) -> SummaryResult:
         """
         Extract synopsis, display title, and complexity from LLM output using tag_parser.
 
@@ -275,13 +296,13 @@ class SummaryGenerator:
         [Synopsis text here]
 
         <mira:display_title>[Title here]</mira:display_title>
-        <mira:complexity>[1-3]</mira:complexity>
+        <mira:complexity>[0.5-3]</mira:complexity>
 
         Args:
             summary_output: Raw LLM output containing synopsis, display title, and complexity
 
         Returns:
-            Tuple of (synopsis, display_title, complexity_score)
+            SummaryResult with parsed synopsis, display_title, and complexity_score
 
         Raises:
             ValueError: If display_title tag is missing (instruction-following failure)
@@ -300,17 +321,17 @@ class SummaryGenerator:
                 f"LLM did not generate <mira:display_title> tag - autocollapsing with tombstone. "
                 f"Output (first 200 chars): {summary_output[:200]}"
             )
-            return "[Segment content not summarized]", "Archived segment", 1
+            return SummaryResult(synopsis="[Segment content not summarized]", display_title="Archived segment", complexity=1.0)
 
         # Default complexity to 2 (moderate) if missing or invalid
-        if complexity is None or complexity not in [1, 2, 3]:
+        if complexity is None or complexity not in [0.5, 1, 2, 3]:
             logger.warning(
                 f"LLM did not provide valid complexity score (got {complexity}), "
                 f"defaulting to 2 (moderate)"
             )
             complexity = 2
 
-        return synopsis, display_title, complexity
+        return SummaryResult(synopsis=synopsis, display_title=display_title, complexity=complexity)
     
     def _get_segment_time(self, messages: Optional[List[Message]]) -> str:
         """
@@ -356,10 +377,17 @@ class SummaryGenerator:
 
         return chunks
 
-    def _summarize_chunk(self, messages: List[Message], tools_used: Optional[List[str]] = None) -> Tuple[str, str, int]:
+    def _summarize_chunk(
+        self,
+        messages: List[Message],
+        tools_used: Optional[List[str]] = None,
+        previous_summaries: Optional[List[Message]] = None
+    ) -> SummaryResult:
         """Generate summary for a single chunk using standard segment prompts."""
         prompt_config = self.PROMPTS[SummaryType.SEGMENT]
-        prompt_text = self._prepare_prompt(messages, SummaryType.SEGMENT, prompt_config, tools_used)
+        prompt_text = self._prepare_prompt(
+            messages, SummaryType.SEGMENT, prompt_config, tools_used, previous_summaries
+        )
 
         segment_time = self._get_segment_time(messages)
         formatted_system_prompt = prompt_config.system_prompt.format(current_time=segment_time)
@@ -369,18 +397,14 @@ class SummaryGenerator:
                 {"role": "system", "content": formatted_system_prompt},
                 {"role": "user", "content": prompt_text}
             ],
-            endpoint_url=self._llm_config.endpoint_url,
-            model_override=self._llm_config.model,
-            api_key_override=self._api_key,
-            temperature=prompt_config.temperature,
-            max_tokens=prompt_config.max_tokens,
-            thinking_enabled=False
+            internal_llm='summary',
+            allow_negative=True  # System task — segment already paid for
         )
 
         raw_output = self.llm_provider.extract_text_content(response)
         return self._extract_summary_components(raw_output)
 
-    def _synthesize_chunk_summaries(self, chunk_summaries: List[str], tools_used: Optional[List[str]]) -> Tuple[str, str, int]:
+    def _synthesize_chunk_summaries(self, chunk_summaries: List[str], tools_used: Optional[List[str]]) -> SummaryResult:
         """Combine chunk summaries into final synopsis + display_title + complexity."""
         if not self._synthesis_system_prompt or not self._synthesis_user_template:
             raise RuntimeError("Synthesis prompts not found - cannot merge chunk summaries")
@@ -401,27 +425,35 @@ class SummaryGenerator:
                 {"role": "system", "content": self._synthesis_system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            endpoint_url=self._llm_config.endpoint_url,
-            model_override=self._llm_config.model,
-            api_key_override=self._api_key,
-            temperature=1.0,
-            max_tokens=600,
-            thinking_enabled=False
+            internal_llm='summary',
+            allow_negative=True  # System task — segment already paid for
         )
 
         raw_output = self.llm_provider.extract_text_content(response)
         return self._extract_summary_components(raw_output)
 
-    def _generate_chunked_summary(self, messages: List[Message], tools_used: Optional[List[str]]) -> Tuple[str, str, int]:
-        """Hierarchical summarization for oversized segments."""
+    def _generate_chunked_summary(
+        self,
+        messages: List[Message],
+        tools_used: Optional[List[str]],
+        previous_summaries: Optional[List[Message]] = None
+    ) -> SummaryResult:
+        """
+        Hierarchical summarization for oversized segments.
+
+        Previous summaries are only passed to the first chunk for narrative
+        continuity - subsequent chunks don't need that context.
+        """
         chunks = self._chunk_messages(messages)
         logger.info(f"Split into {len(chunks)} chunks for hierarchical summarization")
 
         chunk_summaries = []
         for i, chunk in enumerate(chunks):
             logger.debug(f"Summarizing chunk {i+1}/{len(chunks)}")
-            synopsis, display_title, complexity = self._summarize_chunk(chunk, tools_used)
+            # Only first chunk gets previous summaries for continuity
+            chunk_context = previous_summaries if i == 0 else None
+            chunk_result = self._summarize_chunk(chunk, tools_used, chunk_context)
             # Use just the synopsis text for synthesis (ignore per-chunk title/complexity)
-            chunk_summaries.append(synopsis)
+            chunk_summaries.append(chunk_result.synopsis)
 
         return self._synthesize_chunk_summaries(chunk_summaries, tools_used)

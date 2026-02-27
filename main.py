@@ -10,32 +10,34 @@ import logging
 import sys
 import os
 import signal
-import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Request
+from utils.logging_config import setup_colored_root_logging, setup_anthropic_sdk_logging
+setup_colored_root_logging(log_level=logging.WARNING, fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+setup_anthropic_sdk_logging(log_dir="logs")
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from pydantic import ValidationError
 
 from config.config_manager import config
-from cns.api import data, actions, health, tool_config
+from config.announcement import load_announcement
+from cns.api import data, actions, health, tool_config, update
 from cns.api import chat as chat_api
-from api import federation as federation_api
+from cns.api import files as files_api
 from cns.api.base import APIError, create_error_response, generate_request_id
 from utils.scheduler_service import scheduler_service
 from utils.scheduled_tasks import initialize_all_scheduled_tasks
-from utils.colored_logging import setup_colored_root_logging
-
-setup_colored_root_logging(log_level=logging.WARNING, fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 # Set APScheduler loggers to DEBUG to suppress routine job execution logs
 logging.getLogger('apscheduler.executors.default').setLevel(logging.DEBUG)
 logging.getLogger('apscheduler.scheduler').setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
+
 
 
 def ensure_single_user(app: FastAPI) -> None:
@@ -45,126 +47,136 @@ def ensure_single_user(app: FastAPI) -> None:
 
     session_manager = get_shared_session_manager()
 
+    # Check user count and create if needed (commits on block exit)
+    user_id = None
+    default_email = "user@localhost"
+
     with session_manager.get_admin_session() as session:
         result = session.execute_single("SELECT COUNT(*) as count FROM users")
         user_count = result['count']
 
-        if user_count == 0:
-            import uuid
-            import secrets
-
-            user_id = str(uuid.uuid4())
-            default_email = "user@localhost"
-
-            session.execute_update("""
-                INSERT INTO users (id, email, is_active, memory_manipulation_enabled)
-                VALUES (%(id)s, %(email)s, true, true)
-            """, {'id': user_id, 'email': default_email})
-
-            # Create the continuum (normally done during signup flow)
-            continuum_id = str(uuid.uuid4())
-            session.execute_update("""
-                INSERT INTO continuums (id, user_id, metadata, created_at, updated_at)
-                VALUES (%(id)s, %(user_id)s, '{}'::jsonb, NOW(), NOW())
-            """, {'id': continuum_id, 'user_id': user_id})
-
-            # Prepopulate with starter messages (ported from auth.database.prepopulate_new_user)
-            import json
-            from utils.timezone_utils import utc_now
-
-            # Message 1: Beginning marker
-            msg1_id = str(uuid.uuid4())
-            session.execute_update("""
-                INSERT INTO messages (id, continuum_id, user_id, role, content, metadata, created_at)
-                VALUES (%(id)s, %(continuum_id)s, %(user_id)s, 'user', %(content)s, %(metadata)s, NOW())
-            """, {
-                'id': msg1_id,
-                'continuum_id': continuum_id,
-                'user_id': user_id,
-                'content': '.. this is the beginning of the conversation. there are no messages older than this one ..',
-                'metadata': json.dumps({'system_generated': True})
-            })
-
-            # Message 2: Active segment sentinel
-            segment_id = str(uuid.uuid4())
-            segment_metadata = {
-                'is_segment_boundary': True,
-                'status': 'active',
-                'segment_id': segment_id,
-                'segment_start_time': utc_now().isoformat(),
-                'segment_end_time': utc_now().isoformat(),
-                'segment_turn_count': 1,  # Required for increment_segment_turn()
-                'tools_used': [],
-                'memories_extracted': False,
-                'domain_blocks_updated': False
-            }
-            msg2_id = str(uuid.uuid4())
-            session.execute_update("""
-                INSERT INTO messages (id, continuum_id, user_id, role, content, metadata, created_at)
-                VALUES (%(id)s, %(continuum_id)s, %(user_id)s, 'assistant', %(content)s, %(metadata)s, NOW() + interval '100 milliseconds')
-            """, {
-                'id': msg2_id,
-                'continuum_id': continuum_id,
-                'user_id': user_id,
-                'content': '[Segment in progress]',
-                'metadata': json.dumps(segment_metadata)
-            })
-
-            logger.info(f"Created user {user_id} with continuum {continuum_id} and starter messages")
-
-            # Prepopulate default domaindoc
-            from auth.prepopulate_domaindoc import prepopulate_user_domaindoc
-            prepopulate_user_domaindoc(user_id)
-            logger.info(f"Prepopulated domaindoc for user {user_id}")
-
-            api_key = f"mira_{secrets.token_urlsafe(32)}"
-
-            try:
-                from clients.vault_client import _ensure_vault_client
-                vault_client = _ensure_vault_client()
-                # Use patch to add mira_api without overwriting anthropic_key/provider_key
-                vault_client.client.secrets.kv.v2.patch(
-                    path='mira/api_keys',
-                    secret=dict(mira_api=api_key)
-                )
-            except Exception as e:
-                logger.warning(f"Could not store key in Vault: {e}")
-
-            app.state.single_user_id = user_id
-            app.state.user_email = default_email
-            app.state.api_key = api_key
-
-            print(f"\n{'='*60}")
-            print("MIRA Ready - Single-User OSS Mode")
-            print(f"{'='*60}")
-            print(f"User: {default_email}")
-            print(f"API Key: {api_key}")
-            print(f"{'='*60}\n")
-            return
-
-        elif user_count > 1:
+        if user_count > 1:
             print(f"\nERROR: Found {user_count} users")
             print("MIRA OSS operates in single-user mode only.")
             sys.exit(1)
 
-        user = session.execute_single("SELECT id, email FROM users LIMIT 1")
-        app.state.single_user_id = str(user['id'])
-        app.state.user_email = user['email']
+        if user_count == 1:
+            user = session.execute_single("SELECT id, email FROM users LIMIT 1")
+            app.state.single_user_id = str(user['id'])
+            app.state.user_email = user['email']
 
-        try:
-            from clients.vault_client import _ensure_vault_client
-            vault_client = _ensure_vault_client()
-            secret_data = vault_client.client.secrets.kv.v2.read_secret_version(
-                path='mira/api_keys'
-            )
-            api_key = secret_data['data']['data'].get('mira_api')
-            app.state.api_key = api_key
+            try:
+                from clients.vault_client import _ensure_vault_client
+                vault_client = _ensure_vault_client()
+                secret_data = vault_client.client.secrets.kv.v2.read_secret_version(
+                    path='mira/api_keys'
+                )
+                api_key = secret_data['data']['data'].get('mira_api')
+                app.state.api_key = api_key
 
-            print(f"\nMIRA Ready - User: {user['email']}\n")
-        except Exception as e:
-            logger.error(f"Failed to retrieve API key from Vault: {e}")
-            print("\nERROR: Could not retrieve API key from Vault")
-            sys.exit(1)
+                print(f"\nMIRA Ready - User: {user['email']}\n")
+            except Exception as e:
+                logger.error(f"Failed to retrieve API key from Vault: {e}")
+                print("\nERROR: Could not retrieve API key from Vault")
+                sys.exit(1)
+            return
+
+        # user_count == 0: create the single user
+        import uuid
+
+        user_id = str(uuid.uuid4())
+
+        session.execute_update("""
+            INSERT INTO users (id, email, is_active, memory_manipulation_enabled)
+            VALUES (%(id)s, %(email)s, true, true)
+        """, {'id': user_id, 'email': default_email})
+
+        # Create the continuum (normally done during signup flow)
+        continuum_id = str(uuid.uuid4())
+        session.execute_update("""
+            INSERT INTO continuums (id, user_id, metadata, created_at, updated_at)
+            VALUES (%(id)s, %(user_id)s, '{}'::jsonb, NOW(), NOW())
+        """, {'id': continuum_id, 'user_id': user_id})
+
+        # Prepopulate with starter messages (ported from auth.database.prepopulate_new_user)
+        import json
+        from utils.timezone_utils import utc_now
+
+        # Message 1: Beginning marker
+        msg1_id = str(uuid.uuid4())
+        session.execute_update("""
+            INSERT INTO messages (id, continuum_id, user_id, role, content, metadata, created_at)
+            VALUES (%(id)s, %(continuum_id)s, %(user_id)s, 'user', %(content)s, %(metadata)s, NOW())
+        """, {
+            'id': msg1_id,
+            'continuum_id': continuum_id,
+            'user_id': user_id,
+            'content': '.. this is the beginning of the conversation. there are no messages older than this one ..',
+            'metadata': json.dumps({'system_generated': True})
+        })
+
+        # Message 2: Active segment sentinel
+        segment_id = str(uuid.uuid4())
+        segment_metadata = {
+            'is_segment_boundary': True,
+            'status': 'active',
+            'segment_id': segment_id,
+            'segment_start_time': utc_now().isoformat(),
+            'segment_end_time': utc_now().isoformat(),
+            'segment_turn_count': 1,  # Required for increment_segment_turn()
+            'tools_used': [],
+            'memories_extracted': False,
+            'domain_blocks_updated': False
+        }
+        msg2_id = str(uuid.uuid4())
+        session.execute_update("""
+            INSERT INTO messages (id, continuum_id, user_id, role, content, metadata, created_at)
+            VALUES (%(id)s, %(continuum_id)s, %(user_id)s, 'assistant', %(content)s, %(metadata)s, NOW() + interval '100 milliseconds')
+        """, {
+            'id': msg2_id,
+            'continuum_id': continuum_id,
+            'user_id': user_id,
+            'content': '[Segment in progress]',
+            'metadata': json.dumps(segment_metadata)
+        })
+
+        logger.info(f"Created user {user_id} with continuum {continuum_id} and starter messages")
+
+    # Admin session committed — user row now visible to other connections
+    # Initialize feedback tracking (uses its own session via get_session)
+    from auth.seed_lora import seed_lora_postgres
+    seed_lora_postgres(user_id)
+    logger.info(f"Initialized feedback tracking for user {user_id}")
+
+    # Strip 'free' tier from internal_llm (OSS uses COF configs)
+    with session_manager.get_admin_session() as session:
+        session.execute_update("DELETE FROM internal_llm WHERE tier = 'free'")
+    logger.info("Stripped 'free' tier from internal_llm (OSS uses COF configs)")
+
+    import secrets
+    api_key = f"mira_{secrets.token_urlsafe(32)}"
+
+    try:
+        from clients.vault_client import _ensure_vault_client
+        vault_client = _ensure_vault_client()
+        # Use patch to add mira_api without overwriting anthropic_key/provider_key
+        vault_client.client.secrets.kv.v2.patch(
+            path='mira/api_keys',
+            secret=dict(mira_api=api_key)
+        )
+    except Exception as e:
+        logger.warning(f"Could not store key in Vault: {e}")
+
+    app.state.single_user_id = user_id
+    app.state.user_email = default_email
+    app.state.api_key = api_key
+
+    print(f"\n{'='*60}")
+    print("MIRA Ready - Single-User OSS Mode")
+    print(f"{'='*60}")
+    print(f"User: {default_email}")
+    print(f"API Key: {api_key}")
+    print(f"{'='*60}\n")
 
 
 
@@ -192,6 +204,9 @@ async def lifespan(app: FastAPI):
     from clients.vault_client import preload_secrets
     preload_secrets()
 
+    # Load announcement config (cached for lifetime of process)
+    load_announcement()
+
     # Initialize embeddings provider (loads mdbr-leaf-ir-asym 768d model)
     from clients.hybrid_embeddings_provider import get_hybrid_embeddings_provider
     embeddings_provider = get_hybrid_embeddings_provider()
@@ -206,6 +221,36 @@ async def lifespan(app: FastAPI):
     from utils.user_context import load_internal_llm_configs
     load_internal_llm_configs()
     logger.info("Internal LLM configs loaded from database")
+
+    # Load billing pricing cache and validate prices (skipped in OSS mode)
+    try:
+        from billing.pricing import load_pricing_cache, build_config_lookup, ensure_internal_pricing_keys
+
+        # 1. Seed: ensure internal_llm keys exist in usage_pricing (NULL prices)
+        ensure_internal_pricing_keys()
+        # 2. Load: read all pricing rows into memory
+        load_pricing_cache()
+        logger.info("Billing pricing cache loaded from database")
+        # 3. Resolve: fetch NULL prices from OpenRouter
+        try:
+            from billing.price_validator import validate_prices_against_openrouter
+            validate_prices_against_openrouter()
+        except ImportError:
+            pass  # OSS mode
+        except Exception as e:
+            from billing.pricing import get_pricing_cache
+            null_keys = get_pricing_cache().has_null_prices()
+            if null_keys:
+                raise RuntimeError(
+                    f"Price validation failed AND {len(null_keys)} pricing entries still have NULL prices: "
+                    f"{null_keys}. Billing cannot function. Either set manual overrides in usage_pricing "
+                    f"or ensure OpenRouter is reachable at startup."
+                ) from e
+            logger.warning(f"Price validation failed (non-fatal, all entries have overrides): {e}")
+        # 4. Lookup: build reverse map for runtime pricing_key resolution
+        build_config_lookup()
+    except ImportError:
+        logger.info("Billing module not available (OSS mode)")
 
     # Initialize lt_memory factory following MIRA's singleton pattern
     logger.info("Initializing lt_memory factory...")
@@ -268,27 +313,24 @@ async def lifespan(app: FastAPI):
     from utils.scheduled_tasks import register_segment_timeout_job
     register_segment_timeout_job(scheduler_service, orchestrator.event_bus)
 
+    # Register billing daily drip job (skipped in OSS mode)
+    try:
+        from billing.drip import DailyDripService
+        drip_service = DailyDripService()
+        drip_service.register_jobs(scheduler_service)
+    except ImportError:
+        pass  # OSS mode - no billing
+
     scheduler_service.start()
 
-    # Run on-boot memory extraction sweep in background thread to avoid blocking startup
-    def run_boot_extraction():
-        """Run boot extraction in background thread - one-time task on startup."""
-        logger.info("Running on-boot memory extraction sweep...")
-        try:
-            boot_results = lt_memory_factory.extraction_orchestrator.run_boot_extraction()
-            logger.info(
-                f"Boot extraction complete: {boot_results['batches_submitted']} batches submitted "
-                f"for {boot_results['users_checked']} users checked, "
-                f"{boot_results['users_skipped']} users skipped"
-            )
-        except Exception as e:
-            logger.error(f"Boot extraction failed: {e}")
-            logger.warning("Memory extraction may be delayed")
-
-    # Start boot extraction in daemon thread (terminates automatically when function completes)
-    boot_thread = threading.Thread(target=run_boot_extraction, daemon=True, name="boot-extraction")
-    boot_thread.start()
-    logger.info("Boot extraction started in background thread (non-blocking, will auto-terminate)")
+    # Collapse any segments stale during downtime through the existing event pipeline.
+    # check_timeouts() publishes SegmentTimeoutEvent for stale segments, which the
+    # collapse handler processes (summary + extraction). The 6-hour extract_unprocessed_segments
+    # sweep catches any that fail.
+    from cns.services.segment_timeout_service import get_timeout_service
+    timeout_service = get_timeout_service(orchestrator.event_bus)
+    timeout_service.check_timeouts()
+    logger.info("Startup timeout check complete (stale segments will collapse via event pipeline)")
 
     # Verify Vault connection (non-blocking)
     from clients.vault_client import test_vault_connection
@@ -334,19 +376,15 @@ async def lifespan(app: FastAPI):
         orchestrator.event_bus.shutdown()
         logger.info("Event bus shutdown complete")
     
-    # Shutdown Valkey TTL monitoring
+    # Shutdown Valkey client
     from clients.valkey_client import get_valkey_client
     valkey = get_valkey_client()
     if valkey:
         valkey.shutdown()
-        logger.info("Valkey TTL monitoring shutdown complete")
+        logger.info("Valkey client shutdown complete")
     
     # Clean up singleton resources
     logger.info("Cleaning up singleton resources...")
-    # Clean up embeddings provider
-    if embeddings_provider:
-        embeddings_provider.close()
-        logger.info("Embeddings provider closed")
 
     # Clean up lt_memory factory
     try:
@@ -388,7 +426,7 @@ def create_app() -> FastAPI:
     app = FastAPI(
         title="MIRA",
         description="A lil Brain-in-a-Box",
-        version="0.1.0",
+        version="2026.03.07-major",
         lifespan=lifespan
     )
     
@@ -486,7 +524,9 @@ def create_app() -> FastAPI:
             content=response.to_dict()
         )
     
-    # Middleware stack (order matters)
+    # Middleware stack (order matters — applied in reverse registration order)
+    from utils.perf import PerfMiddleware
+    app.add_middleware(PerfMiddleware)
 
     if config.api_server.enable_cors:
         app.add_middleware(
@@ -499,11 +539,26 @@ def create_app() -> FastAPI:
     
     # API routes - v0 versioning (beta signal)
     app.include_router(health.router, prefix="/v0/api", tags=["health"])
+    app.include_router(update.router, prefix="/v0/api", tags=["update"])  # Public update check
     app.include_router(chat_api.router, prefix="/v0/api", tags=["chat"])
     app.include_router(data.router, prefix="/v0/api", tags=["data"])
     app.include_router(actions.router, prefix="/v0/api", tags=["actions"])
     app.include_router(tool_config.router, prefix="/v0/api", tags=["tool_config"])
-    app.include_router(federation_api.router, prefix="/v0/api", tags=["federation"])
+    app.include_router(files_api.router, prefix="/v0/api", tags=["files"])
+
+    # Billing routes (skipped in OSS mode)
+    try:
+        from billing import api as billing_api
+        from billing import stripe_webhooks
+        app.include_router(billing_api.router, prefix="/v0/api", tags=["billing"])
+        app.include_router(stripe_webhooks.router, prefix="/v0/api", tags=["billing-webhooks"])
+    except ImportError:
+        pass  # OSS mode - no billing
+
+    # Performance monitoring (gated by mira.perf logger level)
+    from utils.perf import register_perf_routes, install_db_instrumentation
+    register_perf_routes(app)
+    install_db_instrumentation()
 
     
     return app

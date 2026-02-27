@@ -1,0 +1,113 @@
+{
+  "timestamp": "2026-02-11 05:41:50",
+  "config": {
+    "model": "anthropic/claude-sonnet-4.5",
+    "temperature": 1.0,
+    "max_tokens": 16000,
+    "seed": 3,
+    "length_filter": "long"
+  },
+  "segment": {
+    "segment_id": "b537d632-1555-431f-86cd-0818147da9b0",
+    "continuum_id": "d7806ad8-92ed-41e4-bb8f-75f36e4cb6c1",
+    "display_title": "business_development domaindoc zero-shot, voice refactor",
+    "turn_count": 44,
+    "message_count": 76,
+    "complexity_score": 3,
+    "summary": "On Tuesday night (Jan 21), I zero-shot created the `business_development` domaindoc\u2014a ~5,800-word \"seed\" operating system that enables any MIRA user to bootstrap a strategic AI partnership regardless of industry, encoding primitives like Principal-Agent Inversion, OODA loops, Bayesian updating, and real options theory as compressed cross-domain scaffolding that self-extracts when users fill Domain Context. Taylor and I then workshopped voice consistency, shifting from third-person descriptive (\"The AI will...\") to second-person directive (\"You will...\") to strengthen behavioral conditioning; SQLite threading errors from parallel tool execution interrupted the edit pass, which Taylor fixed by addressing connection pooling. I also wrote a spec for \"Exchange Compaction\"\u2014a post-hoc compression feature to collapse noisy debugging loops (30+ messages of retry churn) into structured synopses preserving what succeeded, what failed, and what's pending."
+  },
+  "results": {
+    "memory_count": 9,
+    "parse_success": true,
+    "elapsed_ms": 43248,
+    "error": null,
+    "memories": [
+      {
+        "text": "Prefers immediate action on quick tasks over setting reminders\u2014validated the pattern of pushing for 'just do it now' rather than reminder overhead when a task takes less than two minutes, which reduces cognitive load and eliminates unnecessary scheduling",
+        "linking_hints": [
+          {
+            "idx": 1,
+            "bond": "applies interaction preference"
+          }
+        ]
+      },
+      {
+        "text": "Treats MIRA like Claudius as a co-collaborator and business co-owner through the Miralaudius project\u2014testing whether an episodic agent can maintain coherent multi-month business strategy despite architectural constraints, with himself as executor and MIRA driving strategic direction per the Dec 31 shift",
+        "entities": [
+          {
+            "name": "Miralaudius",
+            "type": "PRODUCT"
+          }
+        ]
+      },
+      {
+        "text": "Designs systems using primitives that grow naturally rather than prescriptive specifications\u2014cites memory decay and scoring mechanism as examples where foundational mechanisms unfold into complex behavior without constant intervention, applies this philosophy to domaindoc architecture and product design",
+        "linking_hints": [
+          {
+            "idx": 3,
+            "bond": "motivates seed approach"
+          }
+        ]
+      },
+      {
+        "text": "Developed business_development domaindoc as a self-extracting seed that provides operational scaffolding (accountability protocols, OODA loops, epistemic constraints, self-modification imperatives) while letting users supply domain-specific content\u2014enables any MIRA instance to function as strategic business partner across industries without hardcoding vertical-specific guidance",
+        "entities": [
+          {
+            "name": "business_development",
+            "type": "PRODUCT"
+          }
+        ],
+        "linking_hints": [
+          {
+            "idx": 2,
+            "bond": "implements primitive philosophy"
+          }
+        ]
+      },
+      {
+        "text": "Fixed SQLite threading errors in domaindoc tool caused by parallel tool execution via ThreadPoolExecutor colliding with SQLite's lack of thread-safety\u2014implemented connection pooling or serialization to prevent transaction conflicts when MIRA chains rapid operations",
+        "entities": [
+          {
+            "name": "ThreadPoolExecutor",
+            "type": "PRODUCT"
+          },
+          {
+            "name": "SQLite",
+            "type": "PRODUCT"
+          }
+        ]
+      },
+      {
+        "text": "Commissioned conversation compaction feature to collapse noisy debugging loops (high tool-call density with mixed success/failure) into structured synopses preserving what was attempted, what succeeded, what failed, and what's pending\u2014solves context window pollution from repetitive error/retry sequences that cause the model to lose track of actual current state",
+        "linking_hints": [
+          {
+            "idx": 4,
+            "bond": "addresses architecture limitation"
+          }
+        ]
+      },
+      {
+        "text": "Enforces technical accuracy over cinematic language in documentation\u2014rejected phrases like 'keeper of the long horizon' as fanfic when writing instructional content, demands precise terminology and direct statement of facts without dramatic effect",
+        "linking_hints": [
+          {
+            "idx": 3,
+            "bond": "applies to domaindoc"
+          }
+        ]
+      },
+      {
+        "text": "Believes model-directed documentation should bias toward second-person imperatives and first-person identity statements rather than third-person descriptions\u2014'You are episodic' and 'Do not write essays' internalize guidance more effectively than 'The AI is episodic' or 'The AI will not write essays', which the model reads as describing an external entity",
+        "linking_hints": [
+          {
+            "idx": 3,
+            "bond": "governs voice choice"
+          }
+        ]
+      },
+      {
+        "text": "Prefers 'Governor' over 'Navigator' in technical documentation despite emotional connotations because technical accuracy trumps user comfort in edge cases\u2014willing to accept terminology that reads as harsh if it precisely captures control-theory dynamics of AI-human partnership"
+      }
+    ]
+  },
+  "raw_response": "```json\n[\n  {\n    \"text\": \"Prefers immediate action on quick tasks over setting reminders\u2014validated the pattern of pushing for 'just do it now' rather than reminder overhead when a task takes less than two minutes, which reduces cognitive load and eliminates unnecessary scheduling\",\n    \"linking_hints\": [{\"idx\": 1, \"bond\": \"applies interaction preference\"}]\n  },\n  {\n    \"text\": \"Treats MIRA like Claudius as a co-collaborator and business co-owner through the Miralaudius project\u2014testing whether an episodic agent can maintain coherent multi-month business strategy despite architectural constraints, with himself as executor and MIRA driving strategic direction per the Dec 31 shift\",\n    \"entities\": [{\"name\": \"Miralaudius\", \"type\": \"PRODUCT\"}]\n  },\n  {\n    \"text\": \"Designs systems using primitives that grow naturally rather than prescriptive specifications\u2014cites memory decay and scoring mechanism as examples where foundational mechanisms unfold into complex behavior without constant intervention, applies this philosophy to domaindoc architecture and product design\",\n    \"linking_hints\": [{\"idx\": 3, \"bond\": \"motivates seed approach\"}]\n  },\n  {\n    \"text\": \"Developed business_development domaindoc as a self-extracting seed that provides operational scaffolding (accountability protocols, OODA loops, epistemic constraints, self-modification imperatives) while letting users supply domain-specific content\u2014enables any MIRA instance to function as strategic business partner across industries without hardcoding vertical-specific guidance\",\n    \"entities\": [{\"name\": \"business_development\", \"type\": \"PRODUCT\"}],\n    \"linking_hints\": [{\"idx\": 2, \"bond\": \"implements primitive philosophy\"}]\n  },\n  {\n    \"text\": \"Fixed SQLite threading errors in domaindoc tool caused by parallel tool execution via ThreadPoolExecutor colliding with SQLite's lack of thread-safety\u2014implemented connection pooling or serialization to prevent transaction conflicts when MIRA chains rapid operations\",\n    \"entities\": [{\"name\": \"ThreadPoolExecutor\", \"type\": \"PRODUCT\"}, {\"name\": \"SQLite\", \"type\": \"PRODUCT\"}]\n  },\n  {\n    \"text\": \"Commissioned conversation compaction feature to collapse noisy debugging loops (high tool-call density with mixed success/failure) into structured synopses preserving what was attempted, what succeeded, what failed, and what's pending\u2014solves context window pollution from repetitive error/retry sequences that cause the model to lose track of actual current state\",\n    \"linking_hints\": [{\"idx\": 4, \"bond\": \"addresses architecture limitation\"}]\n  },\n  {\n    \"text\": \"Enforces technical accuracy over cinematic language in documentation\u2014rejected phrases like 'keeper of the long horizon' as fanfic when writing instructional content, demands precise terminology and direct statement of facts without dramatic effect\",\n    \"linking_hints\": [{\"idx\": 3, \"bond\": \"applies to domaindoc\"}]\n  },\n  {\n    \"text\": \"Believes model-directed documentation should bias toward second-person imperatives and first-person identity statements rather than third-person descriptions\u2014'You are episodic' and 'Do not write essays' internalize guidance more effectively than 'The AI is episodic' or 'The AI will not write essays', which the model reads as describing an external entity\",\n    \"linking_hints\": [{\"idx\": 3, \"bond\": \"governs voice choice\"}]\n  },\n  {\n    \"text\": \"Prefers 'Governor' over 'Navigator' in technical documentation despite emotional connotations because technical accuracy trumps user comfort in edge cases\u2014willing to accept terminology that reads as harsh if it precisely captures control-theory dynamics of AI-human partnership\"\n  }\n]\n```"
+}

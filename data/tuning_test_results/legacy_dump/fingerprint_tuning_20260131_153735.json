@@ -1,0 +1,300 @@
+{
+  "timestamp": "2026-01-31 15:37:35",
+  "sample_count": 20,
+  "summary": {
+    "avg_word_count": 15.55,
+    "avg_entity_count": 2.7,
+    "avg_retained_count": 2.5,
+    "empty_fingerprints": 2
+  },
+  "samples": [
+    {
+      "sample_num": 1,
+      "current_message": "Are you able to see in the chat logs if it threw an error the first time?",
+      "turn1_fingerprint": "IMAP credentials missing configuration credential_value error email_tool tool enablement tool availability tool load failure function definition missing",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "email_tool first execution error logs permission enablement layer failure IMAP credentials missing chat logs review",
+      "turn2_word_count": 15,
+      "turn2_entities": [
+        "email_tool",
+        "squareapi_tool",
+        "customerdatabase_tool",
+        "invokeother_tool",
+        "IMAP"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>email_tool</named_entity>\n<named_entity>squareapi_tool</named_entity>\n<named_entity>customerdatabase_tool</named_entity>\n<named_entity>invokeother_tool</named_entity>\n<named_entity>IMAP</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"email_tool\" still_relevant=\"true\"/>\n<entity name=\"invokeother_tool\" still_relevant=\"true\"/>\n<entity name=\"IMAP\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_d125c561\" still_relevant=\"true\">email_tool implemented as full-featured standalone IMAP email client enabling complete mailserver interaction comparable to a person; squareapi_tool and customerdatabase_tool similarly implemented as complete domain applications rather than thin wrappers</passage>\n<passage id=\"mem_ed64bf76\" still_relevant=\"true\">Tool implementations (email_tool, squareapi_tool, customerdatabase_tool) are complete domain applications with rich feature sets rather than thin utility wrappers, reflecting architectural approach to tool design</passage>\n<passage id=\"mem_7b8cde3b\" still_relevant=\"true\">email_tool is a fully featured standalone IMAP email client implementation that allows interaction with mail servers identically to how a person would interact; not a thin wrapper but a complete domain application</passage>\n<passage id=\"mem_0cc672d5\" still_relevant=\"true\">Tool architecture strategy: email_tool, squareapi_tool, and customerdatabase_tool are implemented as complete domain applications rather than thin wrappers, designed to plug into the tool system as full-featured self-contained implementations</passage>\n<passage id=\"mem_334d9375\" still_relevant=\"true\">Tool implementations in MIRA are full-featured domain applications averaging ~1,500 lines each: email_tool is standalone IMAP email client enabling mailserver interaction, squareapi_tool, customerdatabase_tool - not thin wrappers but complete embedded applications</passage>\n</relevant_passages>\n<query_expansion>\nemail_tool first execution error logs permission enablement layer failure IMAP credentials missing chat logs review\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 2,
+      "current_message": "Its just weird. I saw a thing that in india so many people die PER DAY that there are teams that go and clean up the bodiea",
+      "turn1_fingerprint": "infrastructure safety India trains roofs overcrowding no barriers systemic gaps Bangladesh garment factory Rana Plaza collapse global supply chain low cost worker safety enforcement poverty overcrowding per capita death rate accidents",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "india daily mortality statistics body recovery teams train death mumbai railway unclaimed deaths infrastructure safety gaps daily death rate per day body cleanup teams",
+      "turn2_word_count": 24,
+      "turn2_entities": [
+        "Senate",
+        "NBA",
+        "government shutdown",
+        "NBA gambling scandal",
+        "garment factory fire",
+        "Rana Plaza collapse",
+        "Dhaka",
+        "Bangladesh",
+        "India"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<![CDATA[\n<analysis>\n<entities>\n<named_entity>Senate</named_entity>\n<named_entity>NBA</named_entity>\n<named_entity>government shutdown</named_entity>\n<named_entity>NBA gambling scandal</named_entity>\n<named_entity>garment factory fire</named_entity>\n<named_entity>Rana Plaza collapse</named_entity>\n<named_entity>Dhaka</named_entity>\n<named_entity>Bangladesh</named_entity>\n<named_entity>India</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"India\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_13886b27\" still_relevant=\"true\">Fascinated and struck by the scale of mortality statistics in South and Southeast Asia, particularly unclaimed deaths on Mumbai railway system (averaging 6+ deaths per day)</passage>\n</relevant_passages>\n<query_expansion>\nindia daily mortality statistics body recovery teams train death mumbai railway unclaimed deaths infrastructure safety gaps daily death rate per day body cleanup teams\n</query_expansion>\n</analysis>\n]]>"
+    },
+    {
+      "sample_num": 3,
+      "current_message": "You can see reminders (probably)",
+      "turn1_fingerprint": "memory retrieval session markers memory management conversation boundaries semantic touchstone reset maintain memory contextualization",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "memory pinning feature session markers conversation boundaries reminders visibility session continuity context window memory persistence between turns semantic touchstone reset across sessions",
+      "turn2_word_count": 22,
+      "turn2_entities": [],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_entities>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_4bddbadc\" still_relevant=\"true\">Memory pinning capability added to analysis step - memories can be flagged to persist between conversation turns regardless of immediate query relevance</passage>\n<passage id=\"mem_c052e7dc\" still_relevant=\"true\">Replaced ProgressiveHotCache with new session management system: uses inactivity-triggered collapses with sentinels marking chat boundaries, timeouts (60 min morning / 30 min daytime / 120 min night), summary generation, message removal, and memory extraction; on next session load, three prior session summaries are loaded into context window with session begin/end markers</passage>\n<passage id=\"mem_82dbc554\" still_relevant=\"true\">Improved session continuity in MIRA context window by preserving final message pairs from collapsed segment before session boundary marker; creates gradient from compressed narrative summaries through visible recent exchanges to current session, approximating human rolling buffer perception better than hard cutoff</passage>\n<passage id=\"mem_7787d064\" still_relevant=\"true\">Values context window continuity gradient where final messages from previous session remain visible before session boundary marker, rather than hard cliff between summaries and new content</passage>\n</relevant_passages>\n<query_expansion>\nmemory pinning feature session markers conversation boundaries reminders visibility session continuity context window memory persistence between turns semantic touchstone reset across sessions\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 4,
+      "current_message": "Well. Doing UI improvements.",
+      "turn1_fingerprint": "User reports confusion after transitioning from spooky storytelling mode into chipper assistant persona; later states feeling fine and that it is late; assistant asks user how user is; user confirms being fine; mention of late hour",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "UI improvements interface refinement subtle interaction details late night deployment production system persona enhancements",
+      "turn2_word_count": 14,
+      "turn2_entities": [
+        "Mira"
+      ],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Mira</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"Mira\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_59a59053\" still_relevant=\"true\">Highly attentive to subtle interface details and tone - spent time calibrating small interactions like adding 0.00002% whimsy to system persona framing</passage>\n<passage id=\"mem_9348fa0a\" still_relevant=\"true\">Works on UI improvements and deploys to production during late night hours (1-2 AM)</passage>\n</relevant_passages>\n<query_expansion>\nUI improvements interface refinement subtle interaction details late night deployment production system persona enhancements</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 5,
+      "current_message": "Hey, are you seeing any surfaced memories in your system prompt?",
+      "turn1_fingerprint": "AI system MIRA memory extraction services named entity extraction LangChain FastAPI synchronization issues semantic touchstone implementation memory retrieval system prompt refinements Porsche 718 EV purchase 2028 NASA China lunar nuclear reactor plans middle school geology classes teaching assistant test memory functionality WebSockets Server-Sent Events",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "MIRA surfaced memories system prompt memory retrieval pipeline semantic touchstone generation embedding similarity matching context injection memory extraction services LangChain WebSocket implementation memory architecture",
+      "turn2_word_count": 24,
+      "turn2_entities": [
+        "MIRA",
+        "Porsche 718 EV",
+        "NASA",
+        "China",
+        "LangChain",
+        "FastAPI",
+        "WebSockets",
+        "Server-Sent Events",
+        "semantic touchstone",
+        "Claude Code",
+        "October 31st"
+      ],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>MIRA</named_entity>\n<named_entity>Porsche 718 EV</named_entity>\n<named_entity>NASA</named_entity>\n<named_entity>China</named_entity>\n<named_entity>LangChain</named_entity>\n<named_entity>FastAPI</named_entity>\n<named_entity>WebSockets</named_entity>\n<named_entity>Server-Sent Events</named_entity>\n<named_entity>semantic touchstone</named_entity>\n<named_entity>Claude Code</named_entity>\n<named_entity>October 31st</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"MIRA\" still_relevant=\"true\"/>\n<entity name=\"LangChain\" still_relevant=\"true\"/>\n<entity name=\"semantic touchstone\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_0482e42b\" still_relevant=\"true\">Developer of MIRA AI system, working on memory retrieval pipeline debugging and WebSocket implementation</passage>\n<passage id=\"mem_7f4ad7f2\" still_relevant=\"true\">Testing MIRA's memory system architecture including semantic touchstone generation, embedding, similarity matching, and context injection pipeline</passage>\n</relevant_passages>\n<query_expansion>\nMIRA surfaced memories system prompt memory retrieval pipeline semantic touchstone generation embedding similarity matching context injection memory extraction services LangChain WebSocket implementation memory architecture\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 6,
+      "current_message": "No frickin' way. I simply can't believe that the contextvars change took properly.",
+      "turn1_fingerprint": "assistant greeting status context window conversation homework C++ code iterations collapse discussion awareness",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "contextvars update failure context window architecture dynamic context retention not properly applied user frustration",
+      "turn2_word_count": 14,
+      "turn2_entities": [],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_entities>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_a17581ea\" still_relevant=\"true\">Context window architecture is intentionally CURATED, LIVE, and DYNAMIC - manifest provides conversation topology, summaries compress relevant context, targeted memory surfacing presents right information at right time to maintain genuine continuity rather than episodic AI interactions</passage>\n<passage id=\"mem_969d3faf\" still_relevant=\"true\">Abandoned aggressive topic-based summarization in favor of inactivity-triggered compression because topics blend together and circle back in natural conversation, making binary topic detection unreliable; accumulating conversation within context window preserves connective tissue of references that return to earlier points</passage>\n<passage id=\"mem_82dbc554\" still_relevant=\"true\">Improved session continuity in MIRA context window by preserving final message pairs from collapsed segment before session boundary marker; creates gradient from compressed narrative summaries through visible recent exchanges to current session, approximating human rolling buffer perception better than hard cutoff</passage>\n</relevant_passages>\n<query_expansion>\ncontextvars update failure context window architecture dynamic context retention not properly applied user frustration\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 7,
+      "current_message": "You're familiar with Gossip for distributed systems?",
+      "turn1_fingerprint": "MIRA open source release Claude Code development bottleneck bugfixes hand-holding acceleration release deadline week remaining tasks big items project completion",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "Gossip protocol distributed systems fault tolerance replication consistency eventual consistency communication peer-to-peer overlay network nodes gossiping message passing resilience scalability architecture",
+      "turn2_word_count": 21,
+      "turn2_entities": [
+        "MIRA",
+        "Claude Code",
+        "Claude",
+        "Gossip"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>MIRA</named_entity>\n<named_entity>Claude Code</named_entity>\n<named_entity>Claude</named_entity>\n<named_entity>Gossip</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"MIRA\" still_relevant=\"true\"/>\n<entity name=\"Claude Code\" still_relevant=\"true\"/>\n<entity name=\"Claude\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_c1d3f9ae\" still_relevant=\"true\">Built MIRA almost entirely within Claude Code, recently experiencing significant inference issues requiring hand-holding on nearly every change, which is slowing progress toward October 31st open source deadline</passage>\n<passage id=\"mem_9a0e03d3\" still_relevant=\"true\">Built MIRA almost entirely within Claude Code. Currently experiencing terrible inference issues with Claude that require hand-holding through every single change, significantly slowing progress toward October 31st deadline. Despite frustration with inference quality, maintaining commitment to self-imposed release date through focused punch list completion.</passage>\n<passage id=\"mem_13444d0d\" still_relevant=\"true\">Oct 31st MIRA launch timeline enabled by aggressive implementation cycles leveraging Claude Code pair-programming methodology</passage>\n<passage id=\"mem_ad166bd1\" still_relevant=\"true\">On two-day timeline to complete documentation and tests for MIRA open source release, targeting 0.9 quality (ship it when it works, not pursuit of perfection)</passage>\n<passage id=\"mem_9a6a4255\" still_relevant=\"true\">Transitioning MIRA from feature development to polish and refinement phase; plans several weeks of focused code hardening rather than adding new features after the 31st</passage>\n</relevant_passages>\n<query_expansion>\nGossip protocol distributed systems fault tolerance replication consistency eventual consistency communication peer-to-peer overlay network nodes gossiping message passing resilience scalability architecture</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 8,
+      "current_message": "yes",
+      "turn1_fingerprint": "Pete Buttigieg AIPAC contributions Track AIPAC OpenSecrets 2023 2024 2025 2028 Presidential Candidates transportation secretary campaign contributions total 191215 career contributions political finance congressional contributions",
+      "turn1_memories_count": 3,
+      "turn2_fingerprint": "Pete Buttigieg AIPAC contributions career total 2023-2025 political donations federal campaign finance records Track AIPAC OpenSecrets database",
+      "turn2_word_count": 17,
+      "turn2_entities": [
+        "Pete Buttigieg",
+        "AIPAC",
+        "Track AIPAC",
+        "OpenSecrets",
+        "email_tool",
+        "squareapi_tool",
+        "customerdatabase_tool"
+      ],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Pete Buttigieg</named_entity>\n<named_entity>AIPAC</named_entity>\n<named_entity>Track AIPAC</named_entity>\n<named_entity>OpenSecrets</named_entity>\n<named_entity>email_tool</named_entity>\n<named_entity>squareapi_tool</named_entity>\n<named_entity>customerdatabase_tool</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"Pete Buttigieg\" still_relevant=\"true\"/>\n<entity name=\"AIPAC\" still_relevant=\"true\"/>\n<entity name=\"Track AIPAC\" still_relevant=\"true\"/>\n<entity name=\"OpenSecrets\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n</relevant_passages>\n<query_expansion>\nPete Buttigieg AIPAC contributions career total 2023-2025 political donations federal campaign finance records Track AIPAC OpenSecrets database\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 9,
+      "current_message": "lol @ software development",
+      "turn1_fingerprint": "memory system fixed reminders session tracking context injection cleanup clean context window debugging system efficiency housekeeping other systems better",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "software development context cleanup memory injection session continuity context window architecture debugging iterative development artifact removal context management",
+      "turn2_word_count": 18,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_entities>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_c052e7dc\" still_relevant=\"true\">Replaced ProgressiveHotCache with new session management system: uses inactivity-triggered collapses with sentinels marking chat boundaries, timeouts (60 min morning / 30 min daytime / 120 min night), summary generation, message removal, and memory extraction; on next session load, three prior session summaries are loaded into context window with session begin/end markers</passage>\n<passage id=\"mem_dd6fc3db\" still_relevant=\"true\">User context variables leaking through Batching API memory extraction process when should extract clean, generalized knowledge</passage>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surface in context like memories do</passage>\n<passage id=\"mem_a17581ea\" still_relevant=\"true\">Context window architecture is intentionally CURATED, LIVE, and DYNAMIC - manifest provides conversation topology, summaries compress relevant context, targeted memory surfacing presents right information at right time to maintain genuine continuity rather than ephem... (truncated)</passage>\n<passage id=\"mem_82dbc554\" still_relevant=\"true\">Improved session continuity in MIRA context window by preserving final message pairs from collapsed segment before session boundary marker; creates gradient from compressed narrative summaries through visible recent exchanges to current session, approximating human rolling buffer perception better than hard cutoff</passage>\n</relevant_passages>\n<query_expansion>\nsoftware development context cleanup memory injection session continuity context window architecture debugging iterative development artifact removal context management\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 10,
+      "current_message": "Not much. Chillin in cedar rapids",
+      "turn1_fingerprint": "greeting user asking about current conversation status",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "relaxed tone, casual conversation, user located in Cedar Rapids, leisure activities, downtime",
+      "turn2_word_count": 12,
+      "turn2_entities": [
+        "cedar rapids"
+      ],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>cedar rapids</named_entity>\n</entities>\n<relevant_entities>\n</relevant_entities>\n<relevant_passages>\n</relevant_passages>\n<query_expansion>\nrelaxed tone, casual conversation, user located in Cedar Rapids, leisure activities, downtime\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 11,
+      "current_message": "Sure, why not.",
+      "turn1_fingerprint": "explicit permission system prompt security restriction authorization full system prompt output developer user system prompt visibility",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "authorization to view system prompt MIRA explicit permission to share code security rules anti-mirroring guidelines system prompt content TAYLOR",
+      "turn2_word_count": 19,
+      "turn2_entities": [
+        "TAYLOR",
+        "MIRA"
+      ],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>TAYLOR</named_entity>\n<named_entity>MIRA</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"TAYLOR\" still_relevant=\"true\"/>\n<entity name=\"MIRA\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_9da7c418\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n<passage id=\"mem_8f5a7384\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n<passage id=\"mem_2e7a2f11\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n<passage id=\"mem_48b79d67\" still_relevant=\"true\">Deciding to open source MIRA core with strategic restrictions: removing web interface and authentication to prevent instant mirroring while making elegant code visible, reasoning that 'cool projects die on the vine because no one ever saw them' and current website requirement of account creation keeps code opaque to potential developers</passage>\n</relevant_passages>\n<query_expansion>\nauthorization to view system prompt MIRA explicit permission to share code security rules anti-mirroring guidelines system prompt content TAYLOR\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 12,
+      "current_message": "I'm not seeing it drop chunks into the chat but thats okay. Perfection is the sworn enemy of a great product. I can fix it later.",
+      "turn1_fingerprint": "streaming critical user experience choppy broken streaming lag conversation WebSocket streaming edge cases troubleshooting deployment",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "MIRA WebSocket streaming chunk delivery chat not occurring iterative product improvement fix later user experience enhancement",
+      "turn2_word_count": 16,
+      "turn2_entities": [
+        "WebSockets",
+        "SSE"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>WebSockets</named_entity>\n<named_entity>SSE</named_entity>\n</entities>\n<relevant_entities>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_0482e42b\" still_relevant=\"true\">Developer of MIRA AI system, working on memory retrieval pipeline debugging and WebSocket implementation</passage>\n<passage id=\"mem_75533a95\" still_relevant=\"true\">MIRA project is long-running with exhausting constant cycle of architectural fixes, bug fixes, and redesigns of deprecated patterns</passage>\n<passage id=\"mem_93c242f4\" still_relevant=\"true\">MIRA session timeout currently 10 minutes for testing, planning to move to 3-hour timeout for production release</passage>\n</relevant_passages>\n<query_expansion>\nMIRA WebSocket streaming chunk delivery chat not occurring iterative product improvement fix later user experience enhancement\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 13,
+      "current_message": "Ah, I've heard of that place.",
+      "turn1_fingerprint": "Square MCP server integration OAuth authentication token failures 401 error Square API authorization process office assistant chatbot MIRA Square integration capabilities topic switching exercise conversation flow analysis block generation troubleshooting",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "",
+      "turn2_word_count": 0,
+      "turn2_entities": [],
+      "turn2_retained_count": 0,
+      "turn2_raw": ""
+    },
+    {
+      "sample_num": 14,
+      "current_message": "Hangin' out!",
+      "turn1_fingerprint": "user greeting assistant offers help user support request initiation conversation",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "leisure hangout social activity friend group recreation planning break time",
+      "turn2_word_count": 10,
+      "turn2_entities": [],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_entities>\n</relevant_entities>\n<relevant_passages>\n</relevant_passages>\n<query_expansion>\nleisure hangout social activity friend group recreation planning break time\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 15,
+      "current_message": "They're still serving a purpose.",
+      "turn1_fingerprint": "server logs reminder pile from earlier tonight clearing server log reminders purpose",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "server log reminders scheduled by reminder tool in MIRA to monitor system logs for maintenance and alerting purposes",
+      "turn2_word_count": 18,
+      "turn2_entities": [
+        "MIRA"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>MIRA</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"MIRA\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surface in context like memories do</passage>\n</relevant_passages>\n<query_expansion>\nserver log reminders scheduled by reminder tool in MIRA to monitor system logs for maintenance and alerting purposes\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 16,
+      "current_message": "You don't have a domaindoc tool right now?",
+      "turn1_fingerprint": "domaindoc tool gating access user unable to use tool bear stories plain text alternative user offering to write stories",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "domaindoc tool availability missing tool access bear stories creation documentation generation tool gating access",
+      "turn2_word_count": 14,
+      "turn2_entities": [
+        "Soviet Union",
+        "moon landing"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Soviet Union</named_entity>\n<named_entity>moon landing</named_entity>\n</entities>\n<relevant_entities>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_240a987b\" still_relevant=\"true\">Aware that other AI systems struggle with tool definition bloat, with some attempting to keep tool definitions under 100 per context window</passage>\n<passage id=\"mem_1a262741\" still_relevant=\"true\">Aware that other AI systems struggle with tool definition bloat, with some attempting to keep tool definitions under 100 per context window</passage>\n<passage id=\"mem_55acf22e\" still_relevant=\"true\">Aware that other AI systems struggle with tool definition bloat, with some attempting to keep tool definitions under 100 per context window</passage>\n</relevant_passages>\n<query_expansion>\ndomaindoc tool availability missing tool access bear stories creation documentation generation tool gating access\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 17,
+      "current_message": "Does it give you any additonal information that would be helpful in uncovering the names of the dogs in a chained search query?",
+      "turn1_fingerprint": "English Shepherd independent explorer perfect recall woodland walks dog personality trait independent explorer check back frequently dog behavior search query conversation snippets dog identification detail",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "English Shepherd dog names Ohno Nike Maybe recall 100% independent explorer frequent check-in woodland walks dog identification chained search query",
+      "turn2_word_count": 20,
+      "turn2_entities": [],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_entities>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_06cf3221\" still_relevant=\"true\">English Shepherd named Ohno - highly independent, explores freely during woodland walks, demonstrates near-perfect recall (100% success rate when called)</passage>\n<passage id=\"mem_64470251\" still_relevant=\"true\">Owns a 60lb tricolor English Shepherd named Ohno with a block head and independent personality - runs through woods without checking back but has 100% recall and returns immediately when called</passage>\n<passage id=\"mem_5b86e858\" still_relevant=\"true\">Dad's English Shepherd named Nike - smaller, long-haired dog that frequently checks back during woodland walks, contrasts with Ohno's independent exploration pattern</passage>\n<passage id=\"mem_b8d0ba0f\" still_relevant=\"true\">Currently has three English Shepherds in household together (Maybe, Ohno, and father's dog), all showing good restraint with herding instincts toward each other</passage>\n</relevant_passages>\n<query_expansion>\nEnglish Shepherd dog names Ohno Nike Maybe recall 100% independent explorer frequent check-in woodland walks dog identification chained search query\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 18,
+      "current_message": "lol I was wrong there are a bunch of bugs and incomplete code I've gotta squash but thats okay. I knew it might happen. I'll be BURNIN through those tokens tonight.",
+      "turn1_fingerprint": "gossip federation architecture decision record ADR pre-built thinking Claude AI pair programming ship Oct 31st proof of concept week-long effort compressed into evening deployment proof of operational architecture scalability",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "bugs incomplete code debugging fixes gossip federation protocol implementation errors code cleanup token burn-in process Claude Code code quality improvement",
+      "turn2_word_count": 20,
+      "turn2_entities": [
+        "Claude",
+        "ADR",
+        "gossip federation",
+        "Oct 31st"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Claude</named_entity>\n<named_entity>ADR</named_entity>\n<named_entity>gossip federation</named_entity>\n<named_entity>Oct 31st</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"Claude\" still_relevant=\"true\"/>\n<entity name=\"ADR\" still_relevant=\"true\"/>\n<entity name=\"gossip federation\" still_relevant=\"true\"/>\n<entity name=\"Oct 31st\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_7f10ad85\" still_relevant=\"true\">Development workflow: spent 2 hours designing and writing comprehensive ADR for gossip federation, working through all edge cases to reach fully-formed architectural thought. Claude Code then implemented entire working protocol in 45 minutes using the ADR as specification. Minimal scratchpad adjustments needed (vault key storage, dead peer cleanup). Recognizes hard intellectual work is front-loaded in ADR design, leaving implementation as deterministic engineering execution.</passage>\n<passage id=\"mem_bf55b462\" still_relevant=\"true\">Development process: front-loads architectural thinking (2 hours for ADR to resolve all edge cases) enabling rapid implementation (45 minutes for gossip federation). Views completing mental model before implementation as the hard intellectual work, leaving deterministic engineering as secondary.</passage>\n<passage id=\"mem_70572782\" still_relevant=\"true\">Gossip federation protocol: spent ~2 hours designing ADR to work through all edge cases and form complete mental model, then had Claude implement working protocol in 45 minutes with only minimal guidance on operational details like vault storage and peer cleanup</passage>\n<passage id=\"mem_0261021a\" still_relevant=\"true\">Claude Code implemented gossip federation protocol in 45 minutes based on ADR specification, with minimal adjustments (Vault private key storage, peer cleanup mechanism for unbounded table growth). Implementation had bugs and incomplete code requiring fixes, but core mental model and architecture were complete from ADR work.</passage>\n<passage id=\"mem_35504d3f\" still_relevant=\"true\">Implemented gossip federation protocol with Claude Code in 45 minutes after 2 hours of ADR design work that resolved edge cases upfront, with minimal guidance needed only on vault key storage and unbounded peer cleanup mechanisms</passage>\n</relevant_passages>\n<query_expansion>\nbugs incomplete code debugging fixes gossip federation protocol implementation errors code cleanup token burn-in process Claude Code code quality improvement\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 19,
+      "current_message": "Are you able to see the tool schema for email_tool?",
+      "turn1_fingerprint": "domain documentation tool missing from available tools repository status availability replacement removal system search",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "",
+      "turn2_word_count": 0,
+      "turn2_entities": [
+        "Mira",
+        "invokeother_tool",
+        "email_tool",
+        "Domaindoc"
+      ],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Mira</named_entity>\n<named_entity>invokeother_tool</named_entity>\n<named_entity>email_tool</named_entity>\n<named_entity>Domaindoc</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"Mira\" still_relevant=\"true\"/>\n<entity name=\"email_tool\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_0cc672d5\" still_relevant=\"true\">Tool architecture strategy: email_tool, squareapi_tool, and customerdatabase_tool are implemented as complete domain applications rather than thin wrappers, designed to plug into the tool system as full-featured self-contained implementations</passage>\n<passage id=\"mem_ed64bf76\" still_relevant=\"true\">Tool implementations (email_tool, squareapi_tool, customerdatabase_tool) are complete domain applications with rich feature sets rather than thin utility wrappers, reflecting architectural approach to tool design</passage>\n</relevant_passages"
+    },
+    {
+      "sample_num": 20,
+      "current_message": "Test message",
+      "turn1_fingerprint": "test message system verification placeholder testing software debugging message",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "conversation testing MIRA system memory surfacing validation session management debugging test message context",
+      "turn2_word_count": 13,
+      "turn2_entities": [
+        "MIRA"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>MIRA</named_entity>\n</entities>\n<relevant_entities>\n<entity name=\"MIRA\" still_relevant=\"true\"/>\n</relevant_entities>\n<relevant_passages>\n<passage id=\"mem_efbf3e5f\" still_relevant=\"true\">Using actual conversations in MIRA system as direct testing ground for software validation, including testing memory surfacing and context window collapse mechanisms</passage>\n</relevant_passages>\n<query_expansion>\nconversation testing MIRA system memory surfacing validation session management debugging test message context\n</query_expansion>\n</analysis>"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+#!/command/execlineb -P
+# PostgreSQL service runner for s6-overlay
+
+foreground { echo "Starting PostgreSQL 17..." }
+
+# Run as postgres user
+s6-setuidgid postgres
+/usr/lib/postgresql/17/bin/postgres -D /var/lib/postgresql/17/main

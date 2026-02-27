@@ -1,0 +1,7 @@
+<conversation_history>
+{formatted_messages}
+</conversation_history>
+
+{memory_context}
+
+Observe this conversation and decide if any intervention is warranted.

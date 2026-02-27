@@ -7,6 +7,8 @@ and fuzzy clustering without hardcoded entity lists.
 """
 import logging
 from typing import List, Dict, Set, Optional
+
+from lt_memory.models import NamedEntity
 from collections import defaultdict
 
 import spacy
@@ -28,6 +30,14 @@ class EntityExtractor:
     ENTITY_TYPES = {
         "PERSON", "ORG", "GPE", "PRODUCT", "EVENT",
         "WORK_OF_ART", "LAW", "LANGUAGE", "NORP", "FAC"
+    }
+
+    # Common verbs that indicate spaCy misclassified a verb phrase as an entity
+    # e.g., "Built MIRA", "Uses Square", "Holds AI" are not valid entities
+    VERB_PREFIXES = {
+        "built", "uses", "holds", "wants", "needs", "likes", "loves",
+        "hates", "makes", "creates", "develops", "works", "runs",
+        "manages", "leads", "owns", "maintains", "prefers", "enjoys"
     }
 
     def __init__(self):
@@ -70,6 +80,10 @@ class EntityExtractor:
             if ent.label_ not in self.ENTITY_TYPES:
                 continue
 
+            # Skip verb phrases (spaCy misclassification)
+            if self._is_verb_phrase(ent.text):
+                continue
+
             # Normalize entity text
             normalized = self._normalize_entity(ent.text)
             if normalized:
@@ -77,7 +91,7 @@ class EntityExtractor:
 
         return entities
 
-    def extract_entities_with_types(self, text: str) -> List[tuple]:
+    def extract_entities_with_types(self, text: str) -> List[NamedEntity]:
         """
         Extract normalized entities with their types from text.
 
@@ -85,7 +99,7 @@ class EntityExtractor:
             text: Memory text to extract entities from
 
         Returns:
-            List of (entity_name, entity_type) tuples
+            List of NamedEntity dicts with name and entity_type
 
         Raises:
             Exception: If spaCy NLP processing fails
@@ -94,17 +108,21 @@ class EntityExtractor:
             return []
 
         doc = self.nlp(text)
-        entities = []
+        entities: List[NamedEntity] = []
 
         for ent in doc.ents:
             # Filter by entity type
             if ent.label_ not in self.ENTITY_TYPES:
                 continue
 
+            # Skip verb phrases (spaCy misclassification)
+            if self._is_verb_phrase(ent.text):
+                continue
+
             # Normalize entity text
             normalized = self._normalize_entity(ent.text)
             if normalized:
-                entities.append((normalized, ent.label_))
+                entities.append(NamedEntity(name=normalized, entity_type=ent.label_))
 
         return entities
 
@@ -130,12 +148,33 @@ class EntityExtractor:
             entities = set()
             for ent in doc.ents:
                 if ent.label_ in self.ENTITY_TYPES:
+                    # Skip verb phrases (spaCy misclassification)
+                    if self._is_verb_phrase(ent.text):
+                        continue
                     normalized = self._normalize_entity(ent.text)
                     if normalized:
                         entities.add(normalized)
             results.append(entities)
 
         return results
+
+    def _is_verb_phrase(self, text: str) -> bool:
+        """
+        Check if entity starts with a common verb (spaCy misclassification).
+
+        Examples: "Built MIRA", "Uses Square", "Holds AI" are verb phrases,
+        not valid entity names.
+
+        Args:
+            text: Entity text to check
+
+        Returns:
+            True if entity appears to be a verb phrase
+        """
+        if not text:
+            return False
+        first_word = text.split()[0].lower()
+        return first_word in self.VERB_PREFIXES
 
     def _normalize_entity(self, entity_text: str) -> Optional[str]:
         """
@@ -256,7 +295,7 @@ class EntityExtractor:
 
         return shared
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Release spaCy model resources.
 

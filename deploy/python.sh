@@ -276,6 +276,13 @@ fi
 
 print_success "Python dependencies installed"
 
+# Install TOAST log level into venv so it's available at interpreter startup
+echo -ne "${DIM}${ARROW}${RESET} Installing custom log levels... "
+SITE_PACKAGES=$(venv/bin/python3 -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+cp "${SCRIPT_DIR}/_mira_log_levels.py" "$SITE_PACKAGES/"
+echo "import _mira_log_levels" > "$SITE_PACKAGES/mira-log-levels.pth"
+echo -e "${CHECKMARK}"
+
 print_header "Step 6: Embedding Model Download"
 
 # Download MongoDB leaf embedding model (768d asymmetric retrieval)

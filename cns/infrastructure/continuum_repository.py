@@ -4,23 +4,48 @@ Continuum repository for CNS.
 Handles persistence and retrieval of continuums and messages
 with RLS (Row Level Security) per user.
 """
+from __future__ import annotations
+
 import json
 import logging
 from datetime import datetime
-from typing import List, Optional, Dict, Any, Union
+from typing import Any, TypedDict
 from uuid import UUID
 
 from cns.core.continuum import Continuum
 from cns.core.state import ContinuumState
 from cns.core.message import Message
-from cns.core.events import ContinuumEvent
 from clients.postgres_client import PostgresClient
 from utils.timezone_utils import utc_now, format_utc_iso, parse_utc_time_string
 
 logger = logging.getLogger(__name__)
 
+
+class HistoryResult(TypedDict):
+    """Return type for get_history() and search_continuums()."""
+    messages: list[dict[str, object]]
+    has_more: bool
+    next_offset: int | None
+
+
+class FailedSegment(TypedDict):
+    """A collapsed segment where memory extraction failed or hasn't been attempted."""
+    message_id: str
+    segment_id: str
+    extraction_attempts: int
+
+
+class ActiveSegmentRow(TypedDict):
+    """Row from find_all_active_segments_admin() — UUIDs normalized to strings."""
+    id: str
+    continuum_id: str
+    user_id: str
+    metadata: dict[str, Any]
+    created_at: datetime
+
+
 # Module-level singleton instance
-_continuum_repo_instance = None
+_continuum_repo_instance: ContinuumRepository | None = None
 
 
 def get_continuum_repository() -> 'ContinuumRepository':
@@ -52,13 +77,13 @@ class ContinuumRepository:
         """Initialize repository."""
         self._db_cache = {}
         
-    def _get_client(self, user_id: str):
+    def _get_client(self, user_id: str) -> PostgresClient:
         """Get or create database client for user."""
         if user_id not in self._db_cache:
             self._db_cache[user_id] = PostgresClient("mira_service", user_id=user_id)
         return self._db_cache[user_id]
     
-    def get_continuum(self, user_id: str) -> Optional[Continuum]:
+    def get_continuum(self, user_id: str) -> Continuum | None:
         """
         Get most recent continuum for user.
         
@@ -141,7 +166,7 @@ class ContinuumRepository:
             logger.error(f"Failed to create continuum for user {user_id}: {str(e)}")
             raise RuntimeError(f"Database operation failed: {str(e)}") from e
     
-    def get_by_id(self, continuum_id: str, user_id: str) -> Optional[Continuum]:
+    def get_by_id(self, continuum_id: str, user_id: str) -> Continuum | None:
         """
         Get continuum by ID.
         
@@ -160,8 +185,7 @@ class ContinuumRepository:
             try:
                 conv_uuid = uuid_type(continuum_id)
             except ValueError:
-                logger.warning(f"Invalid continuum ID format: {continuum_id}")
-                return None
+                raise ValueError(f"Invalid continuum ID format: {continuum_id}")
             
             result = db.execute_query(
                 "SELECT * FROM continuums WHERE id = %s",
@@ -190,7 +214,7 @@ class ContinuumRepository:
             logger.error(f"Failed to get continuum {continuum_id} for user {user_id}: {str(e)}")
             raise RuntimeError(f"Database operation failed: {str(e)}") from e
     
-    def save_message(self, message: Message, continuum_id: Union[str, UUID], user_id: str) -> None:
+    def save_message(self, message: Message, continuum_id: str | UUID, user_id: str) -> None:
         """
         Save message to database.
 
@@ -265,7 +289,7 @@ class ContinuumRepository:
             logger.error(f"Failed to save message to continuum {continuum_id}: {str(e)}")
             raise RuntimeError(f"Database operation failed: {str(e)}") from e
 
-    def _ensure_active_segment(self, continuum_id: UUID, user_id: str, current_message_time, db) -> None:
+    def _ensure_active_segment(self, continuum_id: UUID, user_id: str, current_message_time: datetime, db: PostgresClient) -> None:
         """
         Ensure active segment exists, creating one if needed when second message arrives.
 
@@ -347,7 +371,7 @@ class ContinuumRepository:
 
             logger.info(f"Created segment boundary sentinel for continuum {continuum_id}")
     
-    def save_messages_batch(self, messages: List[Message], continuum_id: Union[str, UUID], user_id: str) -> None:
+    def save_messages_batch(self, messages: list[Message], continuum_id: str | UUID, user_id: str) -> None:
         """
         Save multiple messages to database as a batch operation.
 
@@ -428,9 +452,9 @@ class ContinuumRepository:
             logger.error(f"Failed to save {len(messages)} messages to continuum {continuum_id}: {str(e)}")
             raise RuntimeError(f"Database batch operation failed: {str(e)}") from e
 
-    def _parse_message_rows(self, rows: List[Dict[str, Any]]) -> List[Message]:
+    def _parse_message_rows(self, rows: list[dict[str, Any]]) -> list[Message]:
         """Convert raw database rows into Message instances."""
-        messages: List[Message] = []
+        messages: list[Message] = []
 
         for row in rows:
             message_id = row.get("id")
@@ -470,9 +494,9 @@ class ContinuumRepository:
     def load_messages_with_metadata(self, 
                                   continuum_id: str, 
                                   user_id: str,
-                                  metadata_filters: Dict[str, Any],
-                                  limit: Optional[int] = None,
-                                  order_desc: bool = True) -> List[Message]:
+                                  metadata_filters: dict[str, str | bool],
+                                  limit: int | None = None,
+                                  order_desc: bool = True) -> list[Message]:
         """
         Load messages with flexible metadata filtering.
 
@@ -535,7 +559,7 @@ class ContinuumRepository:
     def load_messages_by_ids(self,
                               continuum_id: str,
                               user_id: str,
-                              message_ids: List[str]) -> List[Message]:
+                              message_ids: list[str]) -> list[Message]:
         """Load persisted messages by their IDs."""
         if not message_ids:
             return []
@@ -597,7 +621,7 @@ class ContinuumRepository:
         continuum_id: str,
         user_id: str,
         message_id: str,
-        metadata_patch: Dict[str, Any],
+        metadata_patch: dict[str, Any],
     ) -> None:
         """Merge metadata_patch into the message metadata payload."""
         if not metadata_patch:
@@ -620,9 +644,9 @@ class ContinuumRepository:
             ),
         )
 
-    def get_history(self, user_id: str, offset: int = 0, limit: int = 50, 
-                   start_date: Optional[Any] = None, end_date: Optional[Any] = None,
-                   message_type: str = "regular") -> Dict[str, Any]:
+    def get_history(self, user_id: str, offset: int = 0, limit: int = 50,
+                   start_date: datetime | None = None, end_date: datetime | None = None,
+                   message_type: str = "regular") -> HistoryResult:
         """
         Get continuum history with pagination and date filtering.
         
@@ -695,7 +719,7 @@ class ContinuumRepository:
     
     def search_continuums(self, user_id: str, search_query: str, 
                            offset: int = 0, limit: int = 50,
-                           message_type: str = "regular") -> Dict[str, Any]:
+                           message_type: str = "regular") -> HistoryResult:
         """
         Search continuums using full-text search.
         
@@ -758,7 +782,7 @@ class ContinuumRepository:
         }
     
     
-    def get_messages_for_dates(self, user_id: str, dates: List[str]) -> Dict[str, List[Dict]]:
+    def get_messages_for_dates(self, user_id: str, dates: list[str]) -> dict[str, list[dict[str, object]]]:
         """
         Get messages grouped by date for temporal RAG linking.
         
@@ -829,7 +853,7 @@ class ContinuumRepository:
     # Segment Query Methods
     # =========================================================================
 
-    def find_active_segment(self, continuum_id: Union[str, UUID], user_id: str) -> Optional[Message]:
+    def find_active_segment(self, continuum_id: str | UUID, user_id: str) -> Message | None:
         """
         Find active segment sentinel for a continuum.
 
@@ -856,7 +880,7 @@ class ContinuumRepository:
 
         return messages[0] if messages else None
 
-    def increment_segment_turn(self, continuum_id: Union[str, UUID], user_id: str) -> int:
+    def increment_segment_turn(self, continuum_id: str | UUID, user_id: str) -> int:
         """
         Increment segment turn counter on the active segment sentinel.
 
@@ -901,7 +925,7 @@ class ContinuumRepository:
 
     def set_segment_virtual_last_message_time(
         self,
-        continuum_id: Union[str, UUID],
+        continuum_id: str | UUID,
         user_id: str,
         virtual_time: datetime
     ) -> bool:
@@ -940,7 +964,7 @@ class ContinuumRepository:
 
     def clear_segment_virtual_last_message_time(
         self,
-        continuum_id: Union[str, UUID],
+        continuum_id: str | UUID,
         user_id: str
     ) -> bool:
         """
@@ -968,10 +992,10 @@ class ContinuumRepository:
 
     def find_collapsed_segments(
         self,
-        continuum_id: Union[str, UUID],
+        continuum_id: str | UUID,
         user_id: str,
         limit: int
-    ) -> List[Message]:
+    ) -> list[Message]:
         """
         Find recent collapsed segment sentinels for a continuum.
 
@@ -1004,10 +1028,10 @@ class ContinuumRepository:
 
     def find_segment_by_id(
         self,
-        continuum_id: Union[str, UUID],
+        continuum_id: str | UUID,
         segment_id: str,
         user_id: str
-    ) -> Optional[Message]:
+    ) -> Message | None:
         """
         Find segment sentinel by segment_id.
 
@@ -1034,7 +1058,7 @@ class ContinuumRepository:
 
         return messages[0] if messages else None
 
-    def find_all_segments(self, user_id: str, limit: int) -> List[Message]:
+    def find_all_segments(self, user_id: str, limit: int) -> list[Message]:
         """
         Find all segment sentinels for a user across all continuums.
 
@@ -1063,15 +1087,18 @@ class ContinuumRepository:
         rows = db.execute_query(query, (limit,))
         return self._parse_message_rows(rows)
 
-    def find_failed_extraction_segments(self, user_id: str) -> List[Dict[str, Any]]:
+    def find_failed_extraction_segments(self, user_id: str, max_attempts: int = 3) -> list[FailedSegment]:
         """
         Find collapsed segments where memory extraction failed or hasn't been attempted.
 
+        Excludes segments that have exceeded max_attempts to prevent infinite retry loops.
+
         Args:
             user_id: User ID
+            max_attempts: Skip segments with this many or more extraction attempts
 
         Returns:
-            List of dicts with segment_id and message_id
+            List of dicts with segment_id, message_id, and extraction_attempts
         """
         db = self._get_client(user_id)
 
@@ -1082,10 +1109,11 @@ class ContinuumRepository:
                 AND metadata->>'status' = 'collapsed'
                 AND (metadata->>'memories_extracted' = 'false'
                      OR metadata->>'memories_extracted' IS NULL)
+                AND COALESCE((metadata->>'extraction_attempts')::int, 0) < %(max_attempts)s
             ORDER BY created_at DESC
         """
 
-        rows = db.execute_query(query, ())
+        rows = db.execute_query(query, {'max_attempts': max_attempts})
 
         segments = []
         for row in rows:
@@ -1096,12 +1124,13 @@ class ContinuumRepository:
 
             segments.append({
                 'message_id': str(row['id']),
-                'segment_id': metadata.get('segment_id', str(row['id']))
+                'segment_id': metadata.get('segment_id', str(row['id'])),
+                'extraction_attempts': metadata.get('extraction_attempts', 0)
             })
 
         return segments
 
-    def find_all_active_segments_admin(self) -> List[Dict[str, Any]]:
+    def find_all_active_segments_admin(self) -> list[ActiveSegmentRow]:
         """
         Find all active segments across all users (admin query for timeout service).
 
@@ -1126,15 +1155,19 @@ class ContinuumRepository:
                 ORDER BY created_at ASC
             """)
 
-            # Rows already come back as dicts with normalized types
+            # Normalize UUID objects to strings at boundary (database driver returns UUID objects)
+            for row in rows:
+                for key, value in row.items():
+                    if isinstance(value, UUID):
+                        row[key] = str(value)
             return rows
 
     def load_segment_messages(
         self,
-        continuum_id: Union[str, UUID],
+        continuum_id: str | UUID,
         user_id: str,
         sentinel_time: datetime
-    ) -> List[Message]:
+    ) -> list[Message]:
         """
         Load all conversation messages from an active segment.
 
@@ -1162,10 +1195,10 @@ class ContinuumRepository:
 
     def load_continuity_messages(
         self,
-        continuum_id: Union[str, UUID],
+        continuum_id: str | UUID,
         user_id: str,
         turn_count: int
-    ) -> List[Message]:
+    ) -> list[Message]:
         """
         Load last N user/assistant message pairs from end of most recent collapsed segment.
 
@@ -1248,3 +1281,146 @@ class ContinuumRepository:
             messages.extend([user_msg, assistant_msg])
 
         return messages
+
+    def find_resumable_segment(
+        self,
+        continuum_id: str | UUID,
+        user_id: str
+    ) -> Message | None:
+        """
+        Find the most recently collapsed segment that can be resumed.
+
+        A segment is resumable if:
+        - status = 'collapsed'
+        - not tombstoned (processing_failed IS NOT TRUE)
+        - no active segment exists for the same continuum
+
+        Args:
+            continuum_id: Continuum ID
+            user_id: User ID
+
+        Returns:
+            Resumable segment sentinel or None
+        """
+        db = self._get_client(user_id)
+
+        query = """
+            SELECT * FROM messages
+            WHERE continuum_id = %s
+                AND metadata->>'is_segment_boundary' = 'true'
+                AND metadata->>'status' = 'collapsed'
+                AND (metadata->>'processing_failed')::boolean IS NOT TRUE
+                AND NOT EXISTS (
+                    SELECT 1 FROM messages m2
+                    WHERE m2.continuum_id = %s
+                        AND m2.metadata->>'is_segment_boundary' = 'true'
+                        AND m2.metadata->>'status' = 'active'
+                )
+            ORDER BY created_at DESC
+            LIMIT 1
+        """
+
+        cid = str(continuum_id)
+        rows = db.execute_query(query, (cid, cid))
+        messages = self._parse_message_rows(rows)
+        return messages[0] if messages else None
+
+    def reactivate_collapsed_segment(
+        self,
+        continuum_id: str | UUID,
+        segment_id: str,
+        user_id: str,
+        virtual_time: datetime
+    ) -> bool:
+        """
+        Atomically reactivate a collapsed segment for resume.
+
+        Clears collapse artifacts (summary, embedding, collapse metadata),
+        resets extraction state, and sets status back to active.
+
+        Args:
+            continuum_id: Continuum ID
+            segment_id: Segment ID from sentinel metadata
+            user_id: User ID
+            virtual_time: Virtual last message time for timeout calculation
+
+        Returns:
+            True if reactivation succeeded, False if segment was not in collapsed state
+        """
+        db = self._get_client(user_id)
+        now = format_utc_iso(utc_now())
+
+        query = """
+            UPDATE messages
+            SET content = '[Segment in progress]',
+                metadata = (metadata
+                    - 'collapsed_at' - 'summary_generated_at' - 'inactive_duration_minutes'
+                    - 'processing_failed' - 'display_title' - 'complexity_score'
+                    - 'segment_embedding_value' - 'has_segment_embedding'
+                    - 'segment_end_time' - 'segment_summary'
+                ) || jsonb_build_object(
+                    'status', 'active',
+                    'collapse_attempts', 0,
+                    'memories_extracted', false,
+                    'virtual_last_message_time', %s,
+                    'resumed_at', %s
+                ),
+                segment_embedding = NULL
+            WHERE continuum_id = %s
+                AND metadata->>'is_segment_boundary' = 'true'
+                AND metadata->>'segment_id' = %s
+                AND metadata->>'status' = 'collapsed'
+            RETURNING id
+        """
+
+        rows = db.execute_returning(query, (
+            format_utc_iso(virtual_time),
+            now,
+            str(continuum_id),
+            segment_id
+        ))
+
+        if rows:
+            logger.info(f"Reactivated collapsed segment {segment_id} for user {user_id}")
+            return True
+        return False
+
+    def delete_segment_memories(self, segment_id: str, user_id: str) -> int:
+        """
+        Delete memories extracted from a specific segment.
+
+        Called after reactivating a collapsed segment so memories are
+        re-extracted on the next collapse with the full message set.
+
+        Args:
+            segment_id: Segment ID (from sentinel metadata, not message UUID)
+            user_id: User ID
+
+        Returns:
+            Count of deleted memories
+        """
+        db = self._get_client(user_id)
+
+        # source_segment_id stores the segment boundary message ID as UUID.
+        # Find the sentinel's message UUID from the segment_id metadata value.
+        sentinel_rows = db.execute_query(
+            """SELECT id FROM messages
+               WHERE metadata->>'segment_id' = %s
+                 AND metadata->>'is_segment_boundary' = 'true'
+               LIMIT 1""",
+            (segment_id,)
+        )
+        if not sentinel_rows:
+            return 0
+
+        sentinel_uuid = str(sentinel_rows[0]['id'])
+
+        rows = db.execute_returning(
+            "DELETE FROM memories WHERE source_segment_id = %s AND user_id = %s RETURNING id",
+            (sentinel_uuid, user_id)
+        )
+
+        count = len(rows) if rows else 0
+        if count:
+            logger.info(f"Deleted {count} memories from segment {segment_id} for user {user_id}")
+        return count

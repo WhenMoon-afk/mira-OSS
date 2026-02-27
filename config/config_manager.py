@@ -14,14 +14,13 @@ from pydantic import BaseModel, Field
 from config.config import (
     ApiConfig,
     ApiServerConfig,
-    PathConfig,
     ToolConfig,
     SystemConfig,
     EmbeddingsConfig,
     LTMemoryConfig,
-    DomainKnowledgeConfig,
     LatticeConfig,
     ContextConfig,
+    PeanutGalleryConfig,
 )
 
 # Import the registry from tools package
@@ -33,14 +32,13 @@ class AppConfig(BaseModel):
     
     api: ApiConfig = Field(default_factory=ApiConfig)
     api_server: ApiServerConfig = Field(default_factory=ApiServerConfig)
-    paths: PathConfig = Field(default_factory=PathConfig)
     tools: ToolConfig = Field(default_factory=ToolConfig)
     system: SystemConfig = Field(default_factory=SystemConfig)
     embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
     lt_memory: LTMemoryConfig = Field(default_factory=LTMemoryConfig)
-    domain_knowledge: DomainKnowledgeConfig = Field(default_factory=DomainKnowledgeConfig)
     lattice: LatticeConfig = Field(default_factory=LatticeConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
+    peanutgallery: PeanutGalleryConfig = Field(default_factory=PeanutGalleryConfig)
     
     # System prompt loaded once at startup
     system_prompt_text: str = Field(default="", exclude=True)
@@ -99,22 +97,6 @@ class AppConfig(BaseModel):
         from clients.vault_client import get_api_key
         return get_api_key('google_maps_api_key')
         
-    
-    @property
-    def embeddings_api_key(self) -> str:
-        if self.embeddings.provider == "local":
-            return ""
-            
-        from clients.vault_client import get_api_key
-        return get_api_key('openai_embeddings_key')
-    
-    @property
-    def lt_memory_api_key(self) -> str:
-        if self.lt_memory.llm_provider == "local":
-            return ""
-            
-        from clients.vault_client import get_api_key
-        return get_api_key(self.lt_memory.llm_api_key_name)
     
     def as_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude={"prompt_cache"})

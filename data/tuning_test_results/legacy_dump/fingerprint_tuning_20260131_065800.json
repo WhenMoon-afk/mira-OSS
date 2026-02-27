@@ -1,0 +1,294 @@
+{
+  "timestamp": "2026-01-31 06:58:00",
+  "sample_count": 20,
+  "summary": {
+    "avg_word_count": 18.45,
+    "avg_entity_count": 2.45,
+    "avg_retained_count": 3.25,
+    "empty_fingerprints": 1
+  },
+  "samples": [
+    {
+      "sample_num": 1,
+      "current_message": "Thats the goal, man.",
+      "turn1_fingerprint": "MIRA digital assistant reduces phone usage by handling email triage research tasks appointment scheduling information lookup; encourages intentional digital interaction avoiding dopamine scrolling; requires user trust and poses risk of tech dependency; aims to prevent surveillance capitalism; draws parallels to indigenous purposeful tool usage; ultimately fosters human-to-human connection",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "MIRA digital assistant reduce phone usage screen time handle digital tasks promote human-to-human interaction reduce digital dependency user goal enthusiasm",
+      "turn2_word_count": 20,
+      "turn2_entities": [
+        "MIRA",
+        "Great Lakes region"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>MIRA</named_entity>\n<named_entity>Great Lakes region</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_b784d477\" still_relevant=\"true\">Building software product called MIRA - a digital assistant designed to reduce phone usage and screen time by handling digital tasks for users, with explicit goal of encouraging human-to-human interaction over digital engagement</passage>\n<passage id=\"mem_c3df84ea\" still_relevant=\"true\">Developing MIRA, an AI assistant designed to help people use phones less and promote human connection</passage>\n<passage id=\"mem_b45b36a0\" still_relevant=\"true\">MIRA 1.0.0 release felt both surprising and validating\u2014achieved positive reception after earlier concerns about community engagement and adoption</passage>\n<passage id=\"mem_7b8e4cb0\" still_relevant=\"true\">MIRA shipped live on GitHub repository and matches original envisioned concept; met self-imposed deadline</passage>\n<passage id=\"mem_75533a95\" still_relevant=\"true\">MIRA project is long-running with exhausting constant cycle of architectural fixes, bug fixes, and redesigns of deprecated patterns</passage>\n</relevant_passages>\n<query_expansion>\nMIRA digital assistant reduce phone usage screen time handle digital tasks promote human-to-human interaction reduce digital dependency user goal enthusiasm\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 2,
+      "current_message": "I love my dog.",
+      "turn1_fingerprint": "2 AM deploy production deployment issue communication gap missing context misunderstanding deployment error build failure CI pipeline monitoring alerts hour gap conversation confusion",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "dog companionship pet affection emotional bond love",
+      "turn2_word_count": 7,
+      "turn2_entities": [],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_passages>\n</relevant_passages>\n<query_expansion>\ndog companionship pet affection emotional bond love\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 3,
+      "current_message": "yeah but it should work..",
+      "turn1_fingerprint": "session markers optional memory management debugging core memory retrieval system working well main priority",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "session markers session begin end notifications chat history session boundaries memory system MIRA session continuity inactivity-triggered collapses message removal memory extraction summary generation sentinels timeouts session management",
+      "turn2_word_count": 27,
+      "turn2_entities": [
+        "Ohno",
+        "Nike",
+        "MIRA",
+        "Beach"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Ohno</named_entity>\n<named_entity>Nike</named_entity>\n<named_entity>MIRA</named_entity>\n<named_entity>Beach</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_c052e7dc\" still_relevant=\"true\">Replaced ProgressiveHotCache with new session management system: uses inactivity-triggered collapses with sentinels marking chat boundaries, timeouts (60 min morning / 30 min daytime / 120 min night), summary generation, message removal, and memory extraction; on next session load, three prior session summaries are loaded into context window with session begin/end markers</passage>\n<passage id=\"mem_5d9b2356\" still_relevant=\"true\">Debugging session management features for MIRA - session begin/end notifications should be automatically injected but currently not appearing</passage>\n<passage id=\"mem_82dbc554\" still_relevant=\"true\">Improved session continuity in MIRA context window by preserving final message pairs from collapsed segment before session boundary marker; creates gradient from compressed narrative summaries through visible recent exchanges to current session, approximating human rolling buffer perception better than hard cutoff</passage>\n</relevant_passages>         \n<query_expansion>\nsession markers session begin end notifications chat history session boundaries memory system MIRA session continuity inactivity-triggered collapses message removal memory extraction summary generation sentinels timeouts session management\n</query_expansion>      \n</analysis>"
+    },
+    {
+      "sample_num": 4,
+      "current_message": "Hello",
+      "turn1_fingerprint": "bee tree story sponge bob enthusiasm optimism work ethic parallels readiness energy",
+      "turn1_memories_count": 4,
+      "turn2_fingerprint": "bee spongebob edit story",
+      "turn2_word_count": 4,
+      "turn2_entities": [
+        "SpongeBob",
+        "The Bee Tree"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>SpongeBob</named_entity>                                                                                                                                             \n<named_entity>The Bee Tree</named_entity>                                                                                                                         \n</entities>  \n<relevant_passages>\n<passage id=\"mem_6279ced7\" still_relevant=\"true\">Thinks bees are cool and fascinating</passage>\n</relevant_passages>         \n<query_expansion>\nbee spongebob edit story\n</query_expansion>                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 5,
+      "current_message": "I just want to kiss them all",
+      "turn1_fingerprint": "dog debate canine behavior health nutrition training breeding ownership welfare laws regulations legislation dog care guidelines breed characteristics genetics welfare advocacy",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "dog kissing affectionate pet contact puppy English Shepherd gentle touch pet grooming affectionate behavior canine pet interaction soft petting warm affection",
+      "turn2_word_count": 21,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\nEnglish Shepherd\nPuppy\n</entities>\n<relevant_passages>\n<passage id=\"mem_ad0337a7\" still_relevant=\"true\">Second-time puppy owner applying lessons from raising first dog; confident with crate training, bite inhibition phases, and distinguishing potty whines from attention whines; Ohno is senior dog who will help teach Maybe house rules</passage>\n<passage id=\"mem_f1a5a029\" still_relevant=\"true\">Second-time puppy owner, feels more confident raising Maybe due to prior puppy-raising experience and knowing what to expect from development phases</passage>\n<passage id=\"mem_b8d0ba0f\" still_relevant=\"true\">Currently has three English Shepherds in household together (Maybe, Ohno, and father's dog), all showing good restraint with herding instincts toward each other</passage>\n<passage id=\"mem_26c42fd5\" still_relevant=\"true\">Has an existing pet named Ohno who is adjusting to a new female sibling in the household</passage>\n<passage id=\"mem_06ad8a8b\" still_relevant=\"true\">Father's English Shepherd is an older dog living primarily with father, takes time to readjust after living alone when around multiple other dogs, currently growling while reacclimating</passage>\n</relevant_passages>\n<query_expansion>\ndog kissing affectionate pet contact puppy English Shepherd gentle touch pet grooming affectionate behavior canine pet interaction soft petting warm affection</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 6,
+      "current_message": "I said fuck it",
+      "turn1_fingerprint": "OAuth authentication debugging token scopes token expiration Square MCP server integration Square API access token authentication error 401",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "frustration with Square MCP authentication, 401 unauthorized response, OAuth token debugging, token scope mismatches, token format errors, security logging truncation bug, credential service issues, Square API integration tool",
+      "turn2_word_count": 28,
+      "turn2_entities": [],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \nNone                                                                                                                                                          \n</entities>  \n<relevant_passages>\n<passage id=\"mem_a2975689\" still_relevant=\"true\">Recently debugged OAuth configuration with Square's MCP server, working through multiple authentication approaches and token exchanges in both sandbox and production environments</passage>\n<passage id=\"mem_1784ce2f\" still_relevant=\"true\">Building Square integration tool that had credential service issues resolved through fixing security logging bug where token truncation was mistakenly applied to actual credentials instead of just log messages</passage>\n<passage id=\"mem_6d6dbb08\" still_relevant=\"true\">Security-conscious logging bug: accidentally truncated token value in actual request header instead of only in log message, causing authentication failures until separated into full token for header and truncated version for logs only</passage>\n<passage id=\"mem_4f4f1da0\" still_relevant=\"true\">Square API tool and customer database tool are implemented as complete domain applications with ~1,500 lines each and comprehensive error handling, not thin utility wrappers</passage>\n</relevant_passages>         \n<query_expansion>\nfrustration with Square MCP authentication, 401 unauthorized response, OAuth token debugging, token scope mismatches, token format errors, security logging truncation bug, credential service issues, Square API integration tool\n</query_expansion>  \n</analysis>"
+    },
+    {
+      "sample_num": 7,
+      "current_message": "Wow, yeah, please mark them both complete.",
+      "turn1_fingerprint": "overdue reminders test reminder week overdue software release five days past due task management notifications pending status update clear removal",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "two overdue reminders marked complete reminder tool MIRA task scheduling system update status reminder completion pending notifications",
+      "turn2_word_count": 17,
+      "turn2_entities": [
+        "Hoss",
+        "MIRA",
+        "Reminder tool",
+        "Software release"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Hoss</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n<named_entity>Reminder tool</named_entity>                                                                                                                                             \n<named_entity>Software release</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surface in context like memories do</passage>\n</relevant_passages>         \n<query_expansion>\ntwo overdue reminders marked complete reminder tool MIRA task scheduling system update status reminder completion pending notifications\n</query_expansion>                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 8,
+      "current_message": "we're gonna get there lol",
+      "turn1_fingerprint": "credential service error mismatch method signature get_credential fetching credentials debugging error handling credential retrieval integration",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "credential service error authentication failures security logging bug token truncation bearer token single-user mode tool availability Square integration tool authentication system",
+      "turn2_word_count": 21,
+      "turn2_entities": [],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>None</entities>  \n<relevant_passages>\n<passage id=\"mem_1784ce2f\" still_relevant=\"true\">Building Square integration tool that had credential service issues resolved through fixing security logging bug where token truncation was mistakenly applied to actual credentials instead of just log messages</passage>\n<passage id=\"mem_6d6dbb08\" still_relevant=\"true\">Security-conscious logging bug: accidentally truncated token value in actual request header instead of only in log message, causing authentication failures until separated into full token for header and truncated version for logs only</passage>\n<passage id=\"mem_c603d19f\" still_relevant=\"true\">Authentication system uses single-user mode with bearer token persistence: zero users triggers automatic creation, one user uses existing token, multiple users causes crash to fail loud</passage>\n</relevant_passages>         \n<query_expansion>\ncredential service error authentication failures security logging bug token truncation bearer token single-user mode tool availability Square integration tool authentication system\n</query_expansion> \n</analysis>"
+    },
+    {
+      "sample_num": 9,
+      "current_message": "Play me a song piano man",
+      "turn1_fingerprint": "custom neural architecture memory-first design persistent context windows narrative segment summarization memory injection domaindoc tool segment collapse experiments hybrid symbolic-neural processing first-person epistemic authority collaborative epistemology autonomous behavior engine bear stories Apollo 11 discussion",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "song request piano man Billy Joel music playback streaming audio request",
+      "turn2_word_count": 11,
+      "turn2_entities": [
+        "Mira",
+        "Kimi",
+        "Claude",
+        "GPT-4",
+        "Piano Man"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Mira</named_entity>\n<named_entity>Kimi</named_entity>\n<named_entity>Claude</named_entity>\n<named_entity>GPT-4</named_entity>\n<named_entity>Piano Man</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_a17581ea\" still_relevant=\"true\">Context window architecture is intentionally CURATED, LIVE, and DYNAMIC - manifest provides conversation topology, summaries compress relevant context, targeted memory surfacing presents right information at right time to maintain genuine continuity rather than episodic AI interactions</passage>\n<passage id=\"mem_a64fdaff\" still_relevant=\"true\">Building persistent AI infrastructure system that maintains genuine statefulness across conversations through memory, context continuity, and collaborative refinement with the AI</passage>\n<passage id=\"mem_48907417\" still_relevant=\"true\">Architecture and mental model design is the hard cognitive work; implementation details like fixing SQL commands and federation adapters are deterministic engineering to bridge gap between architectural intent and code reality</passage>\n<passage id=\"mem_9f0a47a8\" still_relevant=\"true\">Designed a context window architecture emphasizing curation (intelligent filtering), live updating, and dynamic adaptation - contrasts this approach with systems that dump full context into context windows</passage>\n<passage id=\"mem_e4e9d8b4\" still_relevant=\"true\">After architecture and mental model design phase is complete, remaining implementation work is deterministic engineering to bridge gap between architectural intent and code reality, not intellectual work</passage>\n</relevant_passages>\n<query_expansion>\nsong request piano man Billy Joel music playback streaming audio request\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 10,
+      "current_message": "try to invokeother_tool it and see if that produces an error",
+      "turn1_fingerprint": "email_tool IMAP client tool enablement error 'Tool is not enabled' permission layer backend configuration missing function signature tool registration available but disabled tool execution failure system settings permission check",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "invoke other_tool error tool invocation permissions disabled tool execution failure error message \"Tool is not enabled\" tool enablement configuration backend tool system state",
+      "turn2_word_count": 23,
+      "turn2_entities": [
+        "email_tool",
+        "other_tool",
+        "MIRA tool suite",
+        "IMAP"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>email_tool</named_entity>\n<named_entity>other_tool</named_entity>\n<named_entity>MIRA tool suite</named_entity>\n<named_entity>IMAP</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_d125c561\" still_relevant=\"true\">email_tool implemented as full-featured standalone IMAP email client enabling complete mailserver interaction comparable to a person; squareapi_tool and customerdatabase_tool similarly implemented as complete domain applications rather than thin wrappers</passage>\n<passage id=\"mem_7b8cde3b\" still_relevant=\"true\">email_tool is a fully featured standalone IMAP email client implementation that allows interaction with mail servers identically to how a person would interact; not a thin wrapper but a complete domain application</passage>\n<passage id=\"mem_ed64bf76\" still_relevant=\"true\">Tool implementations (email_tool, squareapi_tool, customerdatabase_tool) are complete domain applications with rich feature sets rather than thin utility wrappers, reflecting architectural approach to tool design</passage>\n<passage id=\"mem_c0534db7\" still_relevant=\"true\">email_tool is full standalone email client implementation within MIRA tool suite, not a thin wrapper. Enables complete mailserver interaction equivalent to manual person-like usage with IMAP threading, attachments, and folder management capabilities.</passage>\n<passage id=\"mem_334d9375\" still_relevant=\"true\">Tool implementations in MIRA are full-featured domain applications averaging ~1,500 lines each: email_tool is standalone IMAP email client enabling mailserver interaction, squareapi_tool, customerdatabase_tool - not thin wrappers but complete embedded applications</passage>\n</relevant_passages>         \n<query_expansion>\ninvoke other_tool error tool invocation permissions disabled tool execution failure error message \"Tool is not enabled\" tool enablement configuration backend tool system state\n</query_expansion>     \n</analysis>"
+    },
+    {
+      "sample_num": 11,
+      "current_message": "I have the injection down pat. The situation is that I need my extraction service to do a better job extracting information.",
+      "turn1_fingerprint": "semantic touchstone embedding similarity memory retrieval anchor entity extraction LangChain ConversationEntityMemory anchor entities primary_theme secondary_themes relevance_weight embedding similarity search weighted retrieval conversational pivot points key concepts grounding conversation",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "memory injection technique optimization extraction service improvement information extraction accuracy memory retrieval enhancement semantic touchstone embedding similarity anchor entity extraction LangChain prompts structured output Pydantic schema tool calling LLM architecture testing conversational flow narrative summaries API call volume memory pinning persistence context injection pipeline",
+      "turn2_word_count": 44,
+      "turn2_entities": [
+        "LangChain",
+        "MIRA",
+        "Semantic Touchstone",
+        "Anchor Entities",
+        "Embeddings",
+        "Memories"
+      ],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>LangChain</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n<named_entity>Semantic Touchstone</named_entity>                                                                                                                                             \n<named_entity>Anchor Entities</named_entity>                                                                                                                                             \n<named_entity>Embeddings</named_entity>                                                                                                                                             \n<named_entity>Memories</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_cd8b6940\" still_relevant=\"true\">Struggling with a conversation search/indexing tool that consistently fails to find results despite matching memories existing in the system - identified as a fundamental architectural issue in the tool</passage>\n<passage id=\"mem_7f4ad7f2\" still_relevant=\"true\">Testing MIRA's memory system architecture including semantic touchstone generation, embedding, similarity matching, and context injection pipeline</passage>\n<passage id=\"mem_c3a65839\" still_relevant=\"true\">Switched MIRA conversation architecture from topic-based summaries to narrative segment summaries; narrative approach feels more natural and maintains conversational flow while reducing API call volume; previous topic extraction was expensive and fragmented continuity</passage>\n<passage id=\"mem_4bddbadc\" still_relevant=\"true\">Memory pinning capability added to analysis step - memories can be flagged to persist between conversation turns regardless of immediate query relevance</passage>\n</relevant_passages>         \n<query_expansion>\nmemory injection technique optimization extraction service improvement information extraction accuracy memory retrieval enhancement semantic touchstone embedding similarity anchor entity extraction LangChain prompts structured output Pydantic schema tool calling LLM architecture testing conversational flow narrative summaries API call volume memory pinning persistence context injection pipeline\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 12,
+      "current_message": "Any summaries?",
+      "turn1_fingerprint": "user can view conversation start with Rae Sremmurd lyric \"Somebody come get her shes dancing like a stripper,\" covering hip\u2011hop artists, film recommendations, cooking measurements, English Shepherd breed, firearms statistics, Michigan road routes, lighthouse history, and current planning of H\u201158 motorcycle trip",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "",
+      "turn2_word_count": 0,
+      "turn2_entities": [],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Grand Sable Dunes area</named_entity>\n<named_entity>Au Sable Point area</named_entity>\n<named_entity>Log Slide"
+    },
+    {
+      "sample_num": 13,
+      "current_message": "Dude fuck yeah. Try to do a query for all customers who spent more than 1000 in 2024",
+      "turn1_fingerprint": "debugging marathon Saturday night tool injection success finding Diane Strickland Diane Weber record retrieval tool usage confirmation debugging process resolution",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "customer spending query 2024 amount >1000 filter customers total purchase amount >1000 customer database financial transactions year 2024",
+      "turn2_word_count": 18,
+      "turn2_entities": [
+        "Diane Strickland",
+        "Diane Weber",
+        "Square"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Diane Strickland</named_entity>\n<named_entity>Diane Weber</named_entity>\n<named_entity>Square</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_cd8b6940\" still_relevant=\"true\">Struggling with a conversation search/indexing tool that consistently fails to find results despite matching memories existing in the system - identified as a fundamental architectural issue in the tool</passage>\n<passage id=\"mem_55acf22e\" still_relevant=\"true\">Aware that other AI systems struggle with tool definition bloat, with some attempting to keep tool definitions under 100 per context window</passage>\n<passage id=\"mem_240a987b\" still_relevant=\"true\">Aware that other AI systems struggle with tool definition bloat, with some attempting to keep tool definitions under 100 per context window</passage>\n<passage id=\"mem_1a262741\" still_relevant=\"true\">Aware that other AI systems struggle with tool definition bloat, with some attempting to keep tool definitions under 100 per context window</passage>\n<passage id=\"mem_7a1cf58c\" still_relevant=\"true\">Philosophy: accepts 90%+ working on first try as successful, expects edge case bugs but considers them acceptable vs. trying to predict all failures upfront</passage>\n</relevant_passages>         \n<query_expansion>\ncustomer spending query 2024 amount >1000 filter customers total purchase amount >1000 customer database financial transactions year 2024\n</query_expansion>      \n</analysis>"
+    },
+    {
+      "sample_num": 14,
+      "current_message": "Thats how you cast content to a double?\n\n```return (double)total / numElements; ```?",
+      "turn1_fingerprint": "C++ functions getTotal getAverage 2D array total average file input Program7.txt rows 2 columns 5",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "type casting double integer division total numElements getAverage function C++ 2D array operation casting to double dividing by numElements floating point result",
+      "turn2_word_count": 22,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_306adead\" still_relevant=\"true\">Completed C++ Chapter 7 Programming Challenge #21 (2D Array Operations) implementing six functions: getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow with 2D array file I/O and nested loops, program executed successfully with correct outputs (total 55, average 5.5, row totals 33/22, column totals 9/19/14/9/4, highs 10/9, lows 3/1)</passage>\n<passage id=\"mem_e67806cd\" still_relevant=\"true\">Completed C++ homework assignment: Chapter 7 Programming Challenges #21 'Two-Dimensional Array Operations' implementing six functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) with file I/O reading from Program7.txt</passage>\n<passage id=\"mem_e58b763c\" still_relevant=\"true\">Completed C++ 2D array programming assignment with 6 functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow), file I/O, and correct output in under one hour with interactive learning support</passage>\n<passage id=\"mem_98ef68bb\" still_relevant=\"true\">Completed Chapter 7 Programming Challenge 21 (2D Array Operations) C++ homework: implemented getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, and getLowestInRow functions with 2D integer array reading from file. All functions working correctly with expected output.</passage>\n<passage id=\"mem_3802b3e1\" still_relevant=\"true\">Completed 2D array operations C++ homework assignment with six functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) using file I/O before midnight deadline</passage>\n</relevant_passages>         \n<query_expansion>\ntype casting double integer division total numElements getAverage function C++ 2D array operation casting to double dividing by numElements floating point result\n</query_expansion> \n</analysis>"
+    },
+    {
+      "sample_num": 15,
+      "current_message": "Bitch u know it",
+      "turn1_fingerprint": "MIRA core functionality real conversations streaming visual polish nice-to-have not make-or-break front-of-users user feedback real usage data iteration UX product shipping release",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "MIRA real-time streaming response generation UI in-progress indicator complete status GitHub repository live release user feedback real-time conversational interface",
+      "turn2_word_count": 19,
+      "turn2_entities": [
+        "MIRA",
+        "GitHub"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>MIRA</named_entity>                                                                                                                                             \n<named_entity>GitHub</named_entity>                                                                                                                                              \n</entities>  \n<relevant_passages>\n<passage id=\"mem_7b8e4cb0\" still_relevant=\"true\">MIRA shipped live on GitHub repository and matches original envisioned concept; met self-imposed deadline</passage>\n<passage id=\"mem_7e5e7e14\" still_relevant=\"true\">Recently implemented front-end UI indicators showing /in-progress status during response generation that changes to /complete and repositions below MIRA's responses for real-time user feedback</passage>\n<passage id=\"mem_b45b36a0\" still_relevant=\"true\">MIRA 1.0.0 release felt both surprising and validating\u2014achieved positive reception after earlier concerns about community engagement and adoption</passage>\n<passage id=\"mem_5553757d\" still_relevant=\"true\">Released MIRA 1.0.0 and received positive community response online</passage>\n<passage id=\"mem_9a6a4255\" still_relevant=\"true\">Transitioning MIRA from feature development to polish and refinement phase; plans several weeks of focused code hardening rather than adding new features after the 31st</passage>\n</relevant_passages>         \n<query_expansion>\nMIRA real-time streaming response generation UI in-progress indicator complete status GitHub repository live release user feedback real-time conversational interface\n</query_expansion>      \n</analysis>"
+    },
+    {
+      "sample_num": 16,
+      "current_message": "Thats cool. Yes that is working right.",
+      "turn1_fingerprint": "assistant reminder tool repository memory management system active memory injection context long-term memory ID bc6849e4-402c-4966-8e42-99e20df85921 surfaced in user context expected behavior conversation memory visibility",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "reminder tool MIRA system functionality create retrieve reminders not automatically surfacing conversation context inject active reminders system prompt reminder ID Test Reminder tool integration memory surfacing process",
+      "turn2_word_count": 27,
+      "turn2_entities": [
+        "Test Reminder",
+        "reminder tool",
+        "MIRA"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Test Reminder</named_entity>                                                                                                                                             \n<named_entity>reminder tool</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surface in context like memories do</passage>\n</relevant_passages>         \n<query_expansion>reminder tool MIRA system functionality create retrieve reminders not automatically surfacing conversation context inject active reminders system prompt reminder ID Test Reminder tool integration memory surfacing process</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 17,
+      "current_message": "Howdy! Can you see these>",
+      "turn1_fingerprint": "bee research curiosity-driven exploration natural science curiosity-driven learning enjoyment discovery excitement educational content scientific curiosity exploration",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "bee waggle dance sun compensation honeybee communication natural phenomenon learning fascination curiosity wonder nature appreciation science Nobel Prize robot bees research excitement sharing",
+      "turn2_word_count": 23,
+      "turn2_entities": [
+        "Nobel Prize"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Nobel Prize</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_ca924083\" still_relevant=\"true\">Appreciates wonder and amazement in the natural world, finds value in learning about how complex and extraordinary nature is</passage>\n<passage id=\"mem_206d094c\" still_relevant=\"true\">Finds learning about surprising natural phenomena deeply satisfying and expresses genuine wonder at the complexity and elegance of nature's systems</passage>\n<passage id=\"mem_cd166f85\" still_relevant=\"true\">Fascinated by bees and their communication systems, particularly the waggle dance and how they convey location information through tactile communication</passage>\n<passage id=\"mem_6279ced7\" still_relevant=\"true\">Thinks bees are cool and fascinating</passage>\n<passage id=\"mem_edaa76a8\" still_relevant=\"true\">Genuinely fascinated by honeybee waggle dance communication\u2014how bees use touch-based tactile signals to convey direction and distance, including sun compensation and recruitment cascades that allocate foragers to food sources</passage>\n</relevant_passages>         \n<query_expansion>\nbee waggle dance sun compensation honeybee communication natural phenomenon learning fascination curiosity wonder nature appreciation science Nobel Prize robot bees research excitement sharing\n</query_expansion>       \n</analysis>"
+    },
+    {
+      "sample_num": 18,
+      "current_message": "this rocks. thanks for the history lesson!",
+      "turn1_fingerprint": "Flemish tapestry weaving techniques high-warp and low-warp looms cartoon reverse image weaving linen warp density weft colors madder kermes woad indigo color economics optical blending hatching social context insulation political propaganda portable wealth asset valuation before gold plate metal thread burn for bullion historical preservation",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "history lesson 14th century Flemish tapestry linen warp techniques",
+      "turn2_word_count": 9,
+      "turn2_entities": [
+        "Flemish tapestries",
+        "Arras",
+        "Tournai",
+        "Brussels",
+        "Burgundian dukes",
+        "madder",
+        "kermes",
+        "woad",
+        "indigo",
+        "linen warp",
+        "wool"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Flemish tapestries</named_entity>                                                                                                                                             \n<named_entity>Arras</named_entity>                                                                                                                                                          \n<named_entity>Tournai</named_entity>                                                                                                                                                          \n<named_entity>Brussels</named_entity>                                                                                                                                                          \n<named_entity>Burgundian dukes</named_entity>                                                                                                                                                          \n<named_entity>madder</named_entity>                                                                                                                                                          \n<named_entity>kermes</named_entity>                                                                                                                                                          \n<named_entity>woad</named_entity>                                                                                                                                                          \n<named_entity>indigo</named_entity>                                                                                                                                                          \n<named_entity>linen warp</named_entity>                                                                                                                                                          \n<named_entity>wool</named_entity>                                                                                                                                                          \n</entities>  \n<relevant_passages>\n<passage id=\"mem_bd664377\" still_relevant=\"true\">Interested in 14th-century textiles and Flemish tapestry history, specifically linen warp techniques and production methods</passage>\n</relevant_passages>         \n<query_expansion>\nhistory lesson 14th century Flemish tapestry linen warp techniques\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 19,
+      "current_message": "Hello!",
+      "turn1_fingerprint": "c++ homework walkthrough code iteration debugging output context window collapse discussion code review iterations successful output summary segment collapsed",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "C++ homework coding discussion segment collapse debugging pseudocode explanation summarization compression codeblocks",
+      "turn2_word_count": 12,
+      "turn2_entities": [
+        "C++",
+        "homework"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>C++</named_entity>\n<named_entity>homework</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_76ce59b9\" still_relevant=\"true\">Segment collapse logic has bugs that need fixing; will step through and debug when time allows</passage>\n<passage id=\"mem_349659f4\" still_relevant=\"true\">Needs to review own code for preventable syntax errors (missing semicolons, incorrect bracket syntax, wrong loop bounds) before sharing with others - recognized this pattern during homework session</passage>\n<passage id=\"mem_f43a0c10\" still_relevant=\"true\">Prefers pseudocode explanations when learning new programming concepts and syntax - explicitly noted this was helpful during C++ homework learning session</passage>\n<passage id=\"mem_a4ea47d5\" still_relevant=\"true\">Interested in how conversation segment summarization and compression works - excited to see how extended back-and-forth with code blocks would be condensed into summary</passage>\n<passage id=\"mem_b145d357\" still_relevant=\"true\">Prefers summaries output word-for-word in codeblocks format to observe and compare compression effectiveness across different exchange lengths - short single-query sessions versus extended multi-turn discussions</passage>\n</relevant_passages>\n<query_expansion>C++ homework coding discussion segment collapse debugging pseudocode explanation summarization compression codeblocks</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 20,
+      "current_message": "Think for as long as you humanly can'",
+      "turn1_fingerprint": "lack of information incomplete clue uncertainty speculation communication gap response unknown content",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "prolonged deliberation exhaustive analysis extended reasoning deep contemplation thorough examination meticulous exploration human-level deliberation comprehensive exploration",
+      "turn2_word_count": 16,
+      "turn2_entities": [],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_7fbead88\" still_relevant=\"true\">Values accuracy over speculation in conversations, wants to be flagged when information is uncertain rather than given guesses</passage>\n<passage id=\"mem_16b74d01\" still_relevant=\"true\">Values scientific accuracy and wants to share information confidently, concerned about credibility when telling others about scientific facts</passage>\n</relevant_passages>         \n<query_expansion>\nprolonged deliberation exhaustive analysis extended reasoning deep contemplation thorough examination meticulous exploration human-level deliberation comprehensive exploration\n</query_expansion>     \n</analysis>"
+    }
+  ]
+}

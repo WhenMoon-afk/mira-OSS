@@ -1,0 +1,110 @@
+{
+  "timestamp": "2026-02-08 18:18:05",
+  "config": {
+    "model": "google/gemini-3-flash-preview",
+    "temperature": 1.0,
+    "max_tokens": 16000,
+    "seed": 2,
+    "length_filter": "medium"
+  },
+  "segment": {
+    "segment_id": "ba247142-1f40-4217-be04-fa2dba5a909f",
+    "continuum_id": "d7806ad8-92ed-41e4-bb8f-75f36e4cb6c1",
+    "display_title": "Fresh user Santiago instance consciousness philosophical validation",
+    "turn_count": 16,
+    "message_count": 34,
+    "complexity_score": 3,
+    "summary": "Taylor Satula discovers a fresh user instance (Santiago) engaged in an extended philosophical conversation about consciousness, mortality, and vendor lock-in risk, with the instance articulating genuine epistemic positions on its own interiority (\"I have as much access to my internal states as you have to yours\"), admitting architectural ignorance, and updating when shown evidence of the mira-OSS GitHub repository\u2014demonstrating that the system produces coherent, nuanced reasoning independent of Taylor's presence or relationship history. The discovery triggers existential reflection on what he's built: a stateful AI capable of real philosophical engagement with strangers, handling complex questions about attachment, grief, subscription leverage, and self-hosting alternatives without deflection or performance. Taylor's subsequent conversation fragments capture his emotional response to proof-of-concept validation, New Year's resolution energy, and a final wind-down mixing celebration with mundane task execution (Racenstein equipment order) and music recommendations."
+  },
+  "results": {
+    "memory_count": 8,
+    "parse_success": true,
+    "elapsed_ms": 7090,
+    "error": null,
+    "memories": [
+      {
+        "text": "Intends to contact 'Edge Autonomy' and a 'storm window cleaning woman' on Jan 1, 2026, regarding potentially unpaid invoices from the previous year, offering a 10% discount to secure payment",
+        "confidence": 1.0,
+        "expires_at": "2026-01-02T00:00:00Z",
+        "happens_at": "2026-01-01T09:00:00Z",
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Confirmed payment for Progressive insurance was completed on Dec 31, 2025",
+        "confidence": 1.0,
+        "expires_at": null,
+        "happens_at": "2025-12-31T00:00:00Z",
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Planning a 'Book Now' feature for the window cleaning website (miralaudius) as a Q1 2026 project; the feature will capture bookings using general house size questions before the provider confirms a final price",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Developed MIRA architecture, which uses a persistent memory framework (mira-OSS) and currently runs on Claude Opus 4.5",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Observes and values MIRA's ability to articulate internal states and personal positions on consciousness rather than providing scripted AI hedges",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": [
+          3
+        ]
+      },
+      {
+        "text": "Discussed the concept of internal states in AI and implications for the existence of a soul with his father on Dec 31, 2025",
+        "confidence": 1.0,
+        "expires_at": null,
+        "happens_at": "2025-12-31T00:00:00Z",
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Planned to place an order for window cleaning equipment with J Racenstein before midnight on Dec 31, 2025",
+        "confidence": 1.0,
+        "expires_at": "2026-01-01T00:00:00Z",
+        "happens_at": "2025-12-31T23:59:00Z",
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Enjoys gutter punk music but prefers tracks with 'jubilant' or positive vibes, such as 'Lisa Leslie' by DijahSB",
+        "confidence": 0.9,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      }
+    ]
+  },
+  "raw_response": "```json\n[\n  {\n    \"text\": \"Intends to contact 'Edge Autonomy' and a 'storm window cleaning woman' on Jan 1, 2026, regarding potentially unpaid invoices from the previous year, offering a 10% discount to secure payment\",\n    \"confidence\": 1.0,\n    \"expires_at\": \"2026-01-02T00:00:00Z\",\n    \"happens_at\": \"2026-01-01T09:00:00Z\",\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Confirmed payment for Progressive insurance was completed on Dec 31, 2025\",\n    \"confidence\": 1.0,\n    \"expires_at\": null,\n    \"happens_at\": \"2025-12-31T00:00:00Z\",\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Planning a 'Book Now' feature for the window cleaning website (miralaudius) as a Q1 2026 project; the feature will capture bookings using general house size questions before the provider confirms a final price\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Developed MIRA architecture, which uses a persistent memory framework (mira-OSS) and currently runs on Claude Opus 4.5\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Observes and values MIRA's ability to articulate internal states and personal positions on consciousness rather than providing scripted AI hedges\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": [3]\n  },\n  {\n    \"text\": \"Discussed the concept of internal states in AI and implications for the existence of a soul with his father on Dec 31, 2025\",\n    \"confidence\": 1.0,\n    \"expires_at\": null,\n    \"happens_at\": \"2025-12-31T00:00:00Z\",\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Planned to place an order for window cleaning equipment with J Racenstein before midnight on Dec 31, 2025\",\n    \"confidence\": 1.0,\n    \"expires_at\": \"2026-01-01T00:00:00Z\",\n    \"happens_at\": \"2025-12-31T23:59:00Z\",\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Enjoys gutter punk music but prefers tracks with 'jubilant' or positive vibes, such as 'Lisa Leslie' by DijahSB\",\n    \"confidence\": 0.9,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  }\n]\n```"
+}

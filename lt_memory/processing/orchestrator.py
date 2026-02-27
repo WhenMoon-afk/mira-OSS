@@ -1,25 +1,30 @@
 """
 Extraction orchestrator - high-level extraction workflows.
 
-Consolidates high-level extraction workflows from batching.py:
-- Boot extraction sweep (all users with memory enabled)
-- Segment extraction (after segment collapse)
-- Failed extraction retry (safety net)
+Two entry points:
+- submit_segment_extraction(user_id, boundary_message_id): Self-contained segment
+  extraction. Loads messages, submits batch, marks boundary. Called by collapse handler
+  and extract_unprocessed_segments.
+- extract_unprocessed_segments(): Safety-net sweep for collapsed segments where
+  extraction failed or was never attempted. Runs on a 6-hour schedule.
 
-These are THIN coordinators that delegate to specialized components.
+All complexity lives in submit_segment_extraction. Callers are trivial.
 """
 import json
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from uuid import UUID
 
 from cns.core.message import Message
-from lt_memory.models import ProcessingChunk
+from lt_memory.models import ProcessingChunk, MemoryContextSnapshot
 from lt_memory.processing.extraction_engine import ExtractionEngine
 from lt_memory.processing.execution_strategy import ExecutionStrategy
 from lt_memory.db_access import LTMemoryDB
 from config.config import BatchingConfig
 from utils.user_context import set_current_user_id, get_current_user_id, clear_user_context
+
+if TYPE_CHECKING:
+    from cns.core.continuum_repository import ContinuumRepository
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +33,13 @@ class ExtractionOrchestrator:
     """
     High-level extraction workflow coordination.
 
-    Single Responsibility: Orchestrate extraction workflows (boot, segment, retry)
+    Single entry point: submit_segment_extraction owns the full lifecycle
+    (load messages, build chunk, submit, mark boundary).
 
-    Thin coordinator - delegates to:
+    Delegates to:
     - ExtractionEngine: Build payloads
-    - ExecutionStrategy: Execute extraction
-    - ContinuumRepository: Load messages
-    - AuthDB: Get users, update timestamps
+    - ExecutionStrategy: Execute extraction (batch or immediate)
+    - ContinuumRepository: Load messages, find segments
     - LTMemoryDB: Safety valve checks, memory context loading
     """
 
@@ -43,155 +48,125 @@ class ExtractionOrchestrator:
         config: BatchingConfig,
         extraction_engine: ExtractionEngine,
         execution_strategy: ExecutionStrategy,
-        continuum_repo,
+        continuum_repo: 'ContinuumRepository',
         db: LTMemoryDB
     ):
-        """
-        Initialize extraction orchestrator.
-
-        Args:
-            config: Batching configuration
-            extraction_engine: Extraction engine for payload building
-            execution_strategy: Execution strategy (batch or immediate)
-            continuum_repo: Continuum repository for message loading
-            db: LT Memory database for safety checks and context loading
-        """
         self.config = config
         self.extraction_engine = extraction_engine
         self.execution_strategy = execution_strategy
         self.continuum_repo = continuum_repo
         self.db = db
 
-    def run_boot_extraction(self) -> Dict[str, Any]:
-        """
-        Run on-boot extraction sweep for all users with memory enabled.
-
-        Loads conversation messages since last extraction and submits for processing.
-        Implements safety valve: skips users with pending batches.
-
-        Returns:
-            Boot extraction statistics
-        """
-        logger.info("Starting on-boot extraction sweep")
-
-        users = self.db.get_users_with_memory_enabled()
-        results = {
-            "users_checked": len(users),
-            "batches_submitted": 0,
-            "users_skipped": 0,
-            "errors": []
-        }
-
-        for user in users:
-            uid = str(user["id"])
-            try:
-                # Safety valve: skip if pending batches (but warn - could indicate stuck batches)
-                pending_batches = self.db.get_pending_extraction_batches_for_user(uid)
-                if pending_batches:
-                    results["users_skipped"] += 1
-                    logger.warning(
-                        f"Skipping user {uid}: {len(pending_batches)} pending extraction batches exist. "
-                        "If batches consistently pending across multiple boot cycles, investigate "
-                        "batch polling job or Anthropic API issues."
-                    )
-                    continue
-
-                set_current_user_id(uid)
-                chunks = self._load_conversation_chunks(uid)
-
-                if chunks:
-                    batch_id = self.execution_strategy.execute_extraction(uid, chunks)
-                    if batch_id:
-                        results["batches_submitted"] += 1
-
-                        # Mark all collapsed segments as extracted so retry job doesn't re-process
-                        db = self.continuum_repo._get_client(uid)
-                        db.execute_query("""
-                            UPDATE messages
-                            SET metadata = jsonb_set(metadata, '{memories_extracted}', 'true')
-                            WHERE metadata->>'is_segment_boundary' = 'true'
-                              AND metadata->>'status' = 'collapsed'
-                              AND (metadata->>'memories_extracted' = 'false'
-                                   OR metadata->>'memories_extracted' IS NULL)
-                        """, ())
-            except Exception as e:
-                logger.error(f"Error in boot extraction for {uid}: {e}", exc_info=True)
-                results["errors"].append(str(e))
-            finally:
-                # Only clear if we set it for this user
-                try:
-                    if get_current_user_id() == uid:
-                        clear_user_context()
-                except Exception:
-                    pass  # Context wasn't set, nothing to clear
-
-        logger.info(f"Boot extraction complete: {results['batches_submitted']} batches submitted")
-        return results
-
     def submit_segment_extraction(
         self,
         user_id: str,
-        messages: List[Message],
-        segment_id: str
+        boundary_message_id: str
     ) -> bool:
         """
-        Submit segment messages for memory extraction with chunking.
+        Self-contained segment extraction: load, submit, mark.
 
-        Called when a segment collapses. Chunks the segment's messages using
-        segment_chunk_size and submits to execution strategy (batch or immediate).
+        Owns the full lifecycle for extracting memories from a single segment:
+        1. Query boundary message to get segment_id and position
+        2. Load messages between this boundary and the next
+        3. Build single ProcessingChunk (no chunking - segments are natural units)
+        4. Submit to execution_strategy
+        5. Mark memories_extracted=true on the boundary message
 
         Args:
             user_id: User ID
-            messages: Segment messages (already filtered, no summaries/boundaries)
-            segment_id: Segment UUID for tracking
+            boundary_message_id: UUID string of the segment boundary sentinel message
 
         Returns:
-            True if submission succeeded
+            True if extraction was submitted successfully
 
         Raises:
-            Exception: If extraction submission fails
+            RuntimeError: If boundary message not found or has no messages
         """
-        # Build chunks from segment messages using segment_chunk_size
-        chunks = []
-        chunk_size = self.config.segment_chunk_size
+        db_client = self.continuum_repo._get_client(user_id)
 
-        for i in range(0, len(messages), chunk_size):
-            chunk_messages = messages[i:i + chunk_size]
-            chunk = ProcessingChunk.from_conversation_messages(
-                chunk_messages,
-                chunk_index=i // chunk_size
+        # Step 1: Query boundary row for segment_id, continuum_id, position
+        boundary_row = db_client.execute_query("""
+            SELECT id, continuum_id, created_at, metadata
+            FROM messages
+            WHERE id = %s
+        """, (boundary_message_id,))
+
+        if not boundary_row:
+            raise RuntimeError(
+                f"Boundary message {boundary_message_id} not found for user {user_id}"
             )
 
-            # Build memory context for this chunk (only referenced memories)
-            memory_context = self._build_memory_context(chunk_messages, user_id)
-            chunk.memory_context_snapshot = memory_context
+        row = boundary_row[0]
+        continuum_id = row['continuum_id']
+        boundary_time = row['created_at']
+        metadata = self._parse_metadata(row.get('metadata', {}))
+        segment_id = metadata.get('segment_id', boundary_message_id)
+        segment_uuid = UUID(segment_id) if isinstance(segment_id, str) else segment_id
 
-            chunks.append(chunk)
+        # Step 2: Load messages after boundary, stop at next boundary
+        message_rows = db_client.execute_query("""
+            SELECT * FROM messages
+            WHERE continuum_id = %s
+                AND created_at > %s
+                AND (metadata->>'system_notification' IS NULL
+                     OR metadata->>'system_notification' = 'false')
+            ORDER BY created_at
+        """, (str(continuum_id), boundary_time))
 
-        logger.info(
-            f"Built {len(chunks)} chunks from segment {segment_id} ({len(messages)} messages)"
-        )
+        messages = []
+        for msg_row in message_rows:
+            msg_metadata = self._parse_metadata(msg_row.get('metadata', {}))
 
-        # Submit via execution strategy
-        # Note: Context management is caller's responsibility (handle_timeout sets it)
-        batch_id = self.execution_strategy.execute_extraction(user_id, chunks)
+            # Stop at next segment boundary
+            if msg_metadata.get('is_segment_boundary'):
+                break
 
-        if batch_id:
-            logger.info(
-                f"Submitted segment {segment_id} for extraction "
-                f"(batch: {batch_id}, {len(chunks)} chunks)"
+            messages.append(Message(
+                id=msg_row['id'],
+                content=msg_row['content'],
+                role=msg_row['role'],
+                created_at=msg_row['created_at'],
+                metadata=msg_metadata
+            ))
+
+        if not messages:
+            logger.warning(
+                f"No messages found for segment {segment_id} "
+                f"(boundary: {boundary_message_id})"
             )
-            return True
-        else:
-            logger.warning(f"Failed to submit segment {segment_id} for extraction")
             return False
 
-    def retry_failed_extractions(self, user_id: Optional[str] = None) -> Dict[str, Any]:
-        """
-        Safety net for failed segment extractions.
+        # Step 3: Build single ProcessingChunk (full segment, no chunking)
+        chunk = ProcessingChunk.from_conversation_messages(
+            messages,
+            chunk_index=0,
+            segment_id=segment_uuid
+        )
+        chunk.memory_context_snapshot = self._build_memory_context(messages, user_id)
 
-        Primary extraction happens during segment collapse. This job catches
-        collapsed segments where extraction failed and retries them.
+        # Step 4: Submit via execution strategy
+        batch_id = self.execution_strategy.execute_extraction(user_id, [chunk])
+
+        # Step 5: Mark boundary as extracted
+        db_client.execute_query("""
+            UPDATE messages
+            SET metadata = jsonb_set(metadata, '{memories_extracted}', 'true')
+            WHERE id = %s
+        """, (boundary_message_id,))
+
+        logger.info(
+            f"Submitted segment {segment_id} for extraction "
+            f"(batch: {batch_id}, {len(messages)} messages)"
+        )
+        return True
+
+    def extract_unprocessed_segments(self, user_id: str = None) -> Dict[str, Any]:
+        """
+        Safety-net sweep for collapsed segments where extraction failed.
+
+        Finds all collapsed segments with memories_extracted != true and
+        submits each via submit_segment_extraction. Per-segment error isolation
+        ensures one bad segment doesn't block the rest.
 
         Args:
             user_id: Optional specific user. If None, processes all users.
@@ -200,7 +175,7 @@ class ExtractionOrchestrator:
             Extraction statistics
         """
         logger.info(
-            f"Starting extraction failure retry sweep"
+            f"Starting unprocessed segment extraction sweep"
             f"{f' for user {user_id}' if user_id else ''}"
         )
 
@@ -208,43 +183,49 @@ class ExtractionOrchestrator:
             [{"id": user_id}] if user_id
             else self.db.get_users_with_memory_enabled()
         )
-        results = {"segments_retried": 0, "users_processed": 0, "errors": []}
+        results = {"segments_submitted": 0, "users_processed": 0, "errors": []}
 
         for user in users:
             uid = str(user["id"])
             try:
-                # Find collapsed segments that failed extraction
-                failed_segments = self.continuum_repo.find_failed_extraction_segments(uid)
+                # Safety valve: skip users with pending batches
+                pending_batches = self.db.get_pending_batches_for_user("extraction", uid)
+                if pending_batches:
+                    logger.info(
+                        f"Skipping user {uid}: {len(pending_batches)} pending extraction batches"
+                    )
+                    continue
 
+                # Find collapsed segments needing extraction
+                failed_segments = self.continuum_repo.find_failed_extraction_segments(uid)
                 if not failed_segments:
                     continue
 
-                logger.info(f"Found {len(failed_segments)} failed segments for user {uid}")
+                logger.info(f"Found {len(failed_segments)} unprocessed segments for user {uid}")
                 set_current_user_id(uid)
 
                 for segment in failed_segments:
-                    segment_id = segment['segment_id']
+                    # Increment attempt counter before expensive work (persists via jsonb_set)
+                    attempts = segment.get('extraction_attempts', 0)
+                    db_client = self.continuum_repo._get_client(uid)
+                    db_client.execute_returning("""
+                        UPDATE messages
+                        SET metadata = jsonb_set(metadata, '{extraction_attempts}', to_jsonb(%s))
+                        WHERE id = %s
+                            AND metadata->>'is_segment_boundary' = 'true'
+                        RETURNING id
+                    """, (attempts + 1, segment['message_id']))
 
-                    # Load messages for this segment
-                    messages = self._load_segment_messages(segment['message_id'], uid)
-
-                    if not messages:
-                        logger.warning(f"No messages found for segment {segment_id}")
-                        continue
-
-                    # Retry extraction using existing method
-                    if self.submit_segment_extraction(uid, messages, segment_id):
-                        results["segments_retried"] += 1
-
-                        # Mark segment as processed via direct SQL update
-                        db = self.continuum_repo._get_client(uid)
-                        db.execute_query("""
-                            UPDATE messages
-                            SET metadata = jsonb_set(metadata, '{memories_extracted}', 'true')
-                            WHERE id = %s
-                        """, (segment['message_id'],))
-
-                        logger.info(f"Retried extraction for segment {segment_id}")
+                    try:
+                        if self.submit_segment_extraction(uid, segment['message_id']):
+                            results["segments_submitted"] += 1
+                    except Exception as e:
+                        logger.error(
+                            f"Error extracting segment {segment.get('segment_id', '?')} "
+                            f"for user {uid} (attempt {attempts + 1}): {e}",
+                            exc_info=True
+                        )
+                        results["errors"].append(str(e))
 
                 results["users_processed"] += 1
 
@@ -252,171 +233,27 @@ class ExtractionOrchestrator:
                 logger.error(f"Error processing user {uid}: {e}", exc_info=True)
                 results["errors"].append(str(e))
             finally:
-                # Only clear if we set it for this user
                 try:
                     if get_current_user_id() == uid:
                         clear_user_context()
                 except Exception:
-                    pass  # Context wasn't set, nothing to clear
+                    pass
 
         logger.info(
-            f"Extraction failure retry sweep complete: "
-            f"{results['segments_retried']} segments retried"
+            f"Unprocessed segment sweep complete: "
+            f"{results['segments_submitted']} segments submitted"
         )
         return results
 
     # ============================================================================
-    # Helper Methods (Continuum Loading)
+    # Helper Methods
     # ============================================================================
-
-    def _load_conversation_chunks(self, user_id: str) -> List[ProcessingChunk]:
-        """
-        Load continuum messages and build chunks with memory context.
-
-        Args:
-            user_id: User ID
-
-        Returns:
-            List of ProcessingChunk objects
-
-        Raises:
-            Exception: If database query or continuum operations fail
-        """
-        # Get continuum (must exist from signup)
-        continuum = self.continuum_repo.get_continuum(user_id)
-        if not continuum:
-            raise RuntimeError(
-                f"Continuum not found for user {user_id}. "
-                f"Continuum should be created during signup."
-            )
-
-        # Get last extraction timestamp
-        last_run = self.db.get_extraction_timestamp(user_id)
-
-        # Load messages since last run
-        db_client = self.continuum_repo._get_client(user_id)
-        query = """
-        SELECT * FROM messages
-        WHERE continuum_id = %s
-        """ + (
-            "AND created_at > %s" if last_run else ""
-        ) + """
-        AND (metadata->>'system_notification' IS NULL OR metadata->>'system_notification' = 'false')
-        ORDER BY created_at
-        """
-
-        params = (str(continuum.id), last_run) if last_run else (str(continuum.id),)
-        message_rows = db_client.execute_query(query, params)
-
-        # Convert to Message objects
-        messages = []
-        for row in message_rows:
-            metadata = self._parse_metadata(row.get('metadata', {}))
-            messages.append(Message(
-                id=row['id'],
-                content=row['content'],
-                role=row['role'],
-                created_at=row['created_at'],
-                metadata=metadata
-            ))
-
-        # Check minimum messages
-        conversational = [m for m in messages if m.role in ('user', 'assistant')]
-        if len(conversational) < self.config.min_messages_for_boot_extraction:
-            logger.info(
-                f"Skipping user {user_id}: only {len(conversational)} conversational messages "
-                f"(minimum {self.config.min_messages_for_boot_extraction} required)"
-            )
-            return []
-
-        # Build chunks with memory context
-        chunks = []
-        chunk_size = self.config.max_chunk_size
-
-        for i in range(0, len(messages), chunk_size):
-            chunk_messages = messages[i:i + chunk_size]
-            chunk = ProcessingChunk.from_conversation_messages(
-                chunk_messages,
-                chunk_index=i // chunk_size
-            )
-
-            # Build memory context for this chunk (only referenced)
-            memory_context = self._build_memory_context(chunk_messages, user_id)
-            chunk.memory_context_snapshot = memory_context
-
-            chunks.append(chunk)
-
-        logger.info(f"Built {len(chunks)} chunks for user {user_id}")
-        return chunks
-
-    def _load_segment_messages(self, segment_message_id: str, user_id: str) -> List[Message]:
-        """
-        Load messages for a specific segment.
-
-        Loads all messages from segment boundary (exclusive) to next boundary or end.
-
-        Args:
-            segment_message_id: UUID of segment boundary message
-            user_id: User ID
-
-        Returns:
-            List of Message objects in segment
-
-        Raises:
-            Exception: If database query fails
-        """
-        db = self.continuum_repo._get_client(user_id)
-
-        # Get the segment boundary message first to find continuum_id and position
-        segment_query = """
-            SELECT continuum_id, created_at
-            FROM messages
-            WHERE id = %s
-        """
-        segment_row = db.execute_query(segment_query, (segment_message_id,))
-        if not segment_row:
-            logger.warning(f"Segment boundary message {segment_message_id} not found")
-            return []
-
-        continuum_id = segment_row[0]['continuum_id']
-        segment_time = segment_row[0]['created_at']
-
-        # Load all messages after this segment boundary (including next boundary to know where to stop)
-        messages_query = """
-            SELECT * FROM messages
-            WHERE continuum_id = %s
-                AND created_at > %s
-                AND (metadata->>'system_notification' IS NULL OR metadata->>'system_notification' = 'false')
-            ORDER BY created_at
-        """
-
-        message_rows = db.execute_query(messages_query, (str(continuum_id), segment_time))
-
-        # Convert to Message objects and stop at next segment boundary
-        messages = []
-        for row in message_rows:
-            metadata = self._parse_metadata(row.get('metadata', {}))
-
-            # Stop if we hit another segment boundary
-            if metadata.get('is_segment_boundary'):
-                break
-
-            messages.append(Message(
-                id=row['id'],
-                content=row['content'],
-                role=row['role'],
-                created_at=row['created_at'],
-                metadata=metadata
-            ))
-
-        logger.debug(f"Loaded {len(messages)} messages for segment {segment_message_id}")
-        return messages
 
     def _build_memory_context(
         self,
-        messages: List[Message],
+        messages: list[Message],
         user_id: str
-    ) -> Dict[str, Any]:
+    ) -> MemoryContextSnapshot:
         """
         Build memory context from referenced and pinned memories.
 
@@ -433,7 +270,6 @@ class ExtractionOrchestrator:
             - referenced_memory_ids: Sorted full UUIDs (for extraction context)
             - memory_texts: Dict of {uuid: text}
             - pinned_short_ids: Deduplicated 8-char IDs for importance boost
-            - mentioned_memory_ids: Full UUIDs for mention_count boost
         """
         referenced_ids = set()
         pinned_short_ids = set()
@@ -469,9 +305,8 @@ class ExtractionOrchestrator:
         return {
             "memory_ids": list(referenced_ids),
             "referenced_memory_ids": sorted(referenced_ids),
-            "memory_texts": memory_texts,  # Dict format: {uuid: text}
-            "pinned_short_ids": sorted(pinned_short_ids),  # 8-char IDs for pin boost
-            "mentioned_memory_ids": sorted(referenced_ids)  # Full UUIDs for mention boost
+            "memory_texts": memory_texts,
+            "pinned_short_ids": sorted(pinned_short_ids),
         }
 
     @staticmethod

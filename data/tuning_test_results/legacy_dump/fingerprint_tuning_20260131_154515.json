@@ -1,0 +1,290 @@
+{
+  "timestamp": "2026-01-31 15:45:15",
+  "sample_count": 20,
+  "summary": {
+    "avg_word_count": 19.85,
+    "avg_entity_count": 2.2,
+    "avg_retained_count": 3.35,
+    "empty_fingerprints": 1
+  },
+  "samples": [
+    {
+      "sample_num": 1,
+      "current_message": "Yeah I can't believe it.",
+      "turn1_fingerprint": "pair programming AI assistant architectural decision making ADR gossip federation decentralized federation TOFU mechanics peer lifecycle message propagation auth schemes cognitive load front\u2011loaded specification Claude typing execution 45 minutes 2 hours leverage 230 year vision",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "",
+      "turn2_word_count": 0,
+      "turn2_entities": [
+        "Claude"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Claude</named_entity>           \n</entities>  \n<relevant_passages>\n<passage id=\"mem_bf55b462\" still_relevant=\"true\">Development process: front-loads architectural thinking (2 hours for ADR to resolve all edge cases) enabling rapid implementation (45 minutes for gossip federation). Views completing mental model before implementation as the hard intellectual work, leaving deterministic engineering as secondary.</passage>\n<passage id=\"mem_b1de4c99\" still_relevant=\"true\">Work methodology with Claude Code: architect and design in ADR (2 hours of deep thinking), then Claude implements based on complete specification (45 minutes), user provides minimal operational nudges like vault key storage and peer cleanup mechanisms</passage>\n<passage id=\"mem_5759fd41\" still_relevant=\"true\">Approaches pair programming with Claude as division of labor: Claude handles implementation speed and consistency, user maintains architectural decision-making and edge case identification; user describes self as 'the brain' providing fully-formed specs in ADRs that Claude executes with minimal guidance</passage>\n<passage id=\"mem_7f10ad85\" still_relevant=\"true\">Development workflow: spent 2 hours designing and writing comprehensive ADR for gossip federation, working through all edge cases to reach fully-formed architectural thought. Claude Code then implemented entire working protocol in 45 minutes using the ADR as specification. Minimal scratchpad adjustments needed (vault key storage, dead peer cleanup). Recognizes hard intellectual work is front-loaded in ADR design, leaving implementation as deterministic engineering execution.</passage>\n<passage id=\"mem_38120fc9\" still_relevant=\"true\">Gossip federation protocol with TOFU authentication and per-server RSA keypairs implemented via Claude Code in 45 minutes after 2-hour ADR design phase working through all edge cases</passage>\n</relevant_passages>         \n<query_expansion>\npair programming Claude ADR design rapid implementation 45 minutes gossip federation front-loading intellectual work deterministic engineering"
+    },
+    {
+      "sample_num": 2,
+      "current_message": "We talked about my college course, right?",
+      "turn1_fingerprint": "open source contribution community GitHub public repository good first issue labels README vision selling documentation conversation search indexing debugging indexing pipeline database sync issue conversation search tool failure debugging search tool indexing issue open source help find developers Reddit r/opensource r/MachineLearning r/LocalLLaMA Discord AI ML community Hugging Face Discord Twitter/X open source community hashtags #OpenSource #AI #LLM",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "college course curriculum study schedule academic requirements student progress professor interactions coursework assessments assignments",
+      "turn2_word_count": 14,
+      "turn2_entities": [
+        "Rae Sremmurd",
+        "Come Get Her",
+        "GitHub",
+        "Reddit",
+        "Discord",
+        "Twitter/X",
+        "MIRA"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Rae Sremmurd</named_entity>\n<named_entity>Come Get Her</named_entity>\n<named_entity>GitHub</named_entity>\n<named_entity>Reddit</named_entity>\n<named_entity>Discord</named_entity>\n<named_entity>Twitter/X</named_entity>\n<named_entity>MIRA</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_44190aab\" still_relevant=\"true\">Completed 1.0.0 open source release that received positive response from community online</passage>\n<passage id=\"mem_f6262cea\" still_relevant=\"true\">Responds to community feedback about UI issues raised in git messages and acts on them quickly</passage>\n<passage id=\"mem_2e409aa4\" still_relevant=\"true\">Seeking open source contributors to help with MIRA development as the project has become overwhelming and difficult to code alone</passage>\n<passage id=\"mem_ef5026bb\" still_relevant=\"true\">Release strategy for open source version: initial upload with manual database setup instructions, deploy script with automation planned for next week</passage>\n<passage id=\"mem_7b8e4cb0\" still_relevant=\"true\">MIRA shipped live on GitHub repository and matches original envisioned concept; met self-imposed deadline</passage>\n</relevant_passages>         \n<query_expansion>\ncollege course curriculum study schedule academic requirements student progress professor interactions coursework assessments assignments\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 3,
+      "current_message": "MIRA is written in python.",
+      "turn1_fingerprint": "C++ homework assignment assistance Arduino programming experience systemd services repository structure federation protocols system design architecture MIRA system internals code debugging software engineering education",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "MIRA software written python programming language python implementation architecture system code base MIRA code written python language",
+      "turn2_word_count": 17,
+      "turn2_entities": [
+        "MIRA",
+        "Python",
+        "Arduino",
+        "C++"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>MIRA</named_entity>\n<named_entity>Python</named_entity>\n<named_entity>Arduino</named_entity>\n<named_entity>C++</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_570dc2c5\" still_relevant=\"true\">Has Arduino programming background providing foundational familiarity with C/C++ concepts, though new to C++ language specifics</passage>\n<passage id=\"mem_4ec9626b\" still_relevant=\"true\">No prior C++ experience before starting the course, only Arduino experience which doesn't translate directly to full C++</passage>\n<passage id=\"mem_5d4d792a\" still_relevant=\"true\">Has Arduino programming background but is new to C++, currently learning through formal textbook coursework (Chapter 7: Arrays and Vectors)</passage>\n<passage id=\"mem_ab1b6139\" still_relevant=\"true\">Enrolled in C++ course at Calhoun Community College with no prior C++ experience, only Arduino background</passage>\n<passage id=\"mem_07380edd\" still_relevant=\"true\">Has Arduino programming experience but is new to C++</passage>\n</relevant_passages>         \n<query_expansion>\nMIRA software written python programming language python implementation architecture system code base MIRA code written python language\n</query_expansion>      \n</analysis>"
+    },
+    {
+      "sample_num": 4,
+      "current_message": "General Kenobi? Lol!\n\nNo, I absolutely got sleep.",
+      "turn1_fingerprint": "General Kenobi greeting post\u2011release life rest holiday period siren call quick\u2011fix maintenance task developer workload downtime",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "post-release life rest sleep history behaving UI improvements release planning dog new dog incoming General Kenobi ghost in the machine",
+      "turn2_word_count": 20,
+      "turn2_entities": [
+        "General Kenobi"
+      ],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>General Kenobi</named_entity>           \n</entities>  \n<relevant_passages>\n<passage id=\"mem_9348fa0a\" still_relevant=\"true\">Works on UI improvements and deploys to production during late night hours (1-2 AM)</passage>\n<passage id=\"mem_199fa841\" still_relevant=\"true\">Planning software release on the 31st</passage>\n<passage id=\"mem_5f214930\" still_relevant=\"true\">Claude Code experiencing recent inference issues causing slowdown requiring hand-holding for every single code change, making progress slower despite quality outcomes when properly guided</passage>\n<passage id=\"mem_dd6fc3db\" still_relevant=\"true\">User context variables leaking through Batching API memory extraction process when should extract clean, generalized knowledge</passage>\n</relevant_passages>         \n<query_expansion>\npost-release life rest sleep history behaving UI improvements release planning dog new dog incoming General Kenobi ghost in the machine\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 5,
+      "current_message": "Ain't that the god honest truth.",
+      "turn1_fingerprint": "release shipping documentation setup instructions API endpoints critical paths unit tests integration tests core stability bug reports user feedback post-release improvements shipping philosophy",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "open source release documentation tests two day deadline 0.9 quality ship it iterate after real usage",
+      "turn2_word_count": 16,
+      "turn2_entities": [],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_passages>\n<passage id=\"mem_b3e3f26f\" still_relevant=\"true\">Two-day deadline for documentation and tests before open source release, targeting 0.9 quality (ship it, iterate after based on real usage)</passage>\n<passage id=\"mem_ad166bd1\" still_relevant=\"true\">On two-day timeline to complete documentation and tests for MIRA open source release, targeting 0.9 quality (ship it when it works, not pursuit of perfection)</passage>\n</relevant_passages>\n<query_expansion>\nopen source release documentation tests two day deadline 0.9 quality ship it iterate after real usage\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 6,
+      "current_message": "Yeah, search for it. Also find on for the back wheel.",
+      "turn1_fingerprint": "Requesting Pivot Works front wheel bearing kit VTR250 part number for 1990 model due to missing part number in notes",
+      "turn1_memories_count": 3,
+      "turn2_fingerprint": "Pivot Works front wheel bearing kit 1990 VTR250 high quality sealed bearings front wheel replacement 1990 VTR250 rear wheel bearing kit back wheel replacement 1990 VTR250 sealed bearing supplier",
+      "turn2_word_count": 29,
+      "turn2_entities": [
+        "Pivot Works",
+        "VTR250",
+        "1990 VTR250",
+        "front wheel bearings",
+        "back wheel bearings"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Pivot Works</named_entity>\n<named_entity>VTR250</named_entity>\n<named_entity>1990 VTR250</named_entity>\n<named_entity>front wheel bearings</named_entity>\n<named_entity>back wheel bearings</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_0ac9fcf1\" still_relevant=\"true\">Owns a 1990 VTR250 motorcycle; front wheel bearings are dried out and need replacement; seeking high-quality sealed bearings specifically rated for 1990 model, aware that 1990 has different front end design than other years</passage>\n</relevant_passages>\n<query_expansion>\nPivot Works front wheel bearing kit 1990 VTR250 high quality sealed bearings front wheel replacement 1990 VTR250 rear wheel bearing kit back wheel replacement 1990 VTR250 sealed bearing supplier\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 7,
+      "current_message": "oh wow. I wasn't as wrong as I expected. bad ass. Yes, lets proceed.",
+      "turn1_fingerprint": "C++ array function getRowTotal getColumnTotal debugging loop column row total type declaration return syntax",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "C++ 2D array homework implementation getRowTotal getColumnTotal next function debugging syntax errors file I/O reading from file",
+      "turn2_word_count": 17,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_fb5941ea\" still_relevant=\"true\">Completed 2D array C++ homework assignment implementing 6 functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) with file I/O - successfully debugged syntax errors and produced correct output</passage>\n<passage id=\"mem_306adead\" still_relevant=\"true\">Completed C++ Chapter 7 Programming Challenge #21 (2D Array Operations) implementing six functions: getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow with 2D array file I/O and nested loops, program executed successfully with correct outputs (total 55, average 5.5, row totals 33/22, column totals 9/19/14/9/4, highs 10/9, lows 3/1)</passage>\n<passage id=\"mem_e58b763c\" still_relevant=\"true\">Completed C++ 2D array programming assignment with 6 functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow), file I/O, and correct output in under one hour with interactive learning support</passage>\n<passage id=\"mem_98ef68bb\" still_relevant=\"true\">Completed Chapter 7 Programming Challenge 21 (2D Array Operations) C++ homework: implemented getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, and getLowestInRow functions with 2D integer array reading from file. All functions working correctly with expected output.</passage>\n<passage id=\"mem_39e4d770\" still_relevant=\"true\">Completed C++ homework assignment (Calhoun Community College Chapter 7 Programming Challenge 21) implementing six 2D array functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) with file I/O, all functions working correctly on first run in under one hour</passage>\n</relevant_passages>         \n<query_expansion>\nC++ 2D array homework implementation getRowTotal getColumnTotal next function debugging syntax errors file I/O reading from file\n</query_expansion>  \n</analysis>"
+    },
+    {
+      "sample_num": 8,
+      "current_message": "Lets switch topics and talk about Calhoun Community College for a second. I'm hoping that memories will be surfaced. It might take a few turns to change the direction tho.",
+      "turn1_fingerprint": "rolling window timeout context window collapse summarization memory chunking human episodic boundary 10 minute inactivity trigger prevents conversation interruption active flow user testing product design silence period break",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "Calhoun Community College community college academic institution memory retrieval session boundary shift conversation context change memory activation recall academic context",
+      "turn2_word_count": 20,
+      "turn2_entities": [
+        "Calhoun Community College",
+        "MIRA",
+        "ProgressiveHotCache"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Calhoun Community College</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>             \n<named_entity>ProgressiveHotCache</named_entity>                                                                                                                         \n</entities>  \n<relevant_passages>\n<passage id=\"mem_969d3faf\" still_relevant=\"true\">Abandoned aggressive topic-based summarization in favor of inactivity-triggered compression because topics blend together and circle back in natural conversation, making binary topic detection unreliable; accumulating conversation within context window preserves connective tissue of references that return to earlier points</passage>\n<passage id=\"mem_82dbc554\" still_relevant=\"true\">Improved session continuity in MIRA context window by preserving final message pairs from collapsed segment before session boundary marker; creates gradient from compressed narrative summaries through visible recent exchanges to current session, approximating human rolling buffer perception better than hard cutoff</passage>\n<passage id=\"mem_53e6080c\" still_relevant=\"true\">MIRA segment collapse mechanism: timeout-triggered (10 minutes testing, 3 hours target production) removes segment from context window, generates summary, extracts memories, inserts summary at sentinel position for continuity</passage>\n<passage id=\"mem_356eaabd\" still_relevant=\"true\">Rolling window mechanism: each new message sent extends the activity timeout window</passage>\n<passage id=\"mem_c052e7dc\" still_relevant=\"true\">Replaced ProgressiveHotCache with new session management system: uses inactivity-triggered collapses with sentinels marking chat boundaries, timeouts (60 min morning / 30 min daytime / 120 min night), summary generation, message removal, and memory extraction; on next session load, three prior session summaries are loaded into context window with session begin/end markers</passage>\n</relevant_passages>         \n<query_expansion>\nCalhoun Community College community college academic institution memory retrieval session boundary shift conversation context change memory activation recall academic context\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 9,
+      "current_message": "Create an overdue reminder to check server logs. Make it due at 11:00 PM tonight (which has already passed).",
+      "turn1_fingerprint": "reminder scheduling 10 minutes from now server logs check reminder creation time expression future schedule",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "overdue reminder server logs check due 11:00 PM tonight past time cannot set reminder past time reminder tool functional MIRA time system live timestamp",
+      "turn2_word_count": 24,
+      "turn2_entities": [],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surface in context like memories do</passage>\n<passage id=\"mem_4d1001ad\" still_relevant=\"true\">Time system retrieves live timestamp on every message (accurate within 1-2 seconds); session boundary marker timestamp remains static as historical anchor while active time indicator updates</passage>\n</relevant_passages>         \n<query_expansion>\noverdue reminder server logs check due 11:00 PM tonight past time cannot set reminder past time reminder tool functional MIRA time system live timestamp\n</query_expansion>                                                                                                                                                                                                                                             \n</analysis>"
+    },
+    {
+      "sample_num": 10,
+      "current_message": "It was broken. had you seen the format of the alert earlier in the conversation history?",
+      "turn1_fingerprint": "system prompt text content display request; defines assistant behavior policies; includes system-level instructions; configures chat interface guidelines",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "system notification alert broken earlier conversation history format system prompt anti-mirroring guideline session boundary markers caps metadata distinction",
+      "turn2_word_count": 18,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_passages>\n<passage id=\"mem_9da7c418\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n<passage id=\"mem_2e7a2f11\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n<passage id=\"mem_8f5a7384\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n<passage id=\"mem_0d0a012e\" still_relevant=\"true\">Prefers system notifications in caps to distinguish metadata about session boundaries and system-level events from conversational content</passage>\n<passage id=\"mem_7d9df2eb\" still_relevant=\"true\">Uses clear visual/typographic conventions for system metadata - prefers caps for notifications to signal distinction from conversational content</passage>\n</relevant_passages>\n<query_expansion>\nsystem notification alert broken earlier conversation history format system prompt anti-mirroring guideline session boundary markers caps metadata distinction</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 11,
+      "current_message": "The tool is loaded. Please try again. I made a fix.",
+      "turn1_fingerprint": "token propagation header unauthorized 401 Square API credential service credential store logging truncation manual header injection bypass unauthorized error token handling authentication issue",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "Square API authentication token truncation fix security logging bug credential service cache refresh OAuth configuration MCP server token exchange tool reload 401 Unauthorized error resolution full token header log message separation",
+      "turn2_word_count": 31,
+      "turn2_entities": [
+        "Square",
+        "Square API",
+        "Diane",
+        "MCP"
+      ],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Square</named_entity>\n<named_entity>Square API</named_entity>\n<named_entity>Diane</named_entity>\n<named_entity>MCP</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_1784ce2f\" still_relevant=\"true\">Building Square integration tool that had credential service issues resolved through fixing security logging bug where token truncation was mistakenly applied to actual credentials instead of just log messages</passage>\n<passage id=\"mem_6d6dbb08\" still_relevant=\"true\">Security-conscious logging bug: accidentally truncated token value in actual request header instead of only in log message, causing authentication failures until separated into full token for header and truncated version for logs only</passage>\n<passage id=\"mem_a2975689\" still_relevant=\"true\">Recently debugged OAuth configuration with Square's MCP server, working through multiple authentication approaches and token exchanges in both sandbox and production environments</passage>\n<passage id=\"mem_4f4f1da0\" still_relevant=\"true\">Square API tool and customer database tool are implemented as complete domain applications with ~1,500 lines each and comprehensive error handling, not thin utility wrappers</passage>\n</relevant_passages>         \n<query_expansion>\nSquare API authentication token truncation fix security logging bug credential service cache refresh OAuth configuration MCP server token exchange tool reload 401 Unauthorized error resolution full token header log message separation\n</query_expansion> \n</analysis>"
+    },
+    {
+      "sample_num": 12,
+      "current_message": "Yes, agreed. The hard part is done. I bet its going to take a ton of time to smooth it but thats why I'm doing the OSS release as a 0.9 and not a 1.0. I'm confident there are things I'm going to need to adjust after 'release'.",
+      "turn1_fingerprint": "post-federation push cleanup pass, SQL command corrections, find-and-replace refactoring, no architectural redesign, codebase maintenance, federation adapters linking, username resolution updates",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "open source software 0.9 release after completing hard implementation; significant time to smooth implementation details; debugging; SQL command corrections; federation adapter linkage; anticipate post-release adjustments and iterative refinements",
+      "turn2_word_count": 28,
+      "turn2_entities": [
+        "Claude"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Claude</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_14748ff8\" still_relevant=\"true\">Moved federation project to its own repository after reaching 6 bugfixes passes and requiring systemd service, decided continuation in main codebase was unjustifiable</passage>\n<passage id=\"mem_97b5103c\" still_relevant=\"true\">Successfully implemented gossip federation despite encountering bugs and incomplete code requiring cleanup. Had to 'burn through tokens' making corrections after initial 45-minute implementation. Recognizes mental model and architectural design were sound - remaining work is deterministic debugging rather than rearchitecting. Committed to shipping 0.9 by October 31st despite needing to smooth out implementation details</passage>\n<passage id=\"mem_c1bdd05e\" still_relevant=\"true\">Extracted federation feature into separate repository after reaching 6 bugfix passes and requiring its own systemd service, deciding the architectural separation was warranted at that maturity threshold</passage>\n<passage id=\"mem_48907417\" still_relevant=\"true\">Architecture and mental model design is the hard cognitive work; implementation details like fixing SQL commands and federation adapters are deterministic engineering to bridge gap between architectural intent and code reality</passage>\n<passage id=\"mem_d8dbfc7a\" still_relevant=\"true\">Gossip federation ADR specifies three components: Discovery & Routing Daemon (server announcements, domain resolution via gossip), Federation Adapter (message signing/verification, cross-server delivery), minimal Pager Tool changes (user@domain parsing). Implementation includes TOFU authentication, per-server RSA keypairs, 3-attempt retry logic, rate limiting, global username registry for local routing. Three-phase rollout (4-6 weeks planned) prioritizes reliability over complexity, deferring advanced features like reputation scoring</passage>\n</relevant_passages>         \n<query_expansion>\nopen source software 0.9 release after completing hard implementation; significant time to smooth implementation details; debugging; SQL command corrections; federation adapter linkage; anticipate post-release adjustments and iterative refinements\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 13,
+      "current_message": "Test at 2025-08-29T14:54:10.363Z",
+      "turn1_fingerprint": "test message timestamp 2025-08-29 14:41 15.620Z test sequence monitoring status progress",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "test message timestamp 2025-08-29T14:54:10.363Z live timestamp retrieval system accurate seconds session boundary marker historical anchor active time indicator update",
+      "turn2_word_count": 19,
+      "turn2_entities": [],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_passages>\n<passage id=\"mem_4d1001ad\" still_relevant=\"true\">Time system retrieves live timestamp on every message (accurate within 1-2 seconds); session boundary marker timestamp remains static as historical anchor while active time indicator updates</passage>\n</relevant_passages>\n<query_expansion>\ntest message timestamp 2025-08-29T14:54:10.363Z live timestamp retrieval system accurate seconds session boundary marker historical anchor active time indicator update\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 14,
+      "current_message": "Now there are sentinels at the beginning of each chat and when a timer for inactivity runs out the conversation collapses, a summary is generated, the messages are removed from the context window, memories are extracted. On the next load three of those session summaries are loaded into the context window with your existing session begin/end marker.",
+      "turn1_fingerprint": "ProgressiveHotCache human continuity context retention cache replacement policy new feature differences from old cache system improved referencing Cedar Rapids limited retrieval of earlier programming course language memory persistence session continuity",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "inactivity timer chat boundary sentinel session collapse summary generation message removal context window memory extraction next session load prior session summaries session begin end markers",
+      "turn2_word_count": 25,
+      "turn2_entities": [
+        "Cedar Rapids",
+        "Mumbai",
+        "Bangladesh",
+        "ProgressiveHotCache",
+        "MIRA context window"
+      ],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Cedar Rapids</named_entity>\n<named_entity>Mumbai</named_entity>\n<named_entity>Bangladesh</named_entity>\n<named_entity>ProgressiveHotCache</named_entity>\n<named_entity>MIRA context window</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_c052e7dc\" still_relevant=\"true\">Replaced ProgressiveHotCache with new session management system: uses inactivity-triggered collapses with sentinels marking chat boundaries, timeouts (60 min morning / 30 min daytime / 120 min night), summary generation, message removal, and memory extraction; on next session load, three prior session summaries are loaded into context window with session begin/end markers</passage>\n<passage id=\"mem_82dbc554\" still_relevant=\"true\">Improved session continuity in MIRA context window by preserving final message pairs from collapsed segment before session boundary marker; creates gradient from compressed narrative summaries through visible recent exchanges to current session, approximating human rolling buffer perception better than hard cutoff</passage>\n<passage id=\"mem_7787d064\" still_relevant=\"true\">Values context window continuity gradient where final messages from previous session remain visible before session boundary marker, rather than hard cliff between summaries and new content</passage>\n<passage id=\"mem_76f766fe\" still_relevant=\"true\">Made significant architectural improvements in the week before release: replaced previous binary topic_changed true/false system with new segment code because binary approach doesn't accurately reflect how real conversations segment</passage>\n</relevant_passages>\n<query_expansion>\ninactivity timer chat boundary sentinel session collapse summary generation message removal context window memory extraction next session load prior session summaries session begin end markers</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 15,
+      "current_message": "Hey, for a moment of levity have you ever heard of the runescape-ified music covers?",
+      "turn1_fingerprint": "debugging manifest entry bug fix resolved code change deployment pipeline successful build commit version control continuous integration",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "RuneScape music covers remixes levity fan community soundtrack reinterpretations",
+      "turn2_word_count": 9,
+      "turn2_entities": [
+        "RuneScape"
+      ],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>RuneScape</named_entity>                                                                                                                                                          \n</entities>  \n<relevant_passages>\n</relevant_passages>         \n<query_expansion>\nRuneScape music covers remixes levity fan community soundtrack reinterpretations\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 16,
+      "current_message": "Hey, what can you tell me about my semantic compression approach for MIRA?",
+      "turn1_fingerprint": "informal greeting conversation status inquiry",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "semantic compression approach MIRA segment-based conversation chunking conversation search tool indexing improvement",
+      "turn2_word_count": 12,
+      "turn2_entities": [
+        "Upper Peninsula Michigan",
+        "Ojibwe",
+        "1700s",
+        "fur trade",
+        "MIRA",
+        "semantic compression approach"
+      ],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Upper Peninsula Michigan</named_entity>                                                                                                                                             \n<named_entity>Ojibwe</named_entity>           \n<named_entity>1700s</named_entity>                                                                                                                         \n<named_entity>fur trade</named_entity>                                                                                                                                         \n<named_entity>MIRA</named_entity>                                                                                                                                         \n<named_entity>semantic compression approach</named_entity>                                                                                                                                \n</entities>  \n<relevant_passages>\n<passage id=\"mem_b78a0d61\" still_relevant=\"true\">Recent MIRA architectural improvement: replaced binary topic_changed flag with sophisticated segment-based conversation chunking that captures natural conversation flow</passage>\n<passage id=\"mem_cd8b6940\" still_relevant=\"true\">Struggling with a conversation search/indexing tool that consistently fails to find results despite matching memories existing in the system - identified as a fundamental architectural issue in the tool</passage>\n</relevant_passages>         \n<query_expansion>\nsemantic compression approach MIRA segment-based conversation chunking conversation search tool indexing improvement\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 17,
+      "current_message": "what are all the couts I need?",
+      "turn1_fingerprint": "main function C++ program read 2x5 integer array from Program7.txt call getTotal getAverage getRowTotal getColumnTotal getHighestInRow getLowestInRow display results console output",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "cout getTotal getAverage getRowTotal getColumnTotal getHighestInRow getLowestInRow display results main function 2x5 integer array reading from Program7.txt file I/O total of all elements average of all elements row totals column totals highest per row lowest per row",
+      "turn2_word_count": 37,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>  \nNone\n</entities>  \n<relevant_passages>  \n<passage id=\"mem_263a566b\" still_relevant=\"true\">Successfully completed first significant C++ program using 2D arrays, file I/O, and function parameter passing - wrote 6 functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) to process 2x5 integer array read from file</passage>  \n<passage id=\"mem_98ef68bb\" still_relevant=\"true\">Completed Chapter 7 Programming Challenge 21 (2D Array Operations) C++ homework: implemented getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, and getLowestInRow functions with 2D integer array reading from file. All functions working correctly with expected output</passage>  \n<passage id=\"mem_e67806cd\" still_relevant=\"true\">Completed C++ homework assignment: Chapter 7 Programming Challenges #21 'Two-Dimensional Array Operations' implementing six functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) with file I/O reading from Program7.txt</passage>  \n<passage id=\"mem_306adead\" still_relevant=\"true\">Completed C++ Chapter 7 Programming Challenge #21 (2D Array Operations) implementing six functions: getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow with 2D array file I/O and nested loops, program executed successfully with correct outputs (total 55, average 5.5, row totals 33/22, column totals 9/19/14/9/4, highs 10/9, lows 3/1)</passage>  \n<passage id=\"mem_e58b763c\" still_relevant=\"true\">Completed C++ 2D array programming assignment with 6 functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow), file I/O, and correct output in under one hour with interactive learning support</passage>  \n</relevant_passages>         \n<query_expansion>cout getTotal getAverage getRowTotal getColumnTotal getHighestInRow getLowestInRow display results main function 2x5 integer array reading from Program7.txt file I/O total of all elements average of all elements row totals column totals highest per row lowest per row</query_expansion> \n</analysis>"
+    },
+    {
+      "sample_num": 18,
+      "current_message": "oh dude thats way better",
+      "turn1_fingerprint": "Rust programming language syntax example hello world variable mutability ownership borrowing references string length calculation memory safety comparison C++ verbosity",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "Rust cleaner syntax compared to C++ memory safety borrow checker ownership system improved code readability better programming experience Rust syntax examples",
+      "turn2_word_count": 21,
+      "turn2_entities": [
+        "Rust",
+        "C++"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Rust</named_entity>                                                                                                                                             \n<named_entity>C++</named_entity>                                                                                                                         \n</entities>  \n<relevant_passages>\n<passage id=\"mem_6a7a051c\" still_relevant=\"true\">Plans to learn Rust after gaining solid C++ proficiency, appreciates Rust's cleaner syntax compared to C++</passage>\n</relevant_passages>         \n<query_expansion>\nRust cleaner syntax compared to C++ memory safety borrow checker ownership system improved code readability better programming experience Rust syntax examples\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 19,
+      "current_message": "Ah, yes, one more TUI check. I wanted to hit it before I went to bed so I wouldn't forget.",
+      "turn1_fingerprint": "TUI testing debugging session user interface command line interaction scenario farewell night",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "TUI terminal interface MIRA interaction developer workflow integration Claude Code terminal preferences browser alternative TUI check bedtime forget check TUI usage preference TUI design preference",
+      "turn2_word_count": 25,
+      "turn2_entities": [
+        "MIRA",
+        "Claude Code",
+        "TUI"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>MIRA</named_entity>\n<named_entity>Claude Code</named_entity>\n<named_entity>TUI</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_96e871c4\" still_relevant=\"true\">Accustomed to terminal interfaces from extended use of Claude Code, envisions developers preferring TUI over browser for MIRA interaction within their existing workflow</passage>\n<passage id=\"mem_46698f8d\" still_relevant=\"true\">TUI recreates major web UI component (single-turn message view hiding history) using simple argparse implementation</passage>\n<passage id=\"mem_69f854a6\" still_relevant=\"true\">Prefers interacting with MIRA via TUI over the web interface despite spending months perfecting GUI colors, animations, and flow</passage>\n<passage id=\"mem_102c80b7\" still_relevant=\"true\">Familiar with Claude Code interface style from months of use, which influenced TUI design preferences</passage>\n<passage id=\"mem_c867dd33\" still_relevant=\"true\">Envisions developers having TUI terminal window open for MIRA chat as alternative to browser for workflow integration</passage>\n</relevant_passages>\n<query_expansion>\nTUI terminal interface MIRA interaction developer workflow integration Claude Code terminal preferences browser alternative TUI check bedtime forget check TUI usage preference TUI design preference\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 20,
+      "current_message": "Fair enough. Do you think there is a more appropriate term than analysis?",
+      "turn1_fingerprint": "alternative terminology for analysis appropriate phrase substitution precise language concept refinement terminology choice system prompt context communication",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "Mira system prompt term analysis replacement terminology structured response depth intentional conversational nuance terminology substitution",
+      "turn2_word_count": 15,
+      "turn2_entities": [
+        "Mira"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Mira</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_59c98791\" still_relevant=\"true\">Prefers responses that are deep and intentional rather than filler conversation that simply furthers dialogue</passage>\n</relevant_passages>         \n<query_expansion>\nMira system prompt term analysis replacement terminology structured response depth intentional conversational nuance terminology substitution\n</query_expansion>                                                                                                                                                                         \n</analysis>"
+    }
+  ]
+}

@@ -6,7 +6,7 @@ Architecture (bundled in mdbr-leaf-ir-asym):
 - Document encoding: snowflake-arctic-embed-m-v1.5 - higher quality
 
 Methods:
-- encode_realtime(): Query encoding via model.encode_query() for fingerprints
+- encode_realtime(): Query encoding via model.encode_query() for subcortical queries
 - encode_deep(): Document encoding via model.encode_document() for memories/summaries
 """
 import logging
@@ -32,7 +32,7 @@ class EmbeddingCache:
         self.key_prefix = key_prefix
         from clients.valkey_client import get_valkey_client
         self.valkey = get_valkey_client()  # Raises if Valkey unreachable
-        self.logger.info(f"Embedding cache initialized with Valkey backend (prefix: {key_prefix})")
+        self.logger.debug(f"Embedding cache initialized with Valkey backend (prefix: {key_prefix})")
 
     def _get_cache_key(self, text: str) -> str:
         return f"{self.key_prefix}:{hashlib.sha256(text.encode('utf-8')).hexdigest()}"
@@ -74,7 +74,7 @@ def get_hybrid_embeddings_provider(cache_enabled: bool = True) -> 'HybridEmbeddi
     """
     global _hybrid_provider_instance
     if _hybrid_provider_instance is None:
-        logger.info("Creating singleton HybridEmbeddingsProvider instance")
+        logger.debug("Creating singleton HybridEmbeddingsProvider instance")
         _hybrid_provider_instance = HybridEmbeddingsProvider(cache_enabled=cache_enabled)
     return _hybrid_provider_instance
 
@@ -83,7 +83,7 @@ class HybridEmbeddingsProvider:
     """
     Manages asymmetric embeddings using mdbr-leaf-ir-asym (768-dim).
 
-    - encode_realtime(): Lightweight query encoding for fingerprints
+    - encode_realtime(): Lightweight query encoding for subcortical queries
     - encode_deep(): Higher quality document encoding for memories/summaries
     """
 
@@ -101,7 +101,7 @@ class HybridEmbeddingsProvider:
         from sentence_transformers import SentenceTransformer
 
         # Load mdbr-leaf-ir-asym for asymmetric retrieval
-        self.logger.info("Loading mdbr-leaf-ir-asym model for asymmetric retrieval")
+        self.logger.debug("Loading mdbr-leaf-ir-asym model for asymmetric retrieval")
         self.model = SentenceTransformer(
             "MongoDB/mdbr-leaf-ir-asym",
             cache_folder=config.embeddings.fast_model.cache_dir
@@ -115,34 +115,34 @@ class HybridEmbeddingsProvider:
             self.query_cache = None
             self.doc_cache = None
 
-        self.logger.info("HybridEmbeddingsProvider initialized")
+        self.logger.toast("HybridEmbeddingsProvider initialized")
 
     def encode_realtime(self,
-                        texts: Union[str, List[str]],
-                        batch_size: Optional[int] = None) -> np.ndarray:
+                        texts: Union[str, List[str]]) -> np.ndarray:
         """
-        Lightweight query encoding for fingerprints (768-dim).
+        Lightweight query encoding for subcortical queries (768-dim).
 
         Used for retrieval queries where speed matters.
 
         Args:
             texts: Text or list of texts to encode
-            batch_size: Batch size for encoding
 
         Returns:
             768-dimensional normalized embeddings
         """
-        if batch_size is None:
-            from config.config_manager import config
-            batch_size = config.embeddings.fast_model.batch_size
+        from config.config_manager import config
+        batch_size = config.embeddings.fast_model.batch_size
 
         # Handle caching for single text
         if self.cache_enabled and isinstance(texts, str) and self.query_cache:
             cached = self.query_cache.get(texts)
             if cached is not None:
+                self.logger.debug(f"encode_realtime: cache hit (text_len={len(texts)})")
                 return cached
 
         # Generate query embeddings (uses mdbr-leaf-ir internally)
+        text_desc = f"{len(texts)} texts" if isinstance(texts, list) else f"text ({len(texts)} chars)"
+        self.logger.debug(f"encode_realtime: generating embedding for {text_desc}")
         embeddings = self.model.encode_query(texts, batch_size=batch_size)
 
         embeddings = embeddings.astype(np.float16)
@@ -154,8 +154,7 @@ class HybridEmbeddingsProvider:
         return embeddings
 
     def encode_deep(self,
-                    texts: Union[str, List[str]],
-                    batch_size: Optional[int] = None) -> np.ndarray:
+                    texts: Union[str, List[str]]) -> np.ndarray:
         """
         Higher quality document encoding for memories and summaries (768-dim).
 
@@ -163,22 +162,23 @@ class HybridEmbeddingsProvider:
 
         Args:
             texts: Text or list of texts to encode
-            batch_size: Batch size for encoding
 
         Returns:
             768-dimensional normalized embeddings
         """
-        if batch_size is None:
-            from config.config_manager import config
-            batch_size = config.embeddings.fast_model.batch_size
+        from config.config_manager import config
+        batch_size = config.embeddings.fast_model.batch_size
 
         # Handle caching for single text
         if self.cache_enabled and isinstance(texts, str) and self.doc_cache:
             cached = self.doc_cache.get(texts)
             if cached is not None:
+                self.logger.debug(f"encode_deep: cache hit (text_len={len(texts)})")
                 return cached
 
         # Generate document embeddings (uses snowflake-arctic-embed internally)
+        text_desc = f"{len(texts)} texts" if isinstance(texts, list) else f"text ({len(texts)} chars)"
+        self.logger.debug(f"encode_deep: generating embedding for {text_desc}")
         embeddings = self.model.encode_document(texts, batch_size=batch_size)
 
         embeddings = embeddings.astype(np.float16)
@@ -189,8 +189,3 @@ class HybridEmbeddingsProvider:
 
         return embeddings
 
-    def close(self):
-        """Clean up resources."""
-        if hasattr(self.model, 'close'):
-            self.model.close()
-        self.logger.info("HybridEmbeddingsProvider closed")

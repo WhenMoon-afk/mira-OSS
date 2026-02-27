@@ -46,6 +46,8 @@ Every tool needs these core patterns:
 | **Encryption** | contacts_tool.py:264-279 | encrypted__ prefix for automatic encryption |
 | | userdata_manager.py:298-330 | How encryption/decryption works internally |
 | **Fuzzy Name Matching** | contacts_tool.py:115-171 | Score-based matching with ambiguity handling |
+| **Credential Storage** | utils/user_credentials.py | UserCredentialService for per-user API keys |
+| **Credential Injection** | web_tool.py:397-420 | HTTP requests with LLM-invisible credentials |
 | **File Operations** | tools/repo.py:118-130 | make_dir, get_file_path, open_file, file_exists |
 | **Response Formatting** | reminder_tool.py:340-354 | Consistent response format with message |
 | | contacts_tool.py:282-298 | Formatted responses with success flag |
@@ -70,6 +72,9 @@ For advanced functionality, reference these specific implementations:
 | **Duplicate Detection** | contacts_tool.py | 246-258 | Case-insensitive duplicate checking |
 | **Config Validation** | tools/repo.py | 57-75 | validate_config() classmethod for connection tests |
 | **Manager Caching** | userdata_manager.py | 451-465 | Per-user UserDataManager caching |
+| **Credential Injection** | web_tool.py | 397-420 | HTTP requests with LLM-invisible auth |
+| **Credential Retrieval** | web_tool.py | 385-407 | _get_credential() helper pattern |
+| **Response Sanitization** | web_tool.py | 453-479 | Strip sensitive headers from responses |
 
 ## Architecture Deep Dive
 
@@ -81,6 +86,7 @@ The `Tool` base class provides automatic user scoping and file operations:
 class Tool(ABC):
     name = "base_tool"
     description = "Base class for all tools"
+    parallel_safe: bool = True  # Set to False for tools that mutate shared state
 
     @property
     def user_id(self) -> str:
@@ -112,6 +118,7 @@ class Tool(ABC):
 - **Automatic User Scoping**: `self.db` is always scoped to the current user - no manual filtering needed
 - **Lazy Initialization**: Database connection created on first access
 - **File Isolation**: `self.user_data_path` returns `data/users/{user_id}/tools/{tool_name}/`
+- **Parallel Safety**: Set `parallel_safe = False` for tools that mutate shared state where operation order matters (e.g., create-then-edit). Sequential tools execute first, then parallel-safe tools run concurrently. For mixed read/write tools, override `is_call_parallel_safe(cls, tool_input)` to allow read operations to run in parallel while keeping writes sequential.
 
 ### Database Operations (utils/userdata_manager.py)
 
@@ -438,9 +445,85 @@ For API keys and sensitive credentials, use `UserCredentialService`:
 from utils.user_credentials import UserCredentialService
 
 cred_service = UserCredentialService()
-api_key = cred_service.get_credential(user_id, 'api_key', 'service_name')
-cred_service.store_credential(user_id, 'api_key', 'service_name', key_value)
+api_key = cred_service.get_credential('api_key', 'service_name')
+cred_service.store_credential('api_key', 'service_name', key_value)
 ```
+
+### Credential Injection (LLM-Invisible Authentication)
+
+**See web_tool.py:397-420** for the reference implementation.
+
+When your tool needs to make authenticated HTTP requests, you have two approaches:
+
+#### Option 1: Use web_tool's Credential Injection (Recommended)
+
+If your tool calls external APIs, leverage `web_tool`'s built-in credential injection. The LLM specifies credentials **by name only**—it never sees the actual values.
+
+```python
+# In your tool's run() method:
+from tools.repo import get_tool_repository
+
+def _call_external_api(self, endpoint: str, credential_name: str) -> Dict[str, Any]:
+    """Make authenticated API call using stored credential."""
+    tool_repo = get_tool_repository()
+    web_tool = tool_repo.get_tool("web_tool")
+
+    return web_tool.run(
+        operation="http",
+        method="GET",
+        url=f"https://api.example.com/{endpoint}",
+        credential_name=credential_name,      # Name only - value retrieved server-side
+        credential_header="Authorization",     # Which header to inject into
+        credential_prefix="Bearer "            # Prefix for the value
+    )
+```
+
+**Security benefits:**
+- LLM sees: `credential_name="github_api"` (safe)
+- LLM never sees: `ghp_xxxxxxxxxxxx` (the actual token)
+- Response headers are sanitized—even if the API echoes credentials back, they're stripped before returning to the LLM
+
+#### Option 2: Direct Credential Access (For Internal Use Only)
+
+If your tool needs the credential value directly (e.g., for SDK initialization), retrieve it server-side:
+
+```python
+from utils.user_credentials import UserCredentialService
+
+def _get_api_client(self):
+    """Initialize API client with stored credential."""
+    cred_service = UserCredentialService()
+    api_key = cred_service.get_credential(
+        credential_type="http_credential",
+        service_name="my_service"
+    )
+
+    if api_key is None:
+        raise ValueError(
+            "API key 'my_service' not found. "
+            "Add it in Settings > API Credentials."
+        )
+
+    return SomeAPIClient(api_key=api_key)
+```
+
+**CRITICAL:** Never return credential values to the LLM. If you use Option 2, ensure the credential value stays server-side and is never included in your tool's response dict.
+
+#### Credential Type Conventions
+
+| credential_type | Use Case |
+|-----------------|----------|
+| `http_credential` | Generic API keys for HTTP requests (used by web_tool) |
+| `oauth_token` | OAuth access tokens |
+| `oauth_refresh_token` | OAuth refresh tokens |
+| `tool_config` | Tool-specific configuration blobs |
+
+#### User Storage
+
+Users store credentials via **Settings > API Credentials** in the web UI. The credentials are:
+- Encrypted at rest (Fernet encryption, key derived from user_id)
+- Stored in per-user SQLite databases
+- Never exposed to the LLM—only referenced by name
 
 ### File Operations
 
@@ -607,6 +690,12 @@ registry.register("my_tool", MyToolConfig)
 class MyTool(Tool):
     name = "my_tool"
     simple_description = "does something useful"
+    parallel_safe = True  # Set False if tool has ordering dependencies (create-then-edit)
+    # For mixed read/write tools, override is_call_parallel_safe instead:
+    # _parallel_safe_operations = frozenset({"search", "list"})
+    # @classmethod
+    # def is_call_parallel_safe(cls, tool_input):
+    #     return tool_input.get("operation") in cls._parallel_safe_operations
 
     anthropic_schema = {
         "name": "my_tool",
@@ -715,6 +804,130 @@ class MyTool(Tool):
             "message": f"Deleted item: {items[0]['encrypted__title']}"
         }
 ```
+
+### API-Calling Tool Template
+
+For tools that call external APIs with stored credentials:
+
+```python
+import logging
+from typing import Dict, Any, Optional
+
+from tools.repo import Tool, get_tool_repository
+from tools.registry import registry
+from pydantic import BaseModel, Field
+
+logger = logging.getLogger(__name__)
+
+
+class MyAPIToolConfig(BaseModel):
+    enabled: bool = Field(default=True, description="Whether enabled")
+
+registry.register("my_api_tool", MyAPIToolConfig)
+
+
+class MyAPITool(Tool):
+    """Tool that calls an external API using stored credentials."""
+
+    name = "my_api_tool"
+    simple_description = "fetches data from external API"
+
+    anthropic_schema = {
+        "name": "my_api_tool",
+        "description": "Fetch data from ExampleAPI. Requires 'example_api' credential to be stored in Settings > API Credentials.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "operation": {
+                    "type": "string",
+                    "enum": ["get_user", "list_items"],
+                    "description": "The operation to perform"
+                },
+                "user_id": {
+                    "type": "string",
+                    "description": "User ID for get_user operation"
+                }
+            },
+            "required": ["operation"],
+            "additionalProperties": False
+        }
+    }
+
+    # Name of the credential users must store (documented in description)
+    CREDENTIAL_NAME = "example_api"
+
+    def __init__(self):
+        super().__init__()
+        self.logger = logging.getLogger(__name__)
+
+    def run(self, operation: str, **kwargs) -> Dict[str, Any]:
+        if operation == "get_user":
+            return self._get_user(kwargs.get("user_id"))
+        elif operation == "list_items":
+            return self._list_items()
+        else:
+            raise ValueError(f"Unknown operation: {operation}")
+
+    def _call_api(self, method: str, endpoint: str, **kwargs) -> Dict[str, Any]:
+        """
+        Make authenticated API call using web_tool's credential injection.
+
+        The credential value is NEVER visible to the LLM - only referenced by name.
+        """
+        tool_repo = get_tool_repository()
+        web_tool = tool_repo.get_tool("web_tool")
+
+        return web_tool.run(
+            operation="http",
+            method=method,
+            url=f"https://api.example.com/v1/{endpoint}",
+            credential_name=self.CREDENTIAL_NAME,  # LLM sees this name only
+            credential_header="Authorization",
+            credential_prefix="Bearer ",
+            **kwargs
+        )
+
+    def _get_user(self, user_id: Optional[str]) -> Dict[str, Any]:
+        if not user_id:
+            raise ValueError("user_id is required for get_user operation")
+
+        result = self._call_api("GET", f"users/{user_id}")
+
+        if not result.get("success"):
+            return {
+                "success": False,
+                "message": f"API call failed: {result.get('message', 'Unknown error')}"
+            }
+
+        return {
+            "success": True,
+            "user": result.get("data"),
+            "message": f"Retrieved user {user_id}"
+        }
+
+    def _list_items(self) -> Dict[str, Any]:
+        result = self._call_api("GET", "items")
+
+        if not result.get("success"):
+            return {
+                "success": False,
+                "message": f"API call failed: {result.get('message', 'Unknown error')}"
+            }
+
+        items = result.get("data", [])
+        return {
+            "success": True,
+            "items": items,
+            "count": len(items),
+            "message": f"Retrieved {len(items)} items"
+        }
+```
+
+**Key points:**
+- `CREDENTIAL_NAME` documents which credential users need to store
+- `_call_api()` wraps web_tool with credential injection
+- The LLM never sees the actual API key—only `credential_name="example_api"`
+- Error handling passes through web_tool's response structure
 
 ### Error Handling
 
@@ -848,6 +1061,7 @@ def validate_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:
 | Misaligned mental models | "That's not quite right" feedback | Deep dive into user's vision |
 | Table creation at startup | Errors during tool discovery | Use `has_user_context()` check |
 | Assuming prefix stripping | Using `item['title']` for encrypted fields | Use `item['encrypted__title']` |
+| Exposing credentials to LLM | Returning API keys in tool response | Use credential_name reference, never the value |
 
 ## Best Practices
 
@@ -858,6 +1072,7 @@ def validate_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:
 5. **Document decisions**: When choosing between approaches, note why
 6. **Defer table creation**: Always check `has_user_context()` before creating tables in `__init__`
 7. **Keep encrypted prefix**: Access decrypted data as `item['encrypted__field']`, not `item['field']`
+8. **Never expose credentials to LLM**: Use credential injection (by name) for authenticated requests—the LLM should never see actual API keys or tokens in tool responses
 
 ## Summary
 

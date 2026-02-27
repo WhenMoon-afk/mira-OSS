@@ -4,13 +4,14 @@ Health API endpoint - basic system health checks.
 Simple health monitoring for database, basic system status.
 """
 import logging
-from typing import Dict, Any
 import time
+
+import psycopg
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 
-from .base import BaseHandler, APIResponse, create_success_response
+from .base import BaseHandler, ErrorResponse, SuccessResponse, create_success_response, create_error_response
 from clients.postgres_client import PostgresClient
 from utils.timezone_utils import utc_now, format_utc_iso
 from utils.thread_monitor import ThreadMonitor
@@ -24,10 +25,10 @@ router = APIRouter()
 class HealthEndpoint(BaseHandler):
     """Health endpoint handler with basic system checks."""
 
-    def process_request(self, **params) -> APIResponse:
+    def process_request(self, **params) -> SuccessResponse | ErrorResponse:
         """Check system health components."""
         start_time = time.time()
-        components = {}
+        components: dict[str, dict] = {}
         overall_status = "healthy"
 
         # Check database connectivity (unified mira_service database)
@@ -35,7 +36,7 @@ class HealthEndpoint(BaseHandler):
             db = PostgresClient("mira_service")
             db.execute_single("SELECT 1")
             components["database"] = {"status": "healthy", "latency_ms": round((time.time() - start_time) * 1000, 1)}
-        except Exception as e:
+        except (psycopg.OperationalError, psycopg.DatabaseError) as e:
             components["database"] = {"status": "unhealthy", "error": str(e)}
             overall_status = "unhealthy"
 
@@ -46,12 +47,9 @@ class HealthEndpoint(BaseHandler):
             "version": "1.0.0"
         }
 
-        # Federation moved to separate service
-        # See https://github.com/taylorsatula/gossip-federation
-
         total_time = round((time.time() - start_time) * 1000, 1)
 
-        health_data = {
+        health_data: dict = {
             "status": overall_status,
             "timestamp": format_utc_iso(utc_now()),
             "components": components,
@@ -63,13 +61,13 @@ class HealthEndpoint(BaseHandler):
 
         # Return appropriate response based on health status
         if overall_status == "unhealthy":
-            return APIResponse(
-                success=False,
-                data=health_data,
+            return ErrorResponse(
                 error={
                     "code": "SYSTEM_UNHEALTHY",
-                    "message": "One or more system components are unhealthy"
-                }
+                    "message": "One or more system components are unhealthy",
+                    "details": health_data
+                },
+                meta={}
             )
 
         return create_success_response(health_data)
@@ -87,25 +85,16 @@ def health_endpoint():
         handler = get_health_handler()
         response = handler.handle_request()
 
-        # Return appropriate HTTP status based on health
-        response_dict = response.to_dict()
-        if response_dict["data"]["status"] == "unhealthy":
-            return JSONResponse(status_code=503, content=response_dict)
+        if isinstance(response, ErrorResponse):
+            return JSONResponse(status_code=503, content=response.to_dict())
 
-        return response_dict
+        return response.to_dict()
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Health endpoint error: {e}", exc_info=True)
-        error_response = {
-            "success": False,
-            "error": {
-                "code": "HEALTH_CHECK_ERROR",
-                "message": f"Failed to perform health check: {str(e)}"
-            }
-        }
-        return JSONResponse(status_code=500, content=error_response)
+        return JSONResponse(status_code=500, content=create_error_response(e).to_dict())
 
 
 @router.get("/health/threads")
@@ -141,42 +130,35 @@ def thread_health_endpoint():
         if stuck_ops:
             status = "critical"
 
-        response = {
-            "success": True,
-            "data": {
-                "status": status,
-                "thread_pool": {
-                    "available": available_threads,
-                    "total": total_threads,
-                    "used": used_threads,
-                    "usage_percent": round(usage_percent, 1)
-                },
-                "operations": {
-                    "active": len(active_ops),
-                    "stuck": len(stuck_ops),
-                    "active_operations": active_ops[:10],  # First 10 active ops
-                    "stuck_operations": stuck_ops  # All stuck ops (these are critical)
-                },
-                "scheduled_jobs": job_stats,
-                "timestamp": format_utc_iso(utc_now())
-            }
+        data = {
+            "status": status,
+            "thread_pool": {
+                "available": available_threads,
+                "total": total_threads,
+                "used": used_threads,
+                "usage_percent": round(usage_percent, 1)
+            },
+            "operations": {
+                "active": len(active_ops),
+                "stuck": len(stuck_ops),
+                "active_operations": active_ops[:10],
+                "stuck_operations": stuck_ops
+            },
+            "scheduled_jobs": job_stats,
+            "timestamp": format_utc_iso(utc_now())
         }
+
+        response = create_success_response(data)
 
         # Return 503 if critical
         if status == "critical":
-            return JSONResponse(status_code=503, content=response)
+            return JSONResponse(status_code=503, content=response.to_dict())
 
-        return response
+        return response.to_dict()
 
     except Exception as e:
         logger.error(f"Thread health endpoint error: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": {
-                "code": "MONITORING_ERROR",
-                "message": f"Failed to get thread monitoring data: {str(e)}"
-            }
-        }
+        return JSONResponse(status_code=500, content=create_error_response(e).to_dict())
 
 
 @router.get("/health/thread-dump")
@@ -195,21 +177,12 @@ def thread_dump_endpoint():
         with open(dump_file, 'w') as f:
             f.write(dump)
 
-        return {
-            "success": True,
-            "data": {
-                "thread_dump": dump,
-                "saved_to": dump_file,
-                "timestamp": format_utc_iso(utc_now())
-            }
-        }
+        return create_success_response({
+            "thread_dump": dump,
+            "saved_to": dump_file,
+            "timestamp": format_utc_iso(utc_now())
+        }).to_dict()
 
     except Exception as e:
         logger.error(f"Thread dump endpoint error: {e}", exc_info=True)
-        return {
-            "success": False,
-            "error": {
-                "code": "DUMP_ERROR",
-                "message": f"Failed to generate thread dump: {str(e)}"
-            }
-        }
+        return JSONResponse(status_code=500, content=create_error_response(e).to_dict())

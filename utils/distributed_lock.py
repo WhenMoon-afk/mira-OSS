@@ -90,21 +90,6 @@ class DistributedLock:
         value = self.valkey.get(key)
         return value
     
-    def force_release(self, resource_id: str) -> bool:
-        """
-        Force release a lock regardless of owner.
-        
-        Use with caution - only for cleaning up stale locks.
-        
-        Args:
-            resource_id: Unique identifier for the resource
-            
-        Returns:
-            True if lock was released, False if lock didn't exist
-        """
-        logger.warning(f"Force releasing lock for {resource_id}")
-        return self.release(resource_id)
-    
     def release(self, resource_id: str) -> bool:
         """
         Release a distributed lock.

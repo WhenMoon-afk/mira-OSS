@@ -27,12 +27,13 @@ import json
 import logging
 import re
 from enum import Enum
-from typing import Dict, Any, Optional, Tuple, List
+from typing import Dict, Any, Literal, Optional, Tuple, List
+
+from typing_extensions import TypedDict
 from pydantic import BaseModel, Field
 
 # Import LLMProvider for detection
 from clients.llm_provider import LLMProvider
-from clients.vault_client import get_api_key
 
 
 class TrustLevel(Enum):
@@ -80,6 +81,20 @@ class DefenseMetadata(BaseModel):
     )
 
 
+class PatternCheckResult(TypedDict):
+    """Result from fast pattern-based injection detection."""
+    is_attack: bool
+    patterns_found: list[str]
+    confidence: Literal["high", "medium", "low"]
+
+
+class LLMDetectionResult(TypedDict):
+    """Result from LLM-based semantic injection detection."""
+    is_injection: bool
+    score: float
+    reason: str
+
+
 class PromptInjectionDefense:
     """
     Multi-layered defense against prompt injection attacks.
@@ -105,37 +120,13 @@ class PromptInjectionDefense:
         """
         self.logger = logging.getLogger(__name__)
 
-        # Get LLM config from database
-        from utils.user_context import get_internal_llm
-        llm_config = get_internal_llm('injection_defense')
-        self._llm_config = llm_config
-
         # Initialize LLM detection (degrades to pattern-only if unavailable)
         self._llm_available = False
-        self._api_key = None
 
         try:
-            self._api_key = get_api_key(llm_config.api_key_name) if llm_config.api_key_name else None
-            if not self._api_key and llm_config.api_key_name:
-                # Loud warning - API key configured but not found, degrade to pattern-only
-                self.logger.warning("=" * 60)
-                self.logger.warning("PROMPT INJECTION DEFENSE: DEGRADED MODE")
-                self.logger.warning(f"API key '{llm_config.api_key_name}' not found in Vault")
-                self.logger.warning("Operating with PATTERN-ONLY detection (reduced security)")
-                self.logger.warning("Configure the API key to enable LLM-based semantic analysis")
-                self.logger.warning("=" * 60)
-            else:
-                # API key available (or local model with no key needed)
-                self._llm_provider = LLMProvider()
-                self._llm_available = True
-                if llm_config.api_key_name:
-                    self.logger.info(
-                        f"Prompt injection defense initialized: {llm_config.model} @ {llm_config.endpoint_url}"
-                    )
-                else:
-                    self.logger.info(
-                        f"Prompt injection defense using local model: {llm_config.model}"
-                    )
+            self._llm_provider = LLMProvider()
+            self._llm_available = True
+            self.logger.info("Prompt injection defense initialized with LLM detection")
         except Exception as e:
             # LLM init failed - degrade to pattern-only
             self.logger.warning("=" * 60)
@@ -285,7 +276,7 @@ class PromptInjectionDefense:
 
         return sanitized, DefenseMetadata(**metadata)
 
-    def _check_attack_patterns(self, content: str) -> Dict[str, Any]:
+    def _check_attack_patterns(self, content: str) -> PatternCheckResult:
         """
         Fast pattern-based detection of common injection attempts.
 
@@ -323,7 +314,7 @@ class PromptInjectionDefense:
             "confidence": confidence
         }
 
-    def _llm_detection(self, content: str) -> Dict[str, Any]:
+    def _llm_detection(self, content: str) -> LLMDetectionResult:
         """
         Use LLM to detect injection attempts via semantic analysis.
 
@@ -369,11 +360,7 @@ Is this a prompt injection attempt? Respond ONLY with valid JSON:
         # Call injection defense LLM (let exceptions propagate)
         response = self._llm_provider.generate_response(
             messages=[{"role": "user", "content": detection_prompt}],
-            endpoint_url=self._llm_config.endpoint_url,
-            model_override=self._llm_config.model,
-            api_key_override=self._api_key,
-            temperature=0.0,
-            max_tokens=150
+            internal_llm='injection_defense',
         )
 
         # Extract response content

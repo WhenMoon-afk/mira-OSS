@@ -637,7 +637,7 @@ verify_vault_snapshot() {
 # Format: "table:order_by_col:col1,col2,col3"
 # order_by_col is the column to ORDER BY (usually primary key)
 DB_STRUCTURAL_TABLES=(
-    "users:id:id,email,first_name,last_name,timezone,llm_tier,max_tier,is_active,memory_manipulation_enabled,cumulative_activity_days"
+    "users:id:id,email,first_name,last_name,timezone,llm_tier,is_active,memory_manipulation_enabled,cumulative_activity_days"
     "continuums:id:id,user_id,last_message_position"
     "api_tokens:id:id,user_id,name,token_hash"
     "domain_knowledge_blocks:id:id,user_id,domain_label,domain_name,enabled"
@@ -967,7 +967,7 @@ verify_database_snapshot() {
                         if [ "$orig_user" != "$curr_user" ]; then
                             echo -e "${YELLOW}  ~ User CHANGED: ${email}${RESET}"
                             # Show which fields changed
-                            local fields="timezone llm_tier max_tier first_name last_name"
+                            local fields="timezone llm_tier first_name last_name"
                             for field in $fields; do
                                 local orig_val curr_val
                                 orig_val=$(echo "$orig_user" | jq -r ".$field // empty" 2>/dev/null)

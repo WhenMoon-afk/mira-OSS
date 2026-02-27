@@ -3,6 +3,9 @@ Centralized scheduled task registration.
 
 This module provides a single place to configure all scheduled tasks
 while keeping the actual scheduling logic with the owning components.
+
+Also provides `get_users_due_for_job()` — a reusable platform function
+for use-day-based scheduling via modular arithmetic on cumulative_activity_days.
 """
 import logging
 from typing import List, Tuple
@@ -72,15 +75,14 @@ def initialize_all_scheduled_tasks(scheduler_service):
 
     # Register LT_Memory jobs using its special pattern
     try:
-        from lt_memory.scheduled_tasks import register_lt_memory_jobs
+        from utils.lt_memory_jobs import register_lt_memory_jobs
         from lt_memory.factory import get_lt_memory_factory
 
         lt_memory_factory = get_lt_memory_factory()
         if not lt_memory_factory:
             raise RuntimeError("LT_Memory factory not initialized")
 
-        if not register_lt_memory_jobs(scheduler_service, lt_memory_factory):
-            raise RuntimeError("LT_Memory job registration returned False")
+        register_lt_memory_jobs(scheduler_service, lt_memory_factory)
 
         logger.info("Successfully registered scheduled tasks for lt_memory")
         successful += 1
@@ -94,7 +96,7 @@ def initialize_all_scheduled_tasks(scheduler_service):
     return successful
 
 
-def register_segment_timeout_job(scheduler_service, event_bus) -> bool:
+def register_segment_timeout_job(scheduler_service, event_bus) -> None:
     """
     Register segment timeout detection job (called separately after event_bus initialization).
 
@@ -102,22 +104,44 @@ def register_segment_timeout_job(scheduler_service, event_bus) -> bool:
         scheduler_service: System scheduler service
         event_bus: CNS event bus for publishing timeout events
 
-    Returns:
-        True if registered successfully
-
     Raises:
         RuntimeError: If job registration fails
     """
     try:
         from cns.services.segment_timeout_service import register_timeout_job
 
-        success = register_timeout_job(scheduler_service, event_bus)
-        if not success:
-            raise RuntimeError("Segment timeout job registration returned False")
-
+        register_timeout_job(scheduler_service, event_bus)
         logger.info("Successfully registered segment timeout detection job")
-        return True
 
     except Exception as e:
         logger.error(f"Error registering segment timeout job: {e}", exc_info=True)
         raise RuntimeError(f"Failed to register segment timeout job: {e}") from e
+
+
+def get_users_due_for_job(interval: int) -> list[dict]:
+    """
+    Get recently-active users whose cumulative_activity_days falls on the interval.
+
+    Uses MOD() for stateless use-day scheduling: a user is "due" when
+    MOD(cumulative_activity_days, interval) = 0. The 2-day recency window
+    on last_activity_date handles timezone skew and prevents re-processing
+    users whose counter is stuck on a multiple.
+
+    Args:
+        interval: Use-day interval (e.g., 7 = every 7th activity day)
+
+    Returns:
+        List of user dicts with 'id' key
+    """
+    from utils.database_session_manager import get_shared_session_manager
+
+    session_manager = get_shared_session_manager()
+    with session_manager.get_admin_session() as session:
+        return session.execute_query("""
+            SELECT id FROM users
+            WHERE cumulative_activity_days > 0
+            AND MOD(cumulative_activity_days, %(interval)s) = 0
+            AND last_activity_date >= CURRENT_DATE - INTERVAL '2 days'
+            AND memory_manipulation_enabled = TRUE
+            AND is_active = TRUE
+        """, {'interval': interval})

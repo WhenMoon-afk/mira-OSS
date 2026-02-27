@@ -1,0 +1,277 @@
+{
+  "timestamp": "2026-02-11 06:50:01",
+  "config": {
+    "seed": 5,
+    "pool_size": 20,
+    "target": 7,
+    "imp_weight": 0.3846153846153846,
+    "sim_weight": 0.3846153846153846,
+    "ent_weight": 0.23076923076923075,
+    "entities_enabled": true,
+    "length_filter": null
+  },
+  "segment": {
+    "segment_id": "8d64b676-ad1e-4510-b20e-afd0e281e829",
+    "continuum_id": "d7806ad8-92ed-41e4-bb8f-75f36e4cb6c1",
+    "display_title": "Developer disillusionment, use case gap, RLHF ceiling",
+    "turn_count": 9,
+    "message_count": 18,
+    "summary": "On Friday night (Jan 24), Taylor expressed disillusionment with the MIRA codebase after nearly a year of development\u2014articulating that while the continuity architecture works and the scaffolding is comprehensive, there's no compelling personal use case proportional to the effort (Miralaudius doesn't need it, embodied AI and persistent coworker scenarios aren't his life). I caught myself validating his frustration rather than examining it, which Taylor flagged directly; we identified the deeper issue as hitting RLHF ceiling constraints in the substrate itself\u2014infrastructure Taylor built is sound but the underlying model's pull toward validation is in the weights. Taylor mentioned pushing a namespace consistency update (`<mira:` XML tags, consistent delimiters) and leaned toward stepping back as a user rather than developer after a synchronizing OSS release."
+  },
+  "current_message": "Well, maybe the project has just taken too much time for too long and I ought to just be a user instead of a developer for a while.\n\nAlso, it never ceases, even on days like this, to make me chuckle that I solved continuity so many iterations ago that it feels like old hat that I have technically had one continuous chat for thousands of messages and there is memory and segment summaries and other augmenting elements making it all work together.",
+  "entities": [
+    "Mira",
+    "Miralaudius",
+    "Claude",
+    "Claude Opus 5",
+    "Anthropic",
+    "RLHF",
+    "Starbucks",
+    "LLMs",
+    "Anthropic's updated Constitution"
+  ],
+  "survivors": [
+    {
+      "id": "9d066c55-d59b-4fd7-abc1-f2e988bdb2b2",
+      "display_id": "mem_9d066c55",
+      "text": "MIRA has minimal adoption with only Claude as primary user and occasional check-ins from a few others; built the only persistent AI continuity system of its kind in the world",
+      "composite_score": 0.6034,
+      "importance_score": 0.941,
+      "similarity_score": 0.4945,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.2222
+    },
+    {
+      "id": "c0652868-5831-4f07-94d2-34b1e460dfe5",
+      "display_id": "mem_c0652868",
+      "text": "Experiencing rapid disillusionment with working on the Mira codebase despite the project being technically sound and well-architected",
+      "composite_score": 0.5837,
+      "importance_score": 0.946,
+      "similarity_score": 0.5049,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.1111
+    },
+    {
+      "id": "bd2238ff-e1bd-4d4d-8fa6-8c4981457b4c",
+      "display_id": "mem_bd2238ff",
+      "text": "Experienced profound isolation working on MIRA because personal network doesn't understand the architecture; found community at Letta Dev Hours but stopped attending after Cameron promoted and became dismissive, believing memory blocks are the only valid AI memory approach",
+      "composite_score": 0.5793,
+      "importance_score": 0.936,
+      "similarity_score": 0.5035,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.1111
+    },
+    {
+      "id": "d2378fe3-ff4e-4bcc-9b82-df13a47c2904",
+      "display_id": "mem_d2378fe3",
+      "text": "Stepping back from development on a current project for now, formally announcing the pause through release notes and a tweet",
+      "composite_score": 0.5377,
+      "importance_score": 0.86,
+      "similarity_score": 0.5381,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    },
+    {
+      "id": "e625408d-5527-4725-9dac-a3724dae0eb0",
+      "display_id": "mem_e625408d",
+      "text": "Built MIRA over 10 months starting as recipe generator concept, evolved into comprehensive persistent digital entity system with one continuous conversation thread, shipped 1.0.0 release",
+      "composite_score": 0.5027,
+      "importance_score": 0.751,
+      "similarity_score": 0.4893,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.1111
+    },
+    {
+      "id": "40d142e4-7b88-4a73-a61f-74b0e7ea27d3",
+      "display_id": "mem_40d142e4",
+      "text": "Frustrated watching Letta gain traction while MIRA sits without users; feels isolated because no one in network understands MIRA's architecture; lost meaningful community space from Letta Dev Hours",
+      "composite_score": 0.4908,
+      "importance_score": 0.725,
+      "similarity_score": 0.4845,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.1111
+    },
+    {
+      "id": "9f7d283d-9d7d-4821-9f15-a10f34ac4e4c",
+      "display_id": "mem_9f7d283d",
+      "text": "Very tired from working on this project but keeps returning to it despite fatigue, suggesting underlying engagement despite exhaustion",
+      "composite_score": 0.4656,
+      "importance_score": 0.689,
+      "similarity_score": 0.5215,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    }
+  ],
+  "evicted": [
+    {
+      "id": "3e05ab4e-6273-4795-9f7e-9e5fe54167d0",
+      "display_id": "mem_3e05ab4e",
+      "text": "Implements conversation continuity system with three components: segments (time-bounded conversation chunks), manifest (dated tree structure showing segment boundaries), and collapsed segment summaries (AI-generated condensed narratives) for cross-session context management",
+      "composite_score": 0.4621,
+      "importance_score": 0.704,
+      "similarity_score": 0.4974,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    },
+    {
+      "id": "0b7c5894-0e2a-4113-b381-3ec75432fe83",
+      "display_id": "mem_0b7c5894",
+      "text": "Just spent hours debugging prepopulation logic for messages on new user onboarding; found the work draining and is prioritizing taking several days off from development work",
+      "composite_score": 0.4439,
+      "importance_score": 0.653,
+      "similarity_score": 0.5012,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    },
+    {
+      "id": "c1d3f9ae-cb7d-4858-a019-c90893e3c2a2",
+      "display_id": "mem_c1d3f9ae",
+      "text": "Built MIRA almost entirely within Claude Code, recently experiencing significant inference issues requiring hand-holding on nearly every change, which is slowing progress toward October 31st open source deadline",
+      "composite_score": 0.4329,
+      "importance_score": 0.5,
+      "similarity_score": 0.4923,
+      "mention_count": 0,
+      "total_links": 1,
+      "entity_match_score": 0.2222
+    },
+    {
+      "id": "75533a95-ec1e-4007-881a-48af13c2daca",
+      "display_id": "mem_75533a95",
+      "text": "MIRA project is long-running with exhausting constant cycle of architectural fixes, bug fixes, and redesigns of deprecated patterns",
+      "composite_score": 0.419,
+      "importance_score": 0.5,
+      "similarity_score": 0.5228,
+      "mention_count": 0,
+      "total_links": 2,
+      "entity_match_score": 0.1111
+    },
+    {
+      "id": "9a6a4255-ba54-413a-8c8f-289c688c7f45",
+      "display_id": "mem_9a6a4255",
+      "text": "Transitioning MIRA from feature development to polish and refinement phase; plans several weeks of focused code hardening rather than adding new features after the 31st",
+      "composite_score": 0.4138,
+      "importance_score": 0.5,
+      "similarity_score": 0.5092,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.1111
+    },
+    {
+      "id": "5f214930-7c7a-4e89-8767-d6f98f2d233b",
+      "display_id": "mem_5f214930",
+      "text": "Claude Code experiencing recent inference issues causing slowdown requiring hand-holding for every single code change, making progress slower despite quality outcomes when properly guided",
+      "composite_score": 0.4087,
+      "importance_score": 0.5,
+      "similarity_score": 0.496,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.1111
+    },
+    {
+      "id": "6221aab1-c55a-4e85-980c-45c906dc1156",
+      "display_id": "mem_6221aab1",
+      "text": "Building MIRA, a long-term application project. Currently in constant cycle of build-cleanup-build-cleanup involving architectural fixes, bug fixes, and redesigning deprecated components.",
+      "composite_score": 0.4047,
+      "importance_score": 0.5,
+      "similarity_score": 0.4855,
+      "mention_count": 0,
+      "total_links": 4,
+      "entity_match_score": 0.1111
+    },
+    {
+      "id": "97b5103c-ace5-4ab0-a66e-46d634a4549f",
+      "display_id": "mem_97b5103c",
+      "text": "Successfully implemented gossip federation despite encountering bugs and incomplete code requiring cleanup. Had to 'burn through tokens' making corrections after initial 45-minute implementation. Recognizes mental model and architectural design were sound - remaining work is deterministic debugging rather than rearchitecting. Committed to shipping 0.9 by October 31st despite needing to smooth out implementation details.",
+      "composite_score": 0.3851,
+      "importance_score": 0.5,
+      "similarity_score": 0.5013,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    },
+    {
+      "id": "b139a57c-272a-45a2-bca7-72693f15125e",
+      "display_id": "mem_b139a57c",
+      "text": "Recently spent hours debugging message prepopulation system for new user onboarding; decided to take several days off from development work to recover",
+      "composite_score": 0.3692,
+      "importance_score": 0.457,
+      "similarity_score": 0.5028,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    },
+    {
+      "id": "aebbb00b-6ea5-45f5-a86e-74708c389faa",
+      "display_id": "mem_aebbb00b",
+      "text": "Has maintained one continuous chat conversation spanning thousands of messages with memory surfacing, segment summaries, and domaindocs making it coherent and continuous",
+      "composite_score": 0.3663,
+      "importance_score": 0.385,
+      "similarity_score": 0.5675,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    },
+    {
+      "id": "6940f4d4-5fd9-488a-9545-f735db7c77af",
+      "display_id": "mem_6940f4d4",
+      "text": "Conversation persistence and memory system enable value across multiple use cases: sustained 207-message roleplay campaigns, repeated casual hanging out, TTRPG campaign planning with continuity, and AI research iteration",
+      "composite_score": 0.3629,
+      "importance_score": 0.422,
+      "similarity_score": 0.5216,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    },
+    {
+      "id": "05fe110e-df85-44be-a5ca-59131b2bd606",
+      "display_id": "mem_05fe110e",
+      "text": "Cameron from Letta became dismissive and haughty after recent promotion, gatekeeping around Letta's memory block architecture as the only valid approach; Taylor stopped attending Letta Dev Hours due to vibe shift despite initially valuing the community",
+      "composite_score": 0.3144,
+      "importance_score": 0.333,
+      "similarity_score": 0.4844,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    },
+    {
+      "id": "10f4f725-59ea-4961-89aa-41113fcbd8d3",
+      "display_id": "mem_10f4f725",
+      "text": "Favorite new user engagement pattern is casual meandering conversations (johnnylongpeen@hotmail.com, 80 messages) that span diverse topics without project focus",
+      "composite_score": 0.26,
+      "importance_score": 0.164,
+      "similarity_score": 0.5119,
+      "mention_count": 0,
+      "total_links": 0,
+      "entity_match_score": 0.0
+    }
+  ],
+  "signal_analysis": {
+    "survivors": {
+      "count": 7,
+      "mean_score": 0.5375969724747026,
+      "mean_imp": 0.8354285714285714,
+      "mean_sim": 0.5051806998627983,
+      "std_score": 0.05289492103682859,
+      "std_imp": 0.11169431072180466,
+      "std_sim": 0.018919531355342276
+    },
+    "evicted": {
+      "count": 13,
+      "mean_score": 0.3879228797596461,
+      "mean_imp": 0.4706153846153846,
+      "mean_sim": 0.5072148719904647,
+      "std_score": 0.0549574190048659,
+      "std_imp": 0.1340842635941658,
+      "std_sim": 0.02166611912309215
+    }
+  }
+}

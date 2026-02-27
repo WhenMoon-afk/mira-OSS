@@ -6,10 +6,17 @@ the existing UserDataManager's SQLite-based credential storage with
 automatic encryption in user-specific databases.
 """
 
-import json
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
+
+from typing_extensions import TypedDict
 from utils.user_context import get_current_user_id
 from utils.userdata_manager import get_user_data_manager
+
+
+class CredentialMetadata(TypedDict):
+    """Metadata for a stored credential."""
+    created_at: Optional[str]
+    updated_at: Optional[str]
 
 
 class UserCredentialService:
@@ -102,7 +109,7 @@ class UserCredentialService:
 
         return rows_deleted > 0
 
-    def list_user_credentials(self) -> Dict[str, Dict[str, Any]]:
+    def list_user_credentials(self) -> Dict[str, Dict[str, CredentialMetadata]]:
         """List all credentials for a user."""
         dm = get_user_data_manager(self.user_id)
         dm._ensure_credentials_table()
@@ -123,27 +130,3 @@ class UserCredentialService:
             }
 
         return credentials
-
-
-# Convenience functions for email configuration
-def store_email_config_for_current_user(config: dict) -> None:
-    """Store complete email configuration in the current user's encrypted SQLite database."""
-    credential_service = UserCredentialService()
-    credential_service.store_credential(
-        credential_type="email_config",
-        service_name="email",
-        credential_value=json.dumps(config)
-    )
-
-
-def get_email_config_for_current_user() -> Optional[dict]:
-    """Get complete email configuration from the current user's encrypted SQLite database."""
-    credential_service = UserCredentialService()
-    config_json = credential_service.get_credential(
-        credential_type="email_config",
-        service_name="email"
-    )
-
-    if config_json:
-        return json.loads(config_json)
-    return None

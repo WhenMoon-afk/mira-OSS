@@ -5,7 +5,7 @@ Consolidates all prompt building, context loading, and message formatting:
 - Prompt loading from config files
 - UUID shortening and bidirectional mapping
 - Memory context retrieval and caching
-- Message formatting (conversation → Human:/Assistant: format)
+- Message formatting (conversation → XML-tagged turns)
 - Extraction prompt building with context
 - Anthropic message batch building
 
@@ -14,16 +14,21 @@ MemoryProcessor handles parsing the LLM's response.
 """
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Tuple, Optional
+from typing import List, Dict, Any, Tuple, TypedDict
 from uuid import UUID
 
-from cns.core.message import Message
-from lt_memory.models import ProcessingChunk
+from lt_memory.models import ProcessingChunk, MemoryContext
 from lt_memory.db_access import LTMemoryDB
 from config.config import ExtractionConfig
 from utils.tag_parser import format_memory_id
 
 logger = logging.getLogger(__name__)
+
+
+class ExtractionMessage(TypedDict):
+    """Single message in Anthropic batch request format."""
+    role: str
+    content: str
 
 
 class ExtractionPayload:
@@ -41,9 +46,9 @@ class ExtractionPayload:
         self,
         system_prompt: str,
         user_prompt: str,
-        messages: List[Dict[str, Any]],
+        messages: List[ExtractionMessage],
         short_to_uuid: Dict[str, str],
-        memory_context: Dict[str, Any],
+        memory_context: MemoryContext,
         chunk_index: int
     ):
         self.system_prompt = system_prompt
@@ -76,7 +81,7 @@ class ExtractionEngine:
         self.db = db
         self._load_prompts()
 
-    def _load_prompts(self):
+    def _load_prompts(self) -> None:
         """
         Load extraction prompts from configuration files.
 
@@ -112,12 +117,12 @@ class ExtractionEngine:
         Creates everything needed for LLM extraction:
         - Memory context (existing memories referenced in chunk)
         - UUID mappings (full ↔ short for compact prompts)
-        - Formatted messages (conversation → Human:/Assistant: format)
+        - Formatted messages (conversation → XML-tagged turns with attribution)
         - Extraction prompt with context
 
         Args:
             chunk: ProcessingChunk containing continuum messages
-            for_batch: If True, format for Anthropic Batch API; if False, for immediate execution
+            for_batch: Kept for caller compatibility (both paths produce same prompt)
 
         Returns:
             ExtractionPayload with all components
@@ -132,30 +137,27 @@ class ExtractionEngine:
         memory_context = self._get_memory_context_for_chunk(chunk)
         short_to_uuid = memory_context.get("short_to_uuid", {})
 
-        # Build messages (different formats for batch vs immediate)
+        # Format messages with memory attribution injected into assistant turns
+        formatted_messages = self._format_chunk_for_extraction(
+            chunk,
+            memory_texts=memory_context.get("memory_texts", {})
+        )
+        extraction_prompt = self._build_extraction_prompt(formatted_messages)
+
         if for_batch:
-            messages = self._build_batch_messages(chunk, memory_context)
-            # For batch API, return messages directly
             return ExtractionPayload(
                 system_prompt=self.extraction_system_prompt,
-                user_prompt="",  # Not used in batch format
-                messages=messages,
+                user_prompt="",
+                messages=[{"role": "user", "content": extraction_prompt}],
                 short_to_uuid=short_to_uuid,
                 memory_context=memory_context,
                 chunk_index=chunk.chunk_index
             )
         else:
-            # For immediate execution, use old format (system + user prompt)
-            formatted_messages = self._format_chunk_for_extraction(chunk)
-            extraction_prompt = self._build_extraction_prompt(
-                formatted_messages,
-                memory_context
-            )
-
             return ExtractionPayload(
                 system_prompt=self.extraction_system_prompt,
                 user_prompt=extraction_prompt,
-                messages=[],  # Not used in immediate format
+                messages=[],
                 short_to_uuid=short_to_uuid,
                 memory_context=memory_context,
                 chunk_index=chunk.chunk_index
@@ -207,7 +209,7 @@ class ExtractionEngine:
     def _get_memory_context_for_chunk(
         self,
         chunk: ProcessingChunk
-    ) -> Dict[str, Any]:
+    ) -> MemoryContext:
         """
         Retrieve memory context for extraction chunk.
 
@@ -271,8 +273,8 @@ class ExtractionEngine:
 
                 # Verify all requested memories were found
                 if len(memories) != len(memory_uuids):
-                    found_ids = {str(m.id) for m in memories}
-                    missing_ids = set(memory_ids) - found_ids
+                    found_ids = {m.id for m in memories}
+                    missing_ids = set(memory_uuids) - found_ids
                     raise ValueError(
                         f"Failed to load {len(missing_ids)} of {len(memory_uuids)} memories from DB "
                         f"for chunk {chunk.chunk_index}. Missing IDs: {missing_ids}. "
@@ -298,23 +300,41 @@ class ExtractionEngine:
             "short_to_uuid": short_to_uuid
         }
 
-    def _format_chunk_for_extraction(self, chunk: ProcessingChunk) -> str:
+    def _format_chunk_for_extraction(
+        self,
+        chunk: ProcessingChunk,
+        memory_texts: dict[str, str] | None = None
+    ) -> str:
         """
         Format chunk messages for LLM extraction.
 
-        Converts structured message format to Human:/Assistant: dialog format.
-        Handles text blocks, skips images, includes tool results.
+        Converts structured message format to XML-tagged turns for consistency
+        with the XML-structured extraction system prompt. Handles text blocks,
+        skips images, includes tool results. Filters system notifications and
+        tool-role messages. Injects <meta> attribution on assistant messages
+        that were informed by existing memories.
 
         Args:
             chunk: ProcessingChunk containing message list
+            memory_texts: Mapping of memory UUID -> text for attribution lookup
 
         Returns:
-            Formatted continuum text
+            Formatted continuum text with XML turn tags
         """
+        if memory_texts is None:
+            memory_texts = {}
         formatted_lines = []
 
         for msg in chunk.messages:
             role = getattr(msg, "role", "unknown")
+            metadata = getattr(msg, "metadata", {}) or {}
+
+            # Filter system notifications and tool messages
+            if metadata.get("system_notification"):
+                continue
+            if role == "tool":
+                continue
+
             content = getattr(msg, "content", "")
 
             # Handle structured content (list of content blocks)
@@ -342,140 +362,68 @@ class ExtractionEngine:
 
                 content = " ".join(text_parts)
 
-            # Format with role prefixes
-            # Only process user/assistant roles (system not in continuum, tool/developer unsupported)
+            # Format with XML tags matching system prompt style
             if role == "user":
-                formatted_lines.append(f"Human: {content}")
+                formatted_lines.append(f"<user>{content}</user>")
             elif role == "assistant":
-                formatted_lines.append(f"Assistant: {content}")
+                # Build <meta> attribution block if this message used existing memories
+                meta_block = self._build_attribution_meta(metadata, memory_texts)
+                if meta_block:
+                    formatted_lines.append(f"<assistant>\n{meta_block}\n{content}</assistant>")
+                else:
+                    formatted_lines.append(f"<assistant>{content}</assistant>")
             else:
-                # Discard unsupported roles (tool, developer, system, etc.)
+                # Discard unsupported roles (developer, system, etc.)
                 logger.debug(f"Skipping message with unsupported role: {role}")
                 continue
 
         return "\n".join(formatted_lines)
 
-    def _build_extraction_prompt(
+    def _build_attribution_meta(
         self,
-        formatted_messages: str,
-        memory_context: Dict[str, Any]
+        metadata: Dict[str, Any],
+        memory_texts: Dict[str, str]
     ) -> str:
         """
-        Build extraction prompt with memory context.
+        Build <meta> attribution block for an assistant message.
 
-        Formats template with continuum and already-known information.
-        Uses shortened UUIDs for compact representation.
+        If the message's metadata contains referenced_memories UUIDs,
+        looks up each in memory_texts and builds a <meta> block so the
+        extraction LLM knows which statements were memory-informed.
 
         Args:
-            formatted_messages: Formatted continuum text
-            memory_context: Memory context with IDs and texts
+            metadata: Message metadata dict
+            memory_texts: Mapping of memory UUID -> text
 
         Returns:
-            Complete extraction prompt
+            Meta block string, or empty string if no attributions
         """
-        # Build memory context section
-        memory_context_text = ""
-        memory_texts = memory_context.get("memory_texts")
+        if not memory_texts:
+            return ""
 
-        if memory_texts:
-            memory_lines = ["## Already Known Information"]
-            uuid_to_short = memory_context.get("uuid_to_short", {})
+        referenced = metadata.get("referenced_memories")
+        if not isinstance(referenced, list) or not referenced:
+            return ""
 
-            # memory_texts is always dict: {uuid: text}
-            for memory_id, memory_text in memory_texts.items():
-                short_id = uuid_to_short.get(memory_id, memory_id[:8])
-                memory_lines.append(f"- [{short_id}] {memory_text}")
+        lines = ["<meta>"]
+        for ref_id in referenced:
+            if not isinstance(ref_id, str):
+                continue
+            text = memory_texts.get(ref_id)
+            if text:
+                short_id = format_memory_id(ref_id)
+                lines.append(f'<references_memory id="{short_id}">{text}</references_memory>')
 
-            memory_context_text = "\n".join(memory_lines)
+        if len(lines) == 1:
+            # No valid attributions found
+            return ""
 
-        # Fill template
-        extraction_prompt = self.extraction_user_template.format(
+        lines.append("</meta>")
+        return "\n".join(lines)
+
+    def _build_extraction_prompt(self, formatted_messages: str) -> str:
+        """Build extraction user prompt from formatted conversation text."""
+        return self.extraction_user_template.format(
             formatted_messages=formatted_messages,
-            known_memories_section=memory_context_text
         )
 
-        return extraction_prompt
-
-    def _build_batch_messages(
-        self,
-        chunk: ProcessingChunk,
-        memory_context: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
-        """
-        Build Anthropic messages from ProcessingChunk for Batch API.
-
-        Args:
-            chunk: ProcessingChunk with messages
-            memory_context: Memory context dict
-
-        Returns:
-            List of message dicts in Anthropic format
-        """
-        messages = []
-
-        # Add memory context if available
-        if memory_context and memory_context.get("memory_texts"):
-            context_lines = ["EXISTING MEMORIES (referenced in this continuum):"]
-            memory_texts = memory_context["memory_texts"]
-
-            # memory_texts is always dict: {uuid: text}
-            for mem_id, text in memory_texts.items():
-                context_lines.append(f"- [{mem_id}] {text}")
-
-            context_lines.append("\nNow extract memories from the following continuum:")
-            messages.append({"role": "user", "content": "\n".join(context_lines)})
-
-        # Add continuum messages
-        for msg in chunk.messages:
-            metadata = getattr(msg, "metadata", {}) or {}
-
-            if metadata.get("system_notification"):
-                continue
-            if msg.role == "tool":
-                continue
-
-            if msg.role == "user":
-                content = self._extract_content(msg)
-                if content:
-                    messages.append({"role": "user", "content": content})
-            elif msg.role == "assistant":
-                content = self._extract_content(msg)
-                if content or not metadata.get("has_tool_calls"):
-                    messages.append({"role": "assistant", "content": content or ""})
-
-        # Always add extraction instruction as standalone user message with clear barrier
-        # This ensures proper turn-taking and clear instruction separation
-        extraction_instruction = """============================
-============================
-
-Extract NEW memories from the above continuum following all extraction principles.
-
-Claude, respond with only valid JSON array. Start with [ and end with ]"""
-
-        if messages:
-            # Always append as new message, even if last is user
-            messages.append({"role": "user", "content": extraction_instruction})
-
-        return messages
-
-    @staticmethod
-    def _extract_content(message: Message) -> str:
-        """
-        Extract text content from Message object.
-
-        Args:
-            message: Message with potentially structured content
-
-        Returns:
-            Extracted text content
-        """
-        if isinstance(message.content, str):
-            return message.content
-        elif isinstance(message.content, list):
-            parts = [
-                item.get("text", "")
-                for item in message.content
-                if isinstance(item, dict) and item.get("type") == "text"
-            ]
-            return " ".join(parts)
-        return str(message.content)

@@ -1,8 +1,5 @@
-Extract memories from this conversation chunk.
-
-{known_memories_section}
-
-CONVERSATION CHUNK:
+<conversation>
 {formatted_messages}
+</conversation>
 
-Extract NEW memories following all extraction principles. For relationships with existing memories, use exact [identifier] shown in brackets above.
+Extract NEW memories from the conversation above. Lead with the core fact; extend with its semantic field when the fact's vocabulary alone won't cover its search surface. Note <meta><references_memory> tags in assistant messages—they show which existing memories were active during that turn, with short IDs for use in related_memory_ids when linking.

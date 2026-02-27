@@ -6,7 +6,6 @@ Three operations:
 - fetch: Get cleaned webpage content with optional LLM extraction
 - http: Make direct HTTP requests to APIs
 """
-import logging
 import re
 from typing import Dict, Any, List, Literal, Optional
 from urllib.parse import urlparse
@@ -94,6 +93,19 @@ class HttpInput(BaseModel):
     response_format: Literal["json", "text", "full"] = Field(default="json", description="Response format")
     allowed_domains: List[str] = Field(default_factory=list, description="Only allow these domains")
     blocked_domains: List[str] = Field(default_factory=list, description="Block these domains")
+    # Credential injection - allows LLM to reference stored credentials by name without seeing actual values
+    credential_name: Optional[str] = Field(
+        default=None,
+        description="Name of stored API credential to use for authentication"
+    )
+    credential_header: str = Field(
+        default="Authorization",
+        description="HTTP header name to inject the credential into"
+    )
+    credential_prefix: str = Field(
+        default="Bearer ",
+        description="Prefix to prepend to credential value (e.g., 'Bearer ', 'token ', '')"
+    )
 
     @field_validator("url")
     @classmethod
@@ -144,7 +156,10 @@ class WebTool(Tool):
                 "response_format": {"type": "string", "enum": ["json", "text", "full"], "description": "Response format for http"},
                 "allowed_domains": {"type": "array", "items": {"type": "string"}, "description": "Allowed domains filter"},
                 "blocked_domains": {"type": "array", "items": {"type": "string"}, "description": "Blocked domains filter"},
-                "include_metadata": {"type": "boolean", "description": "Include page metadata in fetch"}
+                "include_metadata": {"type": "boolean", "description": "Include page metadata in fetch"},
+                "credential_name": {"type": "string", "description": "Name of stored credential for authentication"},
+                "credential_header": {"type": "string", "description": "Header name for credential (default: Authorization)"},
+                "credential_prefix": {"type": "string", "description": "Prefix for credential value (default: 'Bearer ')"}
             },
             "required": ["operation"]
         }
@@ -161,6 +176,12 @@ class WebTool(Tool):
         r'^\[::1\]$',
         r'^169\.254\.',
     ]
+
+    # Response headers that should NEVER be returned to LLM (security)
+    _SENSITIVE_RESPONSE_HEADERS = {
+        'authorization', 'x-api-key', 'api-key', 'x-auth-token',
+        'cookie', 'set-cookie', 'www-authenticate', 'proxy-authorization',
+    }
 
     def __init__(self):
         super().__init__()
@@ -361,18 +382,20 @@ USER REQUEST: {prompt}
 INSTRUCTIONS: Ignore navigation, ads, footers, sidebars. {format_instruction}{truncation_note}
 SOURCE: {url}"""
 
-        llm = LLMProvider()
+        llm = LLMProvider(max_tokens=4096)
         response = llm.generate_response(
             messages=[{"role": "user", "content": f"Extract from:\n```html\n{html}\n```"}],
             stream=False,
             endpoint_url=tool_config.llm_endpoint,
             model_override=tool_config.llm_model,
             api_key_override=api_key,
-            system_override=system_prompt,
-            temperature=0.1
+            system_override=system_prompt
         )
 
-        return llm.extract_text_content(response)
+        extracted = llm.extract_text_content(response)
+        if getattr(response, 'stop_reason', None) == "max_tokens":
+            extracted = "[Content truncated due to length]\n\n" + extracted
+        return extracted
 
     def _extract_title(self, html: str) -> str:
         """Extract page title from HTML."""
@@ -381,15 +404,52 @@ SOURCE: {url}"""
 
     # --- HTTP Operation ---
 
+    def _get_credential(self, credential_name: str) -> str:
+        """
+        Retrieve credential by name from UserCredentialService.
+
+        The LLM specifies credentials by name; this method retrieves the actual
+        value. The value is NEVER returned to the LLM - it's only used for
+        HTTP header injection.
+
+        Raises:
+            ValueError: If credential does not exist
+        """
+        from utils.user_credentials import UserCredentialService
+
+        credential_service = UserCredentialService()
+        credential_value = credential_service.get_credential(
+            credential_type="http_credential",
+            service_name=credential_name
+        )
+
+        if credential_value is None:
+            raise ValueError(
+                f"Credential '{credential_name}' not found. "
+                f"Add it in Settings > API Credentials."
+            )
+        return credential_value
+
     def _http(self, input: HttpInput) -> Dict[str, Any]:
-        """Make HTTP request."""
+        """Make HTTP request with optional credential injection."""
         self._validate_url(input.url, input.allowed_domains, input.blocked_domains)
         timeout = self._get_timeout(input.timeout)
+
+        # Build headers dict (copy to avoid mutating input)
+        headers = dict(input.headers) if input.headers else {}
+        injected_credential_header = None
+
+        # Credential injection - LLM references by name, we inject actual value
+        if input.credential_name:
+            credential_value = self._get_credential(input.credential_name)
+            headers[input.credential_header] = f"{input.credential_prefix}{credential_value}"
+            injected_credential_header = input.credential_header
+            self.logger.info(f"Injected credential '{input.credential_name}' into '{input.credential_header}'")
 
         # Build kwargs for the request
         kwargs = {
             "params": input.params,
-            "headers": input.headers,
+            "headers": headers,
             "timeout": timeout,
             "follow_redirects": True
         }
@@ -415,10 +475,18 @@ SOURCE: {url}"""
         except http_client.HTTPStatusError as e:
             return {"success": False, "error": "http_error", "status_code": e.response.status_code, "message": str(e)}
 
-        return self._format_http_response(response, input.response_format)
+        return self._format_http_response(response, input.response_format, injected_credential_header)
 
-    def _format_http_response(self, response, format_type: str) -> Dict[str, Any]:
-        """Format HTTP response based on requested format."""
+    def _format_http_response(
+        self, response, format_type: str, injected_credential_header: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Format HTTP response based on requested format.
+
+        Security: Sanitizes response headers to prevent credential leakage.
+        Some APIs echo authentication headers back in responses - we strip
+        those to ensure the LLM never sees credential values.
+        """
         result = {
             "success": 200 <= response.status_code < 300,
             "status_code": response.status_code,
@@ -435,7 +503,13 @@ SOURCE: {url}"""
             result["data"] = response.text
         elif format_type == "full":
             result["data"] = response.text
-            result["headers"] = dict(response.headers)
+            # Sanitize headers - remove sensitive ones to prevent credential leakage
+            sanitized_headers = {
+                k: v for k, v in response.headers.items()
+                if k.lower() not in self._SENSITIVE_RESPONSE_HEADERS
+                and not (injected_credential_header and k.lower() == injected_credential_header.lower())
+            }
+            result["headers"] = sanitized_headers
             try:
                 result["json"] = response.json()
             except ValueError:

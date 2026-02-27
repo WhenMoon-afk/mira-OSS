@@ -12,10 +12,11 @@ import atexit
 from contextlib import contextmanager
 from typing import Dict, List, Any, Optional, Union, Tuple
 
-import psycopg2
-import psycopg2.pool
-import psycopg2.extras
-from pgvector.psycopg2 import register_vector
+import psycopg
+from psycopg.rows import dict_row
+from psycopg_pool import ConnectionPool, PoolTimeout
+from pgvector.psycopg import register_vector
+from clients.postgres_client import PostgresClient
 
 from utils.user_context import get_current_user_id
 
@@ -24,36 +25,6 @@ logger = logging.getLogger(__name__)
 # Module-level singleton instance
 _shared_session_manager = None
 _singleton_lock = threading.RLock()
-
-
-def _normalize_database_row(row: dict) -> dict:
-    """
-    Convert database types to JSON-serializable primitives.
-
-    Handles conversion of UUID and datetime objects that psycopg2's RealDictCursor
-    preserves as Python objects. This establishes the database layer's contract:
-    all returned dicts contain only JSON-serializable types.
-
-    Args:
-        row: Dictionary from RealDictCursor with potentially typed values
-
-    Returns:
-        Dictionary with all values converted to JSON-serializable primitives
-    """
-    from uuid import UUID
-    from datetime import datetime, date
-
-    normalized = {}
-    for key, value in row.items():
-        if isinstance(value, UUID):
-            normalized[key] = str(value)
-        elif isinstance(value, datetime):
-            normalized[key] = value.isoformat()
-        elif isinstance(value, date):
-            normalized[key] = value.isoformat()
-        else:
-            normalized[key] = value
-    return normalized
 
 
 def get_shared_session_manager() -> 'LTMemorySessionManager':
@@ -87,7 +58,7 @@ class LTMemorySessionManager:
     
     def __init__(self):
         """Initialize session manager with cleanup registration."""
-        self._pools: Dict[str, psycopg2.pool.AbstractConnectionPool] = {}
+        self._pools: Dict[str, ConnectionPool] = {}
         self._lock = threading.RLock()
         # Register cleanup to prevent connection leaks
         atexit.register(self._cleanup_all_pools)
@@ -124,8 +95,8 @@ class LTMemorySessionManager:
         """
         pool = self._get_or_create_pool('mira_service_admin')
         return AdminSession(pool)
-    
-    def _get_or_create_pool(self, database_name: str) -> psycopg2.pool.AbstractConnectionPool:
+
+    def _get_or_create_pool(self, database_name: str) -> ConnectionPool:
         """
         Get existing pool or create new one for database.
 
@@ -146,16 +117,20 @@ class LTMemorySessionManager:
                     is_admin = database_name == 'mira_service_admin'
                     actual_db_name = 'mira_service'  # Both connect to same database
 
-                    database_url = get_database_url(actual_db_name, admin=is_admin)
+                    conninfo = PostgresClient._parse_database_url(
+                        get_database_url(actual_db_name, admin=is_admin)
+                    )
 
                     # Create pool with reasonable size limits
                     # Industry best practice: keep pools small, let them queue
-                    pool = psycopg2.pool.ThreadedConnectionPool(
-                        minconn=1,
-                        maxconn=10,  # Reduced from 50 - most apps need far fewer connections
-                        dsn=database_url,
-                        connect_timeout=30,
-                        options='-c statement_timeout=300000'  # 5 minute statement timeout
+                    pool = ConnectionPool(
+                        conninfo=conninfo,
+                        min_size=1,
+                        max_size=10,  # Reduced from 50 - most apps need far fewer connections
+                        timeout=30,
+                        max_lifetime=3600,  # Recycle connections after 1 hour
+                        max_idle=300,       # Close idle connections after 5 minutes
+                        kwargs={'options': '-c statement_timeout=300000'}  # 5 minute statement timeout
                     )
 
                     self._pools[database_name] = pool
@@ -171,24 +146,14 @@ class LTMemorySessionManager:
         with self._lock:
             for db_name, pool in self._pools.items():
                 try:
-                    pool.closeall()
+                    pool.close()
                 except Exception as e:
                     logger.error(f"Error closing pool for {db_name}: {e}")
-            
+
             self._pools.clear()
     
     def cleanup(self):
         """Explicit cleanup method following MIRA patterns."""
-        self._cleanup_all_pools()
-    
-    def reset_pools(self):
-        """
-        Reset all connection pools - useful for testing.
-        
-        WARNING: This will close all active connections. Only use
-        when you're certain no operations are in progress.
-        """
-        logger.warning("Resetting all connection pools")
         self._cleanup_all_pools()
     
     def get_pool_stats(self) -> Dict[str, Any]:
@@ -196,11 +161,11 @@ class LTMemorySessionManager:
         stats = {}
         with self._lock:
             for db_name, pool in self._pools.items():
-                # Note: psycopg2 pools don't expose detailed stats
+                # Note: psycopg3 pools don't expose detailed stats
                 # but we can at least show configuration
                 stats[db_name] = {
-                    "minconn": getattr(pool, 'minconn', 'unknown'),
-                    "maxconn": getattr(pool, 'maxconn', 'unknown'),
+                    "min_size": getattr(pool, 'min_size', 'unknown'),
+                    "max_size": getattr(pool, 'max_size', 'unknown'),
                     "closed": getattr(pool, 'closed', False)
                 }
         return stats
@@ -214,7 +179,7 @@ class LTMemorySession:
     user context configuration, and nested transaction support.
     """
     
-    def __init__(self, pool: psycopg2.pool.AbstractConnectionPool, user_id: str):
+    def __init__(self, pool: ConnectionPool, user_id: str):
         """
         Initialize session with pool and user context.
         
@@ -307,11 +272,11 @@ class LTMemorySession:
         Returns:
             List of row dictionaries
         """
-        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(query, params)
 
             if cur.description:
-                return [dict(row) for row in cur.fetchall()]
+                return cur.fetchall()
             else:
                 return []
     
@@ -341,7 +306,7 @@ class LTMemorySession:
             Number of rows inserted
         """
         with self._conn.cursor() as cur:
-            psycopg2.extras.execute_batch(cur, query, params_list, page_size=1000)
+            cur.executemany(query, params_list)
             return cur.rowcount
     
     def execute_update(self, query: str, params: Optional[Union[Dict, Tuple]] = None) -> int:
@@ -374,7 +339,7 @@ class LTMemorySession:
             cur.execute(query, params)
             return cur.rowcount
     
-    def _acquire_connection_with_timeout(self) -> psycopg2.extensions.connection:
+    def _acquire_connection_with_timeout(self) -> psycopg.Connection:
         """
         Acquire connection from pool with timeout and retry logic.
         
@@ -397,7 +362,7 @@ class LTMemorySession:
                     elif conn and conn.closed:
                         # Return bad connection and try again
                         self.pool.putconn(conn, close=True)
-                except psycopg2.pool.PoolError:
+                except PoolTimeout:
                     # Pool exhausted, wait and retry
                     pass
                 
@@ -420,12 +385,9 @@ class LTMemorySession:
         # Register pgvector extension on this connection
         register_vector(self._conn)
 
-        # Register UUID type adapter for psycopg2
-        psycopg2.extras.register_uuid(conn_or_curs=self._conn)
-
         # Set user context for row-level security using set_config()
         # Using set_config() instead of SET because it's a proper PostgreSQL
-        # function that works correctly with psycopg2 parameter binding.
+        # function that works correctly with psycopg3 parameter binding.
         # Third parameter (false) = session-wide, not transaction-local.
         with self._conn.cursor() as cur:
             cur.execute(
@@ -453,7 +415,7 @@ class AdminSession:
     Use for system-level operations like batch polling, user management, etc.
     """
 
-    def __init__(self, pool: psycopg2.pool.AbstractConnectionPool):
+    def __init__(self, pool: ConnectionPool):
         """Initialize session with connection pool."""
         self.pool = pool
         self._conn = None
@@ -466,12 +428,9 @@ class AdminSession:
         return self
 
     def _setup_connection(self):
-        """Setup connection with UUID and pgvector support."""
+        """Setup connection with pgvector support."""
         # Register pgvector extension
         register_vector(self._conn)
-
-        # Register UUID type adapter for psycopg2
-        psycopg2.extras.register_uuid(conn_or_curs=self._conn)
 
         # Don't set app.current_user_id at all - let it remain undefined
         # RLS policies check for NULL context to allow admin cross-user queries
@@ -496,11 +455,11 @@ class AdminSession:
 
     def execute_query(self, query: str, params: Optional[Union[Dict, Tuple]] = None) -> List[Dict]:
         """Execute query and return results as list of dictionaries."""
-        with self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+        with self._conn.cursor(row_factory=dict_row) as cur:
             cur.execute(query, params)
 
             if cur.description:
-                return [dict(row) for row in cur.fetchall()]
+                return cur.fetchall()
             else:
                 return []
 
@@ -521,7 +480,7 @@ class AdminSession:
             cur.execute(query, params)
             return cur.rowcount
     
-    def _acquire_connection_with_timeout(self) -> psycopg2.extensions.connection:
+    def _acquire_connection_with_timeout(self) -> psycopg.Connection:
         """Acquire connection from pool with timeout."""
         try:
             start_time = time.time()
@@ -535,11 +494,11 @@ class AdminSession:
                         return conn
                     elif conn and conn.closed:
                         self.pool.putconn(conn, close=True)
-                except psycopg2.pool.PoolError:
+                except PoolTimeout:
                     pass
-                
+
                 time.sleep(retry_interval)
-            
+
             logger.error(f"Auth database connection timeout after {timeout}s")
             raise ValueError(f"Auth database connection timeout after {timeout}s")
         except Exception as e:

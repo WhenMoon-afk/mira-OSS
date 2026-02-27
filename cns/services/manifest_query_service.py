@@ -4,35 +4,66 @@ Manifest query service for retrieving conversation segment data.
 Provides segment data for manifest display with Valkey caching
 and event-driven invalidation. Formatting is handled by ManifestTrinket.
 """
+from __future__ import annotations
+
 import logging
-from typing import List, Dict, Any, Optional
+from typing import TypedDict
 
 from clients.valkey_client import get_valkey_client
 from cns.core.events import ManifestUpdatedEvent
 from cns.integration.event_bus import EventBus
-from cns.infrastructure.continuum_repository import get_continuum_repository
+from cns.infrastructure.continuum_repository import ContinuumRepository, get_continuum_repository
 from config import config
 
 logger = logging.getLogger(__name__)
 
+
+class ManifestSegment(TypedDict):
+    """Segment data returned by ManifestQueryService for manifest display."""
+    id: str
+    display_title: str
+    synopsis: str
+    status: str
+    start_time: str | None
+    end_time: str | None
+    created_at: str | None
+
+
 # Module-level singleton instance
-_manifest_service_instance = None
+_manifest_service_instance: ManifestQueryService | None = None
 
 
-def get_manifest_query_service(event_bus: Optional[EventBus] = None) -> 'ManifestQueryService':
+def initialize_manifest_query_service(event_bus: EventBus) -> ManifestQueryService:
     """
-    Get or create singleton ManifestQueryService instance.
+    Create and store singleton ManifestQueryService instance (called by factory).
 
     Args:
-        event_bus: Event bus for cache invalidation (only needed on first call)
+        event_bus: Event bus for cache invalidation
 
     Returns:
-        Singleton ManifestQueryService instance
+        The initialized ManifestQueryService instance
     """
     global _manifest_service_instance
+    logger.info("Creating singleton ManifestQueryService instance")
+    _manifest_service_instance = ManifestQueryService(event_bus)
+    return _manifest_service_instance
+
+
+def get_manifest_query_service() -> ManifestQueryService:
+    """
+    Get singleton ManifestQueryService instance.
+
+    Returns:
+        The initialized ManifestQueryService
+
+    Raises:
+        RuntimeError: If service not initialized (factory not run)
+    """
     if _manifest_service_instance is None:
-        logger.info("Creating singleton ManifestQueryService instance")
-        _manifest_service_instance = ManifestQueryService(event_bus)
+        raise RuntimeError(
+            "ManifestQueryService not initialized. "
+            "Ensure CNSIntegrationFactory has been initialized."
+        )
     return _manifest_service_instance
 
 
@@ -44,7 +75,7 @@ class ManifestQueryService:
     Formatting is delegated to ManifestTrinket following the trinket pattern.
     """
 
-    def __init__(self, event_bus: Optional[EventBus] = None, continuum_repository=None):
+    def __init__(self, event_bus: EventBus, continuum_repository: ContinuumRepository | None = None):
         """
         Initialize manifest query service.
 
@@ -57,9 +88,8 @@ class ManifestQueryService:
         self.continuum_repository = continuum_repository or get_continuum_repository()
 
         # Subscribe to manifest update events for cache invalidation
-        if event_bus:
-            event_bus.subscribe('ManifestUpdatedEvent', self._handle_manifest_updated)
-            logger.info("ManifestQueryService subscribed to ManifestUpdatedEvent")
+        event_bus.subscribe('ManifestUpdatedEvent', self._handle_manifest_updated)
+        logger.info("ManifestQueryService subscribed to ManifestUpdatedEvent")
 
     def _handle_manifest_updated(self, event: ManifestUpdatedEvent) -> None:
         """
@@ -75,7 +105,7 @@ class ManifestQueryService:
         except Exception as e:
             logger.warning(f"Failed to invalidate manifest cache: {e}")
 
-    def get_segments(self, user_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    def get_segments(self, user_id: str, limit: int = config.system.manifest_depth) -> list[ManifestSegment]:
         """
         Get segment data for manifest display.
 
@@ -96,10 +126,6 @@ class ManifestQueryService:
             - end_time: ISO format end time
             - created_at: ISO format creation time
         """
-        # Use config default if not specified
-        if limit is None:
-            limit = config.system.manifest_depth
-
         # Try cache first
         cache_key = f"manifest_segments:{user_id}"
         try:
@@ -109,8 +135,8 @@ class ManifestQueryService:
                 logger.debug(f"Manifest cache hit for user {user_id}")
                 cached_str = cached.decode('utf-8') if isinstance(cached, bytes) else cached
                 return json.loads(cached_str)
-        except Exception as e:
-            logger.debug(f"Manifest cache miss: {e}")
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Valkey unavailable for manifest cache read: {e}")
 
         # Query segments from database
         segments = self._query_segments(user_id, limit)
@@ -121,12 +147,12 @@ class ManifestQueryService:
                 import json
                 self.valkey.setex(cache_key, self.cache_ttl, json.dumps(segments))
                 logger.debug(f"Cached manifest segments for user {user_id} (TTL={self.cache_ttl}s)")
-            except Exception as e:
-                logger.warning(f"Failed to cache manifest segments: {e}")
+            except (ConnectionError, TimeoutError, OSError) as e:
+                logger.warning(f"Valkey unavailable for manifest cache write: {e}")
 
         return segments
 
-    def _query_segments(self, user_id: str, limit: int) -> List[Dict[str, Any]]:
+    def _query_segments(self, user_id: str, limit: int) -> list[ManifestSegment]:
         """
         Query segment boundary sentinels from messages table.
 

@@ -1,0 +1,7 @@
+#!/command/execlineb -P
+# Valkey service runner for s6-overlay
+
+foreground { echo "Starting Valkey..." }
+
+# Run as valkey user (or root if user doesn't exist)
+valkey-server /etc/valkey/valkey.conf

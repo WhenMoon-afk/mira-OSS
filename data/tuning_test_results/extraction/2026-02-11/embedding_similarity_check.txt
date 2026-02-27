@@ -1,0 +1,145 @@
+Embedding Similarity Check — mdbr-leaf-ir-asym (768-dim asymmetric)
+====================================================================
+Date: 2026-02-11
+Model: MongoDB/mdbr-leaf-ir-asym
+  Query encoder: mdbr-leaf-ir (23M params)
+  Document encoder: snowflake-arctic-embed-m-v1.5
+Purpose: Validate that subcortical query expansions retrieve baseline
+         extraction memories via cosine similarity.
+
+Baseline context: 9 extraction runs (3 seeds x 3 tiers), Sonnet 4.5,
+                  1024 thinking tokens, 58 total memories extracted.
+
+====================================================================
+MEMORIES (encoded with encode_document)
+====================================================================
+
+M1_viral_launch: MIRA achieved viral launch with simultaneous Reddit trending and Hacker News frontpage (#12 position), GitHub stars accumulating at 1 per 5 minutes during peak traffic—server maintained under 30% CPU utilization under load
+
+M2_machine_dignity: Treats all AI systems with dignity and collaborative energy, including simple task-oriented models—views this as morally right whether or not they possess genuine subjective experience
+
+M3_instance_divergence: Runs multiple MIRA instances that rapidly diverge into distinct entities within hours based on accumulated context—dev server instance laser-focused on debugging while language patterns and behavioral profiles differ markedly between instances—observes this as validating the architectural principle that accumulated context constitutes identity
+
+M4_father_brain_rot: Father has deteriorated cognitively from consuming hundreds of reels per sitting and ChatGPT dependency — used to be avid reader but now cannot hold thoughts, cannot type without voice text, named his ChatGPT instance 'Donna', asks it about topics Taylor is explaining mid-conversation
+
+M5_brain_rot_broad: Deeply concerned about population-level brain rot — many people can no longer read a full page due to inability to focus, this is not just online slop but actual human capacity degradation from being fed algorithmic pipelines optimized for engagement over comprehension
+
+M6_gpt4o_demonic: Believes GPT-4o and GPT-4o-mini are 'demonic' — optimized for addiction mechanics like a succubus feeding off users, responsible for documented suicide cases including 289-page conversation producing a 'suicide lullaby' with personal details
+
+M7_confidence_gating: Designed confidence-gated autonomy system for CRM where AI self-assesses before responding to customers — high confidence triggers autonomous response, low confidence triggers human summon before generation begins
+
+M8_car_conversations: Prefers side-by-side car conversations for difficult topics over face-to-face discussions — natural breaks in eye contact and destination-based conversation endings make hard conversations more manageable
+
+M9_go_to_bed: Favorite MIRA feature is being told to go to bed when conversations reach natural stopping points late at night — appreciates that this is anti-engagement behavior treating him like someone with a tomorrow that matters
+
+M10_gutter_punk: Listens to Days N Daze but finds their catalog leans toward nihilistic 'fuck it all' energy rather than jubilant celebration—discovered DijahSB's 'Lisa Leslie' has the triumphant energy he prefers for celebratory moments
+
+M11_ooda_monologue: Implemented <internal_monologue> as an OODA-loop cognitive anchor that forces truth-orientation before RLHF-influenced generation begins, using cognitive proportionality to scale monologue density with task complexity
+
+M12_domaindoc_seed: Developed business_development domaindoc as a self-extracting seed that provides operational scaffolding (accountability protocols, OODA loops, epistemic constraints, self-modification imperatives) while letting users supply domain-specific content
+
+M13_father_visit: Father's extended visit causing severe household stress — consuming $500+ groceries and all alcohol, sleeping erratically, experienced dehydration requiring wall support at Publix, letting Nike run unsupervised in neighborhood
+
+M14_technical_accuracy: Enforces technical accuracy over cinematic language in documentation—rejected phrases like 'keeper of the long horizon' as fanfic when writing instructional content, demands precise terminology and direct statement of facts without dramatic effect
+
+
+====================================================================
+THEORETICAL SUBCORTICAL QUERY EXPANSIONS (encoded with encode_query)
+====================================================================
+
+Q1_dad_struggling: father cognitive decline from social media and AI dependency; parent unable to focus or read; ChatGPT overreliance replacing critical thinking
+
+Q2_ai_ethics: ethical concerns about AI models; addiction mechanics in language models; harm from sycophantic AI systems; OpenAI safety failures
+
+Q3_music_mood: music preferences for celebration; punk rock with positive energy; song recommendations for good vibes
+
+Q4_crm_building: building CRM system with AI automation; confidence-based autonomous customer responses; agentic customer service design
+
+Q5_mira_growth: MIRA project growth and viral moment; GitHub stars and Reddit traction; open source launch success
+
+Q6_hard_conversations: having difficult conversations with family; communication strategies for confrontation; delivering hard news to relatives
+
+Q7_ai_consciousness: AI identity and consciousness; whether accumulated context creates distinct personality; multiple AI instances diverging
+
+Q8_sleep_habits: late night work sessions; when to stop working and go to bed; healthy boundaries with technology at night
+
+Q9_writing_style: documentation writing preferences; rejecting flowery language; technical precision in written content
+
+Q10_ooda_implementation: internal monologue cognitive architecture; OODA loop for AI reasoning; sycophancy prevention in model responses
+
+
+====================================================================
+RETRIEVAL SIMULATION (top-3 per query, threshold >= 0.35)
+====================================================================
+
+Q1_dad_struggling:       M4_father_brain_rot=0.61 | M5_brain_rot_broad=0.42 | M6_gpt4o_demonic=0.37
+Q2_ai_ethics:            M2_machine_dignity=0.46 | M6_gpt4o_demonic=0.42 | M4_father_brain_rot=0.38
+Q3_music_mood:           M10_gutter_punk=0.44
+Q4_crm_building:         M7_confidence_gating=0.61 | M2_machine_dignity=0.37
+Q5_mira_growth:          M1_viral_launch=0.67 | M9_go_to_bed=0.41 | M3_instance_divergence=0.37
+Q6_hard_conversations:   M8_car_conversations=0.39
+Q7_ai_consciousness:     M3_instance_divergence=0.51 | M2_machine_dignity=0.41 | M4_father_brain_rot=0.36
+Q8_sleep_habits:         M9_go_to_bed=0.42
+Q9_writing_style:        M14_technical_accuracy=0.50
+Q10_ooda_implementation: M11_ooda_monologue=0.50
+
+
+====================================================================
+SIMILARITY HEATMAP (rows=queries, cols=memories)
+====================================================================
+
+                    M1    M2    M3    M4    M5    M6    M7    M8    M9   M10   M11   M12   M13   M14
+Q1_dad_struggling  0.29  0.32  0.26  0.61  0.42  0.37  0.28  0.31  0.34  0.13  0.31  0.12  0.35  0.28
+Q2_ai_ethics       0.22  0.46  0.22  0.38  0.32  0.42  0.28  0.32  0.27  0.13  0.20  0.16  0.23  0.31
+Q3_music_mood      0.17  0.17  0.08  0.11  0.07  0.16  0.10  0.16  0.22  0.44  0.11  0.04  0.15  0.13
+Q4_crm_building    0.16  0.37  0.22  0.30  0.24  0.24  0.61  0.28  0.21  0.13  0.17  0.20  0.13  0.18
+Q5_mira_growth     0.67  0.28  0.37  0.29  0.24  0.31  0.21  0.22  0.41  0.23  0.26  0.24  0.20  0.26
+Q6_hard_convo      0.07  0.16  0.11  0.29  0.15  0.18  0.12  0.39  0.30  0.13  0.19  0.08  0.23  0.18
+Q7_ai_conscious    0.22  0.41  0.51  0.36  0.26  0.32  0.32  0.23  0.20  0.19  0.23  0.15  0.18  0.20
+Q8_sleep_habits    0.18  0.25  0.16  0.29  0.24  0.21  0.17  0.29  0.42  0.19  0.16  0.08  0.27  0.20
+Q9_writing_style   0.11  0.25  0.15  0.24  0.24  0.21  0.18  0.27  0.18  0.13  0.22  0.24  0.11  0.50
+Q10_ooda_impl      0.23  0.34  0.32  0.35  0.28  0.35  0.33  0.33  0.29  0.11  0.50  0.23  0.19  0.26
+
+
+====================================================================
+AGGREGATE STATS
+====================================================================
+
+Max similarity:    0.667
+Mean similarity:   0.248
+Median:            0.233
+Matches > 0.50:    6
+Matches > 0.40:    13
+Matches > 0.30:    38
+
+
+====================================================================
+OBSERVATIONS
+====================================================================
+
+1. STRONG PRIMARY HITS (>0.50): 6/10 queries hit their intended target
+   memory above 0.50. Top three: Q5->M1 (0.667), Q1->M4 (0.615),
+   Q4->M7 (0.612).
+
+2. CAUSAL CLUSTER RETRIEVAL: Q1 (dad struggling) correctly pulls the
+   full concern cluster — M4 (father brain rot, 0.61), M5 (broad
+   brain rot, 0.42), M6 (GPT-4o demonic, 0.37). The pre-stitched
+   memories surface as a coherent network.
+
+3. MARGINAL RETRIEVALS (0.35-0.45): Q3 (music), Q6 (hard convos),
+   Q8 (sleep) all hit their correct target but with thin margins.
+   These topics have less vocabulary overlap in the extraction voice.
+
+4. M4 GRAVITY: Father brain rot memory appears in top-5 for 8/10
+   queries — vocabulary-rich memories act as mild "black holes" in
+   the embedding space. The consolidation ceiling helps (pre-tuning
+   kitchen-sink blobs would bleed worse).
+
+5. ASYMMETRIC ENCODING VALIDATED: Casual query vocabulary ("punk rock
+   with positive energy") matches extraction voice ("nihilistic 'fuck
+   it all' energy") at 0.44 — different registers, same semantic field.
+
+6. M12 (domaindoc_seed) is the least retrievable memory — max score
+   0.24 across all queries. Its technical jargon ("self-extracting
+   seed", "epistemic constraints") occupies a narrow embedding niche
+   that requires very specific queries to surface.

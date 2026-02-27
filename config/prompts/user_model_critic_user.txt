@@ -1,0 +1,7 @@
+## System Prompt Sections (Reference)
+{section_id_list}
+
+## Candidate User Model
+{candidate_user_model}
+
+Evaluate this user model against the quality checklist. Return structured XML.

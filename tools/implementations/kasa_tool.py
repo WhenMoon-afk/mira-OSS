@@ -18,15 +18,13 @@ import json
 import logging
 import os
 import threading
-from typing import Dict, List, Any, Optional, Union, Set, Tuple
-from datetime import datetime, timedelta
+from typing import Dict, Any, Optional, Union
 
 # Third-party imports
-import aiohttp
 from pydantic import BaseModel, Field
 
 # Import timezone utilities for UTC-everywhere approach
-from utils.timezone_utils import utc_now, ensure_utc
+from utils.timezone_utils import utc_now
 
 # Local imports
 from tools.repo import Tool
@@ -57,19 +55,10 @@ class KasaToolConfig(BaseModel):
         default=3600,
         description="Cache duration in seconds (default: 1 hour)"
     )
-    cache_directory: str = Field(
-        default="data/tools/kasa_tool/cache",
-        description="Directory to store cached device data"
-    )
-
     # Device mapping configuration
     device_mapping_enabled: bool = Field(
         default=True,
         description="Whether to use device mapping file for device identification"
-    )
-    device_mapping_path: str = Field(
-        default="data/tools/kasa_tool/device_mapping.json",
-        description="Path to the device mapping file"
     )
 
     # Discovery configuration

@@ -13,8 +13,11 @@ import functools
 import asyncio
 import sys
 import os
+import tempfile
 from datetime import datetime
 from typing import Dict, Any, Optional, Callable, List
+
+from typing_extensions import TypedDict
 from contextvars import copy_context
 from concurrent.futures import ThreadPoolExecutor, Future
 import psutil
@@ -23,8 +26,48 @@ from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
+
+class ActiveOperation(TypedDict):
+    """Internal record of a running thread operation."""
+    operation: str
+    thread_name: str
+    start_time: datetime
+    context: Dict[str, str]
+    stack_trace: List[str]
+    pid: int
+
+
+class StuckOperationInfo(TypedDict):
+    """Externalized info about a stuck operation."""
+    thread_id: int
+    thread_name: str
+    operation: str
+    duration_seconds: float
+    start_time: str
+    context: Dict[str, str]
+    stack_trace: List[str]
+
+
+class ActiveOperationInfo(TypedDict):
+    """Externalized info about an active operation."""
+    thread_id: int
+    thread_name: str
+    operation: str
+    duration_seconds: float
+    start_time: str
+    context: Dict[str, str]
+
+
+class FutureInfo(TypedDict):
+    """Tracking info for a submitted ThreadPool future."""
+    operation: str
+    submit_time: datetime
+    args_preview: str
+    thread_prefix: str
+
+
 # Global registry of active thread operations
-_active_operations: Dict[int, Dict[str, Any]] = {}
+_active_operations: Dict[int, ActiveOperation] = {}
 _operation_lock = threading.RLock()
 
 # Thread-local storage for operation context
@@ -39,7 +82,7 @@ class ThreadMonitor:
     STUCK_OPERATION_THRESHOLD = 300  # 5 minutes
 
     @classmethod
-    def start_operation(cls, operation_name: str, context: Optional[Dict[str, Any]] = None) -> None:
+    def start_operation(cls, operation_name: str, context: Optional[Dict[str, str]] = None) -> None:
         """
         Mark the start of a thread operation.
 
@@ -114,7 +157,7 @@ class ThreadMonitor:
                         _thread_local.operation_stack.pop()
 
     @classmethod
-    def get_stuck_operations(cls) -> List[Dict[str, Any]]:
+    def get_stuck_operations(cls) -> list[StuckOperationInfo]:
         """Get list of operations that appear to be stuck."""
         stuck = []
         current_time = utc_now()
@@ -136,7 +179,7 @@ class ThreadMonitor:
         return stuck
 
     @classmethod
-    def get_active_operations(cls) -> List[Dict[str, Any]]:
+    def get_active_operations(cls) -> list[ActiveOperationInfo]:
         """Get list of all active operations."""
         active = []
         current_time = utc_now()
@@ -280,7 +323,7 @@ class MonitoredThreadPoolExecutor(ThreadPoolExecutor):
 
     def __init__(self, max_workers=None, thread_name_prefix='', **kwargs):
         super().__init__(max_workers=max_workers, thread_name_prefix=thread_name_prefix, **kwargs)
-        self._active_futures: Dict[Future, Dict[str, Any]] = {}
+        self._active_futures: Dict[Future, FutureInfo] = {}
         self._futures_lock = threading.RLock()
 
         # Start monitoring thread
@@ -379,11 +422,19 @@ def start_periodic_monitoring(interval_seconds: int = 300):
                     dump = ThreadMonitor.dump_thread_states()
                     logger.error(f"Thread state dump:\n{dump}")
 
-                    # Write to file for analysis
-                    dump_file = f"/tmp/thread_dump_{int(time.time())}.txt"
-                    with open(dump_file, 'w') as f:
-                        f.write(dump)
-                    logger.error(f"Thread dump written to {dump_file}")
+                    # Write to file for analysis (use tempfile to respect TMPDIR)
+                    try:
+                        with tempfile.NamedTemporaryFile(
+                            mode='w',
+                            prefix='thread_dump_',
+                            suffix='.txt',
+                            delete=False
+                        ) as f:
+                            f.write(dump)
+                            dump_file = f.name
+                        logger.error(f"Thread dump written to {dump_file}")
+                    except OSError as e:
+                        logger.warning(f"Could not write thread dump to file: {e}")
 
                 # Log active operation summary
                 active_ops = ThreadMonitor.get_active_operations()

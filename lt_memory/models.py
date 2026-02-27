@@ -5,8 +5,194 @@ All data structures for memories, links, batches, and processing chunks.
 """
 from pydantic import BaseModel, Field, field_validator
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Literal, NamedTuple, NotRequired, Optional, TypedDict
 from uuid import UUID
+
+# Valid relationship types for memory linking
+# Used across extraction, linking, and processing modules
+VALID_RELATIONSHIP_TYPES = frozenset({
+    "supports", "conflicts", "supersedes", "refines",
+    "precedes", "contextualizes", "extraction_ref", "null"
+})
+
+# Type aliases for Literal-validated fields
+RelationshipType = Literal[
+    "supports", "conflicts", "supersedes", "refines",
+    "precedes", "contextualizes", "extraction_ref", "null"
+]
+BatchStatus = Literal[
+    "submitted", "processing", "completed", "failed", "expired", "cancelled"
+]
+BatchKind = Literal["extraction", "post_processing"]
+
+
+# ============================================================================
+# Shared TypedDicts — cross-file structures stored in JSONB or returned by
+# multiple modules. File-local types stay in their respective files.
+# ============================================================================
+
+class MemoryLinkEntry(TypedDict):
+    """Entry in Memory.inbound_links / outbound_links JSONB arrays."""
+    uuid: str
+    type: str
+    confidence: float
+    reasoning: str
+    created_at: str
+    extraction_bond: NotRequired[str]
+
+
+class EntityLinkEntry(TypedDict):
+    """Entry in Memory.entity_links JSONB array."""
+    uuid: str
+    type: str
+    name: str
+
+
+class AnnotationEntry(TypedDict):
+    """Entry in Memory.annotations JSONB array."""
+    text: str
+    created_at: str
+    source: str
+    archived_source_ids: NotRequired[list[str]]
+
+
+class LinkMetadata(TypedDict):
+    """Transient link context attached during proactive traversal."""
+    link_type: str
+    confidence: float
+    reasoning: str
+    depth: int
+    linked_from_id: UUID
+
+
+class TraversalResult(TypedDict):
+    """Single entry returned by LinkingService.traverse_related()."""
+    memory: 'Memory'
+    link_type: str | None
+    confidence: float | None
+    reasoning: str | None
+    depth: int
+    linked_from_id: UUID | None
+
+
+class ClassificationPayload(TypedDict):
+    """Payload for relationship classification batch request."""
+    source_id: str
+    target_id: str
+    system_prompt: str
+    user_prompt: str
+
+
+class ClassificationResult(TypedDict):
+    """Parsed result from relationship classification LLM response."""
+    relationship_type: str
+    confidence: float
+    reasoning: str
+
+
+class ClassificationPair(TypedDict):
+    """Memory pair for relationship classification with extraction context."""
+    new_memory_id: UUID
+    similar_memory_id: UUID
+    new_memory: 'Memory'
+    similar_memory: 'Memory'
+    from_extraction_hint: bool
+    bond: NotRequired[str]
+
+
+class EntityPairRow(TypedDict):
+    """Row from find_similar_entity_pairs() pg_trgm self-join."""
+    id_a: UUID
+    name_a: str
+    type_a: str
+    links_a: int
+    id_b: UUID
+    name_b: str
+    type_b: str
+    links_b: int
+    sim: float
+
+
+class GCStats(TypedDict):
+    """Statistics returned by entity GC operations."""
+    merged: int
+    deleted: int
+    kept: int
+    errors: int
+
+
+class UserMemorySettings(TypedDict):
+    """Row from get_users_with_memory_enabled()."""
+    id: UUID
+    email: str
+    memory_manipulation_enabled: bool
+    daily_manipulation_last_run: datetime | None
+    timezone: str | None
+
+
+class MemoryPageResult(TypedDict):
+    """Paginated memory query result."""
+    memories: list[dict[str, Any]]
+    has_more: bool
+    next_offset: int | None
+
+
+class NamedEntity(TypedDict):
+    """Entity extracted by spaCy with type label."""
+    name: str
+    entity_type: str
+
+
+class MemoryContext(TypedDict):
+    """Memory context built by ExtractionEngine for extraction prompts."""
+    memory_ids: list[str]
+    memory_texts: dict[str, str]
+    snapshot_timestamp: NotRequired[str]
+    uuid_to_short: NotRequired[dict[str, str]]
+    short_to_uuid: NotRequired[dict[str, str]]
+
+
+class MemoryContextSnapshot(TypedDict):
+    """Memory context snapshot built by ExtractionOrchestrator for chunks."""
+    memory_ids: list[str]
+    referenced_memory_ids: list[str]
+    memory_texts: dict[str, str]
+    pinned_short_ids: list[str]
+
+
+class ChunkMetadata(TypedDict):
+    """Metadata stored with ExtractionBatch for result processing."""
+    message_count: int
+    short_to_uuid: dict[str, str]
+    segment_id: str | None
+
+
+class MemoryDict(TypedDict):
+    """Dictionary representation of a Memory for proactive surfacing."""
+    id: str
+    text: str
+    importance_score: float
+    similarity_score: float | None
+    source: str
+    created_at: str | None
+    last_accessed: str | None
+    access_count: int
+    happens_at: str | None
+    expires_at: str | None
+    inbound_links: list[MemoryLinkEntry]
+    outbound_links: list[MemoryLinkEntry]
+    entity_links: list[EntityLinkEntry]
+    annotations: list[AnnotationEntry]
+    link_metadata: NotRequired[LinkMetadata]
+    linked_memories: NotRequired[list['MemoryDict']]
+
+
+class ConsolidationPayload(TypedDict):
+    """Payload for consolidation batch request."""
+    cluster_id: str
+    memory_ids: list[str]
+    system_prompt: str
+    user_prompt: str
 
 
 class Memory(BaseModel):
@@ -14,9 +200,10 @@ class Memory(BaseModel):
     Represents a stored memory from database.
 
     Returned by db_access methods for type-safe memory operations.
+    Can represent either personal memories (user_id set) or global memories (user_id None).
     """
     id: UUID
-    user_id: UUID
+    user_id: Optional[UUID] = None  # None for global memories
     text: str
     embedding: Optional[List[float]] = None  # mdbr-leaf-ir-asym (768d)
     importance_score: float = Field(ge=0.0, le=1.0)
@@ -27,27 +214,56 @@ class Memory(BaseModel):
     mention_count: int = 0  # Explicit LLM references (strongest importance signal)
     last_accessed: Optional[datetime] = None
     happens_at: Optional[datetime] = None
-    inbound_links: List[Dict[str, Any]] = Field(default_factory=list)
-    outbound_links: List[Dict[str, Any]] = Field(default_factory=list)
-    entity_links: List[Dict[str, Any]] = Field(default_factory=list)
+    inbound_links: List[MemoryLinkEntry] = Field(default_factory=list)
+    outbound_links: List[MemoryLinkEntry] = Field(default_factory=list)
+    entity_links: List[EntityLinkEntry] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0, default=0.9)
     is_archived: bool = False
     archived_at: Optional[datetime] = None
-    is_refined: bool = False
-    last_refined_at: Optional[datetime] = None
-    refinement_rejection_count: int = 0
+    consolidation_rejection_count: int = 0
 
     # Activity day snapshots for vacation-proof scoring
     activity_days_at_creation: Optional[int] = None
     activity_days_at_last_access: Optional[int] = None
 
+    # Annotations for manual notes/context
+    annotations: List[AnnotationEntry] = Field(
+        default_factory=list,
+        description="Contextual notes: [{text, created_at, source}]"
+    )
+
+    # Source segment for context exploration
+    source_segment_id: Optional[UUID] = None  # Segment this memory was extracted from
+
     # Transient field populated by similarity search queries
     similarity_score: Optional[float] = None
 
-    # Transient fields populated by proactive service during link traversal
-    linked_memories: Optional[List[Any]] = Field(default=None, exclude=True)
-    link_metadata: Optional[Dict[str, Any]] = Field(default=None, exclude=True)
+    # Source indicator for hybrid search results (personal vs global)
+    source: str = Field(default="personal", description="Memory source: 'personal' or 'global'")
 
+    # Transient fields populated by proactive service during link traversal
+    linked_memories: Optional[List['Memory']] = Field(default=None, exclude=True)
+    link_metadata: Optional[LinkMetadata] = Field(default=None, exclude=True)
+
+
+
+class ExtractionRef(TypedDict):
+    """Reference to existing memory with extraction-time bond descriptor."""
+    id: str       # Full UUID (after short-ID remapping)
+    bond: str     # 3-word relationship descriptor
+
+
+class LinkingHint(TypedDict):
+    """Intra-batch relationship hint with bond descriptor."""
+    idx: int      # Target memory index in extraction batch
+    bond: str     # 3-word relationship descriptor
+
+
+class LinkingPair(TypedDict):
+    """Memory pair for relationship classification with extraction context."""
+    source_idx: int
+    target_idx: int
+    bond: str     # 3-word descriptor from extraction LLM
 
 
 class ExtractedMemory(BaseModel):
@@ -61,13 +277,39 @@ class ExtractedMemory(BaseModel):
     expires_at: Optional[datetime] = None
     happens_at: Optional[datetime] = None
     confidence: float = Field(ge=0.0, le=1.0, default=0.9)
-    relationship_type: Optional[str] = None
-    related_memory_ids: List[str] = Field(default_factory=list)
-    consolidates_memory_ids: List[str] = Field(default_factory=list)
-    linking_hints: List[int] = Field(
+    relationship_type: Optional[RelationshipType] = None
+    related_memory_ids: List[ExtractionRef] = Field(default_factory=list)
+    consolidates_memory_ids: List[UUID] = Field(default_factory=list)
+    linking_hints: List[LinkingHint] = Field(
         default_factory=list,
-        description="Indices of other memories in this batch to consider for relationship classification"
+        description="Intra-batch linking hints with bond descriptors: [{'idx': int, 'bond': str}]"
     )
+    entities: List[Dict[str, str]] = Field(
+        default_factory=list,
+        description="Entities extracted by LLM: [{'name': str, 'type': PERSON|ORG|PRODUCT|PLACE}]"
+    )
+
+    # Source segment for context exploration
+    source_segment_id: Optional[UUID] = None  # Segment this memory was extracted from
+
+    @field_validator('entities')
+    @classmethod
+    def validate_entities(cls, v: List[Dict[str, str]]) -> List[Dict[str, str]]:
+        """Validate entities list structure."""
+        if not isinstance(v, list):
+            return []
+
+        valid_entities = []
+        for entity in v:
+            if not isinstance(entity, dict):
+                continue
+            if 'name' not in entity or 'type' not in entity:
+                continue
+            if not isinstance(entity['name'], str) or not isinstance(entity['type'], str):
+                continue
+            valid_entities.append(entity)
+
+        return valid_entities
 
     @field_validator('importance_score', 'confidence')
     @classmethod
@@ -86,9 +328,9 @@ class ExtractionResult(BaseModel):
     through the extraction pipeline.
     """
     memories: List['ExtractedMemory']
-    linking_pairs: List[tuple[int, int]] = Field(
+    linking_pairs: List[LinkingPair] = Field(
         default_factory=list,
-        description="Pairs of memory indices that should be evaluated for relationships"
+        description="Pairs of memory indices with bond descriptors for relationship evaluation"
     )
 
 
@@ -100,22 +342,11 @@ class MemoryLink(BaseModel):
     """
     source_id: UUID
     target_id: UUID
-    link_type: str  # related, supports, conflicts, supersedes
+    link_type: RelationshipType
     confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
+    extraction_bond: str = ""  # 3-word bond from extraction LLM (e.g., "caused diet change")
     created_at: datetime
-
-    @field_validator('link_type')
-    @classmethod
-    def validate_link_type(cls, v: str) -> str:
-        """Validate link type matches relationship classification types."""
-        allowed = {
-            'conflicts', 'supersedes', 'causes', 'instance_of',
-            'invalidated_by', 'motivated_by'
-        }
-        if v not in allowed:
-            raise ValueError(f"link_type must be one of {allowed}, got '{v}'")
-        return v
 
 
 class Entity(BaseModel):
@@ -125,15 +356,14 @@ class Entity(BaseModel):
     Entities represent named entities (people, organizations, products, events, etc.)
     extracted from memory text. They serve as knowledge graph nodes enabling
     entity-based memory retrieval and relationship discovery.
+
+    Entity matching uses PostgreSQL trigram fuzzy matching (pg_trgm) on names,
+    not vector similarity - appropriate for handling LLM naming variations.
     """
     id: UUID
     user_id: UUID
     name: str = Field(description="Canonical normalized entity name")
-    entity_type: str = Field(description="spaCy NER type: PERSON, ORG, GPE, PRODUCT, EVENT, etc.")
-    embedding: Optional[List[float]] = Field(
-        default=None,
-        description="spaCy word vector (300d from en_core_web_lg) for semantic similarity"
-    )
+    entity_type: str = Field(description="LLM-extracted entity type: PERSON, ORG, GPE, PRODUCT, EVENT, etc.")
     link_count: int = Field(default=0, description="Number of memories linking to this entity")
     last_linked_at: Optional[datetime] = Field(
         default=None,
@@ -160,7 +390,8 @@ class ProcessingChunk(BaseModel):
     temporal_start: datetime
     temporal_end: datetime
     chunk_index: int
-    memory_context_snapshot: Dict[str, Any] = Field(default_factory=dict)
+    memory_context_snapshot: MemoryContextSnapshot | None = None
+    segment_id: Optional[UUID] = None  # Source segment for context exploration
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -176,7 +407,8 @@ class ProcessingChunk(BaseModel):
     def from_conversation_messages(
         cls,
         messages: List[Any],  # Message objects
-        chunk_index: int
+        chunk_index: int,
+        segment_id: Optional[UUID] = None
     ) -> 'ProcessingChunk':
         """
         Create ProcessingChunk from continuum Message objects.
@@ -187,6 +419,7 @@ class ProcessingChunk(BaseModel):
         Args:
             messages: List of Message objects from continuum
             chunk_index: Index of this chunk in sequence
+            segment_id: Optional source segment UUID for context exploration
 
         Returns:
             ProcessingChunk instance
@@ -202,7 +435,8 @@ class ProcessingChunk(BaseModel):
             temporal_start=messages[0].created_at,
             temporal_end=messages[-1].created_at,
             chunk_index=chunk_index,
-            memory_context_snapshot={}
+            memory_context_snapshot=None,
+            segment_id=segment_id
         )
 
 
@@ -218,9 +452,9 @@ class ExtractionBatch(BaseModel):
     user_id: UUID
     chunk_index: int
     request_payload: Dict[str, Any]
-    chunk_metadata: Optional[Dict[str, Any]] = None
-    memory_context: Optional[Dict[str, Any]] = None
-    status: str  # submitted, processing, completed, failed, expired, cancelled
+    chunk_metadata: Optional[ChunkMetadata] = None
+    memory_context: Optional[MemoryContext] = None
+    status: BatchStatus
     created_at: datetime
     submitted_at: datetime
     completed_at: Optional[datetime] = None
@@ -233,15 +467,6 @@ class ExtractionBatch(BaseModel):
     processing_time_ms: Optional[int] = None
     tokens_used: Optional[int] = None
 
-    @field_validator('status')
-    @classmethod
-    def validate_status(cls, v: str) -> str:
-        """Validate status is one of allowed values."""
-        allowed = {'submitted', 'processing', 'completed', 'failed', 'expired', 'cancelled'}
-        if v not in allowed:
-            raise ValueError(f"status must be one of {allowed}, got '{v}'")
-        return v
-
 
 
 class PostProcessingBatch(BaseModel):
@@ -252,11 +477,11 @@ class PostProcessingBatch(BaseModel):
     """
     id: Optional[UUID] = None  # Generated by database
     batch_id: str  # Anthropic batch ID
-    batch_type: str  # relationship_classification or consolidation
+    batch_type: Literal['relationship_classification', 'consolidation', 'entity_gc']
     user_id: UUID
     request_payload: Dict[str, Any]
     input_data: Dict[str, Any]
-    status: str
+    status: BatchStatus
     created_at: datetime
     submitted_at: datetime
     completed_at: Optional[datetime] = None
@@ -273,52 +498,13 @@ class PostProcessingBatch(BaseModel):
     conflicts_flagged: int = 0
     memories_consolidated: int = 0
 
-    @field_validator('batch_type')
-    @classmethod
-    def validate_batch_type(cls, v: str) -> str:
-        """Validate batch type is one of allowed values."""
-        allowed = {'relationship_classification', 'consolidation', 'consolidation_review'}
-        if v not in allowed:
-            raise ValueError(f"batch_type must be one of {allowed}, got '{v}'")
-        return v
-
-
-
-class RefinementCandidate(BaseModel):
-    """
-    Memory identified for refinement.
-
-    Used during refinement analysis to track memories needing consolidation or trimming.
-    """
-    memory_id: UUID
-    reason: str  # 'verbose', 'consolidatable', 'stale'
-    current_text: str
-    char_count: int
-    target_memory_ids: List[UUID] = Field(default_factory=list)  # For consolidation
-    similarity_scores: List[float] = Field(default_factory=list)  # Similarity to targets
-
-    @field_validator('reason')
-    @classmethod
-    def validate_reason(cls, v: str) -> str:
-        """Validate reason is one of allowed values."""
-        allowed = {'verbose', 'consolidatable', 'stale'}
-        if v not in allowed:
-            raise ValueError(f"reason must be one of {allowed}, got '{v}'")
-        return v
 
 
 class ConsolidationCluster(BaseModel):
-    """
-    Cluster of similar memories for consolidation.
-
-    Used during refinement to group memories that should be merged.
-    """
+    """Cluster of similar memories identified by connected-components for consolidation."""
     cluster_id: str
     memory_ids: List[UUID]
     memory_texts: List[str]
-    similarity_scores: List[float]
-    avg_similarity: float
-    consolidation_confidence: float = Field(ge=0.0, le=1.0)
 
     @field_validator('memory_ids')
     @classmethod
@@ -327,3 +513,45 @@ class ConsolidationCluster(BaseModel):
         if len(v) < 2:
             raise ValueError("ConsolidationCluster must contain at least 2 memories")
         return v
+
+
+class PendingManualMemory(BaseModel):
+    """
+    Queued manual memory awaiting processing at segment collapse.
+
+    Created by memory_tool.create_memory() and stored in Valkey. Processing
+    (embedding generation, entity extraction, linking) is deferred until
+    segment collapse to avoid blocking tool execution with heavy operations.
+    """
+    text: str = Field(description="Memory content text")
+    importance_score: float = Field(
+        ge=0.0, le=1.0,
+        description="Importance score (0.0-1.0)"
+    )
+    user_requested: bool = Field(
+        default=False,
+        description="True if user explicitly said 'remember this'"
+    )
+    happens_at: Optional[str] = Field(
+        default=None,
+        description="ISO timestamp for when the event occurs"
+    )
+    expires_at: Optional[str] = Field(
+        default=None,
+        description="ISO timestamp for when memory expires"
+    )
+    supersedes_memory_ids: List[str] = Field(
+        default_factory=list,
+        description="List of 8-char memory IDs this memory supersedes"
+    )
+    queued_at: str = Field(description="ISO timestamp when queued")
+    pending_id: str = Field(description="UUID for tracking this pending memory")
+
+    def to_json(self) -> str:
+        """Serialize to JSON for Valkey storage."""
+        return self.model_dump_json()
+
+    @classmethod
+    def from_json(cls, json_str: str) -> 'PendingManualMemory':
+        """Deserialize from JSON retrieved from Valkey."""
+        return cls.model_validate_json(json_str)

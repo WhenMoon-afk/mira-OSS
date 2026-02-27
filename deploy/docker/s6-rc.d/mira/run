@@ -1,0 +1,37 @@
+#!/bin/bash
+# MIRA application runner for s6-overlay
+
+echo "Starting MIRA application..."
+
+# Set Vault environment
+export VAULT_ADDR="http://127.0.0.1:8200"
+
+# Wait for Vault to be unsealed (vault-init should have done this)
+echo "Waiting for Vault to be unsealed..."
+attempts=0
+while true; do
+    SEALED=$(curl -s http://127.0.0.1:8200/v1/sys/health | jq -r '.sealed // "error"')
+    if [ "$SEALED" = "false" ]; then
+        echo "Vault is unsealed"
+        break
+    fi
+    attempts=$((attempts + 1))
+    if [ $attempts -gt 60 ]; then
+        echo "ERROR: Vault not unsealed after 60 seconds"
+        exit 1
+    fi
+    sleep 1
+done
+
+# Read Vault AppRole credentials
+if [ ! -f /opt/vault/role-id.txt ] || [ ! -f /opt/vault/secret-id.txt ]; then
+    echo "ERROR: Vault AppRole credential files not found"
+    exit 1
+fi
+
+export VAULT_ROLE_ID=$(cat /opt/vault/role-id.txt)
+export VAULT_SECRET_ID=$(cat /opt/vault/secret-id.txt)
+
+# Change to app directory and run as mira user
+cd /opt/mira/app
+exec s6-setuidgid mira /opt/mira/venv/bin/python3 main.py

@@ -9,33 +9,27 @@ import logging
 from typing import Optional
 
 from clients.vault_client import get_api_key
-from config.config import (
-    LTMemoryConfig,
-    ExtractionConfig,
-    BatchingConfig,
-    LinkingConfig,
-    RefinementConfig,
-    ProactiveConfig,
-    EntityGarbageCollectionConfig
-)
+from config.config import LTMemoryConfig
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.vector_ops import VectorOps
-from lt_memory.extraction import ExtractionService
 from lt_memory.linking import LinkingService
 from lt_memory.refinement import RefinementService
-from lt_memory.batching import BatchingService
 from lt_memory.proactive import ProactiveService
-from lt_memory.entity_extraction import EntityExtractor
 from lt_memory.entity_gc import EntityGCService
+from lt_memory.hub_discovery import HubDiscoveryService
 from lt_memory.processing.memory_processor import MemoryProcessor
 from lt_memory.processing.extraction_engine import ExtractionEngine
 from lt_memory.processing.execution_strategy import create_execution_strategy
 from lt_memory.processing.orchestrator import ExtractionOrchestrator
 from lt_memory.processing.batch_coordinator import BatchCoordinator
 from lt_memory.processing.consolidation_handler import ConsolidationHandler
+from lt_memory.processing.post_processing_orchestrator import PostProcessingOrchestrator
 from lt_memory.batch_result_handlers import (
     ExtractionBatchResultHandler,
-    RelationshipBatchResultHandler
+    RelationshipBatchResultHandler,
+    ConsolidationBatchResultHandler,
+    EntityGCBatchResultHandler,
+    PostProcessingBatchDispatcher
 )
 from utils.database_session_manager import LTMemorySessionManager, get_shared_session_manager
 
@@ -60,8 +54,8 @@ class LTMemoryFactory:
         )
 
         # Access services
-        memories = factory.extraction.extract_from_chunk(chunk)
         similar = factory.vector_ops.find_similar_memories(query)
+        factory.extraction_orchestrator.submit_segment_extraction(...)
 
         # Cleanup on shutdown
         factory.cleanup()
@@ -93,7 +87,7 @@ class LTMemoryFactory:
             config: LT_Memory configuration
             session_manager: Database session manager
             embeddings_provider: Embeddings provider (mdbr-leaf-ir-asym 768d)
-            llm_provider: LLM provider for extraction/linking/refinement
+            llm_provider: LLM provider for extraction/linking
             conversation_repo: Continuum repository for message loading
 
         Note:
@@ -111,7 +105,10 @@ class LTMemoryFactory:
         # Create dedicated Anthropic client for Batch API operations
         # Separate from chat client to isolate rate limits and enable independent cost tracking
         batch_api_key = get_api_key(config.batching.api_key_name)
-        self._batch_anthropic_client = anthropic.Anthropic(api_key=batch_api_key)
+        self._batch_anthropic_client = anthropic.Anthropic(
+            api_key=batch_api_key,
+            timeout=120.0  # Prevent indefinite hangs on streaming/paginated calls
+        )
         logger.info(f"Batch API client initialized with key '{config.batching.api_key_name}'")
 
         # Track initialization order for reverse cleanup
@@ -122,7 +119,7 @@ class LTMemoryFactory:
 
         logger.info("LTMemoryFactory initialization complete")
 
-    def _init_services(self):
+    def _init_services(self) -> None:
         """Initialize all services in dependency order, tracking for reverse cleanup."""
         try:
             # Layer 1: Database access (no dependencies)
@@ -137,7 +134,9 @@ class LTMemoryFactory:
             logger.debug("Initializing VectorOps...")
             self.vector_ops = VectorOps(
                 embeddings_provider=self._embeddings_provider,
-                db=self.db
+                db=self.db,
+                vector_search_config=self.config.vector_search,
+                hybrid_search_config=self.config.hybrid_search
             )
             self._service_init_order.append(self.vector_ops)
         except Exception as e:
@@ -145,18 +144,6 @@ class LTMemoryFactory:
 
         try:
             # Layer 3: Core services (depend on db + vector_ops)
-            logger.debug("Initializing ExtractionService...")
-            self.extraction = ExtractionService(
-                config=self.config.extraction,
-                vector_ops=self.vector_ops,
-                db=self.db,
-                llm_provider=self._llm_provider
-            )
-            self._service_init_order.append(self.extraction)
-        except Exception as e:
-            raise RuntimeError(f"Failed to initialize ExtractionService: {e}") from e
-
-        try:
             logger.debug("Initializing LinkingService...")
             self.linking = LinkingService(
                 config=self.config.linking,
@@ -173,8 +160,7 @@ class LTMemoryFactory:
             self.refinement = RefinementService(
                 config=self.config.refinement,
                 vector_ops=self.vector_ops,
-                db=self.db,
-                llm_provider=self._llm_provider
+                db=self.db
             )
             self._service_init_order.append(self.refinement)
         except Exception as e:
@@ -196,6 +182,14 @@ class LTMemoryFactory:
             )
             self._service_init_order.append(self.extraction_engine)
 
+            logger.debug("Initializing BatchCoordinator...")
+            self.batch_coordinator = BatchCoordinator(
+                config=self.config.batching,
+                db=self.db,
+                anthropic_client=self._batch_anthropic_client
+            )
+            self._service_init_order.append(self.batch_coordinator)
+
             logger.debug("Initializing ExecutionStrategy...")
             self.execution_strategy = create_execution_strategy(
                 extraction_engine=self.extraction_engine,
@@ -203,9 +197,10 @@ class LTMemoryFactory:
                 vector_ops=self.vector_ops,
                 db=self.db,
                 llm_provider=self._llm_provider,
-                anthropic_client=self._batch_anthropic_client,
+                batch_coordinator=self.batch_coordinator,
                 batching_config=self.config.batching,
-                extraction_config=self.config.extraction
+                extraction_config=self.config.extraction,
+                linking_service=self.linking
             )
             self._service_init_order.append(self.execution_strategy)
 
@@ -219,14 +214,6 @@ class LTMemoryFactory:
             )
             self._service_init_order.append(self.extraction_orchestrator)
 
-            logger.debug("Initializing BatchCoordinator...")
-            self.batch_coordinator = BatchCoordinator(
-                config=self.config.batching,
-                db=self.db,
-                anthropic_client=self._batch_anthropic_client
-            )
-            self._service_init_order.append(self.batch_coordinator)
-
             logger.debug("Initializing ConsolidationHandler...")
             self.consolidation_handler = ConsolidationHandler(
                 vector_ops=self.vector_ops,
@@ -234,9 +221,11 @@ class LTMemoryFactory:
             )
             self._service_init_order.append(self.consolidation_handler)
 
-            logger.debug("Initializing EntityExtractor...")
-            self.entity_extractor = EntityExtractor()
-            self._service_init_order.append(self.entity_extractor)
+            logger.debug("Initializing HubDiscoveryService...")
+            self.hub_discovery = HubDiscoveryService(
+                db=self.db
+            )
+            self._service_init_order.append(self.hub_discovery)
 
             logger.debug("Initializing result handlers...")
             self.extraction_result_handler = ExtractionBatchResultHandler(
@@ -245,7 +234,9 @@ class LTMemoryFactory:
                 vector_ops=self.vector_ops,
                 db=self.db,
                 linking_service=self.linking,
-                entity_extractor=self.entity_extractor
+                batching_config=self.config.batching,
+                llm_provider=self._llm_provider,
+                batch_coordinator=self.batch_coordinator
             )
             self._service_init_order.append(self.extraction_result_handler)
 
@@ -255,25 +246,43 @@ class LTMemoryFactory:
                 db=self.db
             )
             self._service_init_order.append(self.relationship_result_handler)
+
+            # Consolidation result handler
+            self.consolidation_result_handler = ConsolidationBatchResultHandler(
+                anthropic_client=self._batch_anthropic_client,
+                db=self.db,
+                consolidation_handler=self.consolidation_handler,
+                batching_config=self.config.batching
+            )
+            self._service_init_order.append(self.consolidation_result_handler)
+
+            # Unified dispatcher for all post-processing batch types
+            logger.debug("Initializing PostProcessingBatchDispatcher...")
+            self.post_processing_dispatcher = PostProcessingBatchDispatcher()
+            self.post_processing_dispatcher.register(
+                'relationship_classification', self.relationship_result_handler
+            )
+            self.post_processing_dispatcher.register(
+                'consolidation', self.consolidation_result_handler
+            )
+            self._service_init_order.append(self.post_processing_dispatcher)
         except Exception as e:
             raise RuntimeError(f"Failed to initialize processing components: {e}") from e
 
         try:
             # Layer 4: Higher-level services (depend on multiple services)
-            logger.debug("Initializing BatchingService...")
-            self.batching = BatchingService(
+            logger.debug("Initializing PostProcessingOrchestrator...")
+            self.post_processing_orchestrator = PostProcessingOrchestrator(
                 config=self.config.batching,
+                refinement=self.refinement,
+                batch_coordinator=self.batch_coordinator,
+                consolidation_handler=self.consolidation_handler,
                 db=self.db,
-                extraction_service=self.extraction,
-                linking_service=self.linking,
-                vector_ops=self.vector_ops,
-                anthropic_client=self._batch_anthropic_client,
-                conversation_repo=self._conversation_repo,
                 llm_provider=self._llm_provider
             )
-            self._service_init_order.append(self.batching)
+            self._service_init_order.append(self.post_processing_orchestrator)
         except Exception as e:
-            raise RuntimeError(f"Failed to initialize BatchingService: {e}") from e
+            raise RuntimeError(f"Failed to initialize PostProcessingOrchestrator: {e}") from e
 
         try:
             logger.debug("Initializing ProactiveService...")
@@ -281,7 +290,8 @@ class LTMemoryFactory:
                 config=self.config.proactive,
                 vector_ops=self.vector_ops,
                 linking_service=self.linking,
-                db=self.db
+                db=self.db,
+                hub_discovery=self.hub_discovery
             )
             self._service_init_order.append(self.proactive)
         except Exception as e:
@@ -292,16 +302,30 @@ class LTMemoryFactory:
             self.entity_gc = EntityGCService(
                 config=self.config.entity_gc,
                 db=self.db,
-                entity_extractor=self.entity_extractor,
-                llm_provider=self._llm_provider
+                llm_provider=self._llm_provider,
+                batch_coordinator=self.batch_coordinator,
+                batching_config=self.config.batching,
             )
             self._service_init_order.append(self.entity_gc)
+
+            # Entity GC result handler (registered with post-processing dispatcher below)
+            self.entity_gc_result_handler = EntityGCBatchResultHandler(
+                anthropic_client=self._batch_anthropic_client,
+                db=self.db,
+                entity_gc_service=self.entity_gc,
+            )
+            self._service_init_order.append(self.entity_gc_result_handler)
+
+            # Register with post-processing dispatcher for polling
+            self.post_processing_dispatcher.register(
+                'entity_gc', self.entity_gc_result_handler
+            )
         except Exception as e:
             raise RuntimeError(f"Failed to initialize EntityGCService: {e}") from e
 
         logger.debug("All LT_Memory services initialized")
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Clean up all service resources.
 
@@ -324,9 +348,10 @@ class LTMemoryFactory:
     def __repr__(self) -> str:
         """String representation for debugging."""
         return (
-            f"LTMemoryFactory(services=[db, vector_ops, extraction, linking, refinement, "
+            f"LTMemoryFactory(services=[db, vector_ops, linking, refinement, "
             f"memory_processor, extraction_engine, execution_strategy, extraction_orchestrator, "
-            f"batch_coordinator, consolidation_handler, batching, proactive, entity_gc])"
+            f"batch_coordinator, consolidation_handler, hub_discovery, post_processing_orchestrator, "
+            f"proactive, entity_gc])"
         )
 
 

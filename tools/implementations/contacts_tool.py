@@ -10,7 +10,7 @@ a UUID for unique identification and can be linked to other tools.
 import json
 import logging
 import uuid
-from typing import Dict, List, Any, Optional
+from typing import Dict, Any, Optional
 
 # Third-party imports
 from pydantic import BaseModel, Field

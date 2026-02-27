@@ -11,7 +11,6 @@ import email.message
 import email.parser
 import email.utils
 import imaplib
-import logging
 import re
 import smtplib
 import ssl

@@ -1,0 +1,7 @@
+## Current User Model
+{current_user_model}
+
+## Assessment Signals (past 7 use-days)
+{assessment_signals}
+
+Evolve the user model based on assessment evidence. Produce observations about the user anchored to system prompt sections.

@@ -4,12 +4,18 @@ Immutable state management for CNS continuums.
 Provides immutable state objects and controlled state transitions
 for continuum data.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import TypedDict
 from uuid import UUID
 
-from .message import Message
+
+class ContinuumStateDict(TypedDict):
+    """Serialized form of ContinuumState for persistence round-trips."""
+    id: str
+    user_id: str
+    metadata: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -24,18 +30,18 @@ class ContinuumState:
     user_id: str
 
     # Continuum metadata - flexible dict for extensible state
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, object] = field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> ContinuumStateDict:
         """Convert state to dictionary for persistence."""
         return {
             "id": str(self.id),
             "user_id": self.user_id,
             "metadata": self.metadata
         }
-    
+
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'ContinuumState':
+    def from_dict(cls, data: ContinuumStateDict) -> ContinuumState:
         """Create state from dictionary."""
         return cls(
             id=UUID(data["id"]),

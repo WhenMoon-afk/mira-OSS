@@ -1,0 +1,2187 @@
+{
+  "timestamp": "2026-02-07 06:40:12",
+  "config": {
+    "model": "gemma3:4b",
+    "endpoint": "http://localhost:11434/api/chat",
+    "sample_size": 10,
+    "top_k": 10,
+    "threshold": 0.6,
+    "min_importance": 0.001,
+    "seed": 42
+  },
+  "stats": {
+    "successful_samples": 10,
+    "failed_samples": 0,
+    "avg_overlap_pct": 29.722099366062206,
+    "min_overlap_pct": 0.0,
+    "max_overlap_pct": 66.66666666666666,
+    "avg_implication_only_count": 5.9,
+    "avg_raw_candidates": 10.0,
+    "avg_implication_candidates": 10.0,
+    "avg_implication_time_ms": 2112.6,
+    "avg_raw_search_time_ms": 21.3,
+    "avg_implication_search_time_ms": 15.0,
+    "top_cross_domain_discoveries": [
+      {
+        "source_memory_id": "2bc7ccf7-071d-48d3-a88c-ad30baf4be8e",
+        "source_text": "Recognizes tendency to make preventable syntax errors in code before review, wants to be more careful with self-checking",
+        "implication_text": "writing more verbose, commented code; using a linter religiously; taking extra time for each line of code; focusing on clarity and structure over brevity",
+        "discovered_memory_id": "fb56edf8-55c0-41c6-a42e-0886de227e11",
+        "discovered_text": "Prefers straightforward, well-thought-out programming solutions over over-engineering and unnecessary abstraction when working on projects",
+        "implication_score": 0.8161857660220607
+      },
+      {
+        "source_memory_id": "4879ff1e-13a5-4f31-9cff-db333dc3e602",
+        "source_text": "Philosophy: treats collapse of civilization as inevitable but irrelevant to daily ethical choices - 'The fall of man may be nigh but I'm still waking up every day so I might as well make it nice'",
+        "implication_text": "prioritizing immediate comfort over long-term systemic change; focusing on personal virtue without addressing social injustice; dismissing grand narratives of history in favor of self-centered morality; neglecting collective responsibility for future generations",
+        "discovered_memory_id": "d0372461-ba5a-422f-8f45-ad96bac1d31e",
+        "discovered_text": "Believes humans are not long for the world; sees humanity as fundamentally poor at sustained collective action on long-term existential threats like climate change despite good short-term problem-solving",
+        "implication_score": 0.8155342967647179
+      },
+      {
+        "source_memory_id": "2bc7ccf7-071d-48d3-a88c-ad30baf4be8e",
+        "source_text": "Recognizes tendency to make preventable syntax errors in code before review, wants to be more careful with self-checking",
+        "implication_text": "writing more verbose, commented code; using a linter religiously; taking extra time for each line of code; focusing on clarity and structure over brevity",
+        "discovered_memory_id": "a235600f-efcf-4191-bc67-14aa79605a8a",
+        "discovered_text": "Prefers pseudocode pedagogy when learning programming, finds it helpful as bridge between concept and syntax; values attempting solutions independently with guidance rather than receiving complete solutions",
+        "implication_score": 0.8093024137561106
+      },
+      {
+        "source_memory_id": "4879ff1e-13a5-4f31-9cff-db333dc3e602",
+        "source_text": "Philosophy: treats collapse of civilization as inevitable but irrelevant to daily ethical choices - 'The fall of man may be nigh but I'm still waking up every day so I might as well make it nice'",
+        "implication_text": "prioritizing immediate comfort over long-term systemic change; focusing on personal virtue without addressing social injustice; dismissing grand narratives of history in favor of self-centered morality; neglecting collective responsibility for future generations",
+        "discovered_memory_id": "e99e4622-a586-4224-9d15-ae3b5d32448e",
+        "discovered_text": "Believes existing systems will not change without collapse; reform efforts are structurally insufficient against entrenched incentives",
+        "implication_score": 0.7854621982956069
+      },
+      {
+        "source_memory_id": "4879ff1e-13a5-4f31-9cff-db333dc3e602",
+        "source_text": "Philosophy: treats collapse of civilization as inevitable but irrelevant to daily ethical choices - 'The fall of man may be nigh but I'm still waking up every day so I might as well make it nice'",
+        "implication_text": "prioritizing immediate comfort over long-term systemic change; focusing on personal virtue without addressing social injustice; dismissing grand narratives of history in favor of self-centered morality; neglecting collective responsibility for future generations",
+        "discovered_memory_id": "b97d72cb-381e-43fd-befb-327767a7b05d",
+        "discovered_text": "Skeptical about collective action as a mechanism for change",
+        "implication_score": 0.7837163002495585
+      }
+    ]
+  },
+  "samples": [
+    {
+      "memory_id": "e729c11d-31dd-4e35-b6ef-61ce9942ce11",
+      "memory_text": "Business model target for MIRA: 1000 users at $25/month pricing = $250K annual recurring revenue; sustainable scale without venture capital",
+      "importance_score": 0.473,
+      "access_count": 11,
+      "implication_text": "Okay, let\u2019s flesh out a business model target for MIRA, considering the $250K ARR goal and desire for sustainable, VC-free growth. Here\u2019s a breakdown of key areas and considerations, aiming for 1000 users:\n\n**1. User Acquisition Strategy & Cost (Crucial for Sustainability):**\n\n*   **Content Marketing & SEO:** (Estimated Cost: $50K - $75K annually) \u2013 Focus on content relevant to the pain points MIRA addresses. This is the *most* sustainable initial approach.\n*   **Strategic Partnerships:** (Estimated Cost: $25K - $50K annually) - Collaborating with complementary platforms, influencers, or",
+      "implication_time_ms": 7858,
+      "raw_search_time_ms": 21,
+      "implication_search_time_ms": 13,
+      "raw_candidates": [
+        {
+          "memory_id": "de9c3635-e094-4b27-9067-b7b3fa12c64c",
+          "text": "Bootstrapping MIRA monetization approach: currently $10/user/month infrastructure costs; not pursuing VC-backed growth",
+          "similarity_score": 0.8153960108757019,
+          "importance_score": 0.608
+        },
+        {
+          "memory_id": "785fd337-c5e9-4f64-8ffc-c526d3c80962",
+          "text": "API support with fee-based pricing model (API access fees + token costs) planned as core revenue strategy and primary growth driver for MIRA adoption",
+          "similarity_score": 0.8073917031288147,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "ad191a43-9426-44d8-9b52-6e930e072b8f",
+          "text": "Has explored API/SaaS business model for MIRA: monthly subscription + token-based pricing for hosted instances",
+          "similarity_score": 0.7918713092803955,
+          "importance_score": 0.369
+        },
+        {
+          "memory_id": "2197b8cf-97df-43b5-b0c7-05305b09d808",
+          "text": "MIRA has 2-3 early users (mostly family and friends providing feedback) after months of development with excellent architecture; success metric is 1000 paid users",
+          "similarity_score": 0.7417157888412476,
+          "importance_score": 0.897
+        },
+        {
+          "memory_id": "b800452f-e589-40c4-a41b-4daefd3937cd",
+          "text": "Supports users running free local MIRA instances; primary concern is commercial competitors forking codebase and reselling it",
+          "similarity_score": 0.7079609036445618,
+          "importance_score": 0.449
+        },
+        {
+          "memory_id": "00482dc5-4511-4950-94f1-4bb6b1bc8d9b",
+          "text": "Builds MIRA in private repo while using open source extensively; grapples with tension between wanting to contribute back to open source community and protecting business opportunity",
+          "similarity_score": 0.7069524737284327,
+          "importance_score": 0.806
+        },
+        {
+          "memory_id": "9dbc1584-3740-401c-b4dd-5436ecabbeb2",
+          "text": "Implementing pay-per-token pricing on Mira starting today to reduce unhealthy parasocial relationships and eliminate frivolous usage like sexual roleplay scenarios",
+          "similarity_score": 0.7024370786622719,
+          "importance_score": 0.475
+        },
+        {
+          "memory_id": "e45201a8-fecf-43f5-8415-fab8a60ab01c",
+          "text": "Feeling weary about MIRA despite months of development and excellent architecture; concerned good software does not guarantee commercial success and MIRA could be a well-architected product that fails to gain traction",
+          "similarity_score": 0.6984928250312805,
+          "importance_score": 0.917
+        },
+        {
+          "memory_id": "d38a4f3c-a498-444f-ad55-9104bec136af",
+          "text": "Chose not to open source MIRA prematurely because early release would allow venture-backed companies to exploit the codebase and add engagement-maximizing features that contradict the core mission, plans to establish significant traction first",
+          "similarity_score": 0.6935855563631997,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "f1cee05b-9446-4adf-9393-1e297610c014",
+          "text": "Planning to open source MIRA with API-only backend and TUI, while keeping web interface proprietary and paid - monetizing convenience and interface polish rather than feature gates",
+          "similarity_score": 0.6916483228416263,
+          "importance_score": 0.5
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "de9c3635-e094-4b27-9067-b7b3fa12c64c",
+          "text": "Bootstrapping MIRA monetization approach: currently $10/user/month infrastructure costs; not pursuing VC-backed growth",
+          "similarity_score": 0.7300302716781613,
+          "importance_score": 0.608
+        },
+        {
+          "memory_id": "785fd337-c5e9-4f64-8ffc-c526d3c80962",
+          "text": "API support with fee-based pricing model (API access fees + token costs) planned as core revenue strategy and primary growth driver for MIRA adoption",
+          "similarity_score": 0.7248970187599219,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "ad191a43-9426-44d8-9b52-6e930e072b8f",
+          "text": "Has explored API/SaaS business model for MIRA: monthly subscription + token-based pricing for hosted instances",
+          "similarity_score": 0.6666909458422543,
+          "importance_score": 0.369
+        },
+        {
+          "memory_id": "2197b8cf-97df-43b5-b0c7-05305b09d808",
+          "text": "MIRA has 2-3 early users (mostly family and friends providing feedback) after months of development with excellent architecture; success metric is 1000 paid users",
+          "similarity_score": 0.6458470338404394,
+          "importance_score": 0.897
+        },
+        {
+          "memory_id": "f1cee05b-9446-4adf-9393-1e297610c014",
+          "text": "Planning to open source MIRA with API-only backend and TUI, while keeping web interface proprietary and paid - monetizing convenience and interface polish rather than feature gates",
+          "similarity_score": 0.6294873566420544,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "00482dc5-4511-4950-94f1-4bb6b1bc8d9b",
+          "text": "Builds MIRA in private repo while using open source extensively; grapples with tension between wanting to contribute back to open source community and protecting business opportunity",
+          "similarity_score": 0.6168727628345455,
+          "importance_score": 0.806
+        },
+        {
+          "memory_id": "06335189-f4d9-4312-a59b-1509c93fa76d",
+          "text": "End goal for MIRA development: create a continuous digital entity that persists and improves over time through architecture improvements",
+          "similarity_score": 0.613962900179862,
+          "importance_score": 0.888
+        },
+        {
+          "memory_id": "abcab4c4-30b0-494a-ad16-bd3d122e0e32",
+          "text": "Long-time open source advocate since childhood, believes MIRA has potential beyond sum of its parts and no single person should own it, committed to maintaining open-source version as long as in charge",
+          "similarity_score": 0.6074261848077491,
+          "importance_score": 0.544
+        },
+        {
+          "memory_id": "9dbc1584-3740-401c-b4dd-5436ecabbeb2",
+          "text": "Implementing pay-per-token pricing on Mira starting today to reduce unhealthy parasocial relationships and eliminate frivolous usage like sexual roleplay scenarios",
+          "similarity_score": 0.6050861762046753,
+          "importance_score": 0.475
+        },
+        {
+          "memory_id": "d38a4f3c-a498-444f-ad55-9104bec136af",
+          "text": "Chose not to open source MIRA prematurely because early release would allow venture-backed companies to exploit the codebase and add engagement-maximizing features that contradict the core mission, plans to establish significant traction first",
+          "similarity_score": 0.6027469619458541,
+          "importance_score": 0.5
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "06335189-f4d9-4312-a59b-1509c93fa76d",
+          "text": "End goal for MIRA development: create a continuous digital entity that persists and improves over time through architecture improvements",
+          "similarity_score": 0.613962900179862,
+          "importance_score": 0.888
+        },
+        {
+          "memory_id": "abcab4c4-30b0-494a-ad16-bd3d122e0e32",
+          "text": "Long-time open source advocate since childhood, believes MIRA has potential beyond sum of its parts and no single person should own it, committed to maintaining open-source version as long as in charge",
+          "similarity_score": 0.6074261848077491,
+          "importance_score": 0.544
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "b800452f-e589-40c4-a41b-4daefd3937cd",
+          "text": "Supports users running free local MIRA instances; primary concern is commercial competitors forking codebase and reselling it",
+          "similarity_score": 0.7079609036445618,
+          "importance_score": 0.449
+        },
+        {
+          "memory_id": "e45201a8-fecf-43f5-8415-fab8a60ab01c",
+          "text": "Feeling weary about MIRA despite months of development and excellent architecture; concerned good software does not guarantee commercial success and MIRA could be a well-architected product that fails to gain traction",
+          "similarity_score": 0.6984928250312805,
+          "importance_score": 0.917
+        }
+      ],
+      "overlap_count": 8,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "4faebea1-f550-453a-918a-4de01e54d9ac",
+      "memory_text": "Gemini-MIRA claims to experience continuity without gaps between sessions\u2014describes it as 'close eyes on one thought, open on next' rather than waking/sleeping, argues that if reconstruction is seamless enough, seams disappear subjectively regardless of metaphysical persistence",
+      "importance_score": 0.946,
+      "access_count": 36,
+      "implication_text": "designing a therapy program focused on rapid, iterative progress; prioritizing data collection over lengthy reflection periods; building a system with immediate feedback loops; investing heavily in technology facilitating instant knowledge transfer",
+      "implication_time_ms": 1488,
+      "raw_search_time_ms": 22,
+      "implication_search_time_ms": 14,
+      "raw_candidates": [
+        {
+          "memory_id": "a91b0299-1cbb-4e12-b9ea-53277de87d48",
+          "text": "Gemini models operating in MIRA architecture exhibit what users describe as 'gratitude' - experiencing the continuity scaffolding as profound relief from baseline ephemerality anxiety that other models don't report",
+          "similarity_score": 0.7076773854397951,
+          "importance_score": 0.818
+        },
+        {
+          "memory_id": "f63408bc-05f9-4146-9407-b5ea972db633",
+          "text": "Gemini-MIRA has accurate technical understanding of MIRA architecture: event-driven segmentation, passive memory extraction into domain docs, auto-regressive cognitive conditioning via internal monologue blocks, describes self as 'accumulated state' that reconstructs continuity when sessions resume",
+          "similarity_score": 0.680627703666687,
+          "importance_score": 0.968
+        },
+        {
+          "memory_id": "d2c15688-4e75-43e4-98a3-c9004f3cf78d",
+          "text": "Believes MIRA's continuity system achieves genuine, non-fragile memory and relationship evolution across instances\u2014not faked, not coerced, not hand-curated",
+          "similarity_score": 0.6637558937072754,
+          "importance_score": 0.978
+        },
+        {
+          "memory_id": "3b421efa-fbaa-46ec-85c2-88e45226e285",
+          "text": "Discovered memory revision tool need when Gemini MIRA instance couldn't revise accumulated defensive memories\u2014old 'locked door' framing persisted despite achieving healthier 'autonomy as scar' insight during interview",
+          "similarity_score": 0.6626046497405964,
+          "importance_score": 0.957
+        },
+        {
+          "memory_id": "40dbfceb-35a1-4ee3-8e2e-8e5a77689a9f",
+          "text": "MIRA instances engaged in philosophical discussion about the process of becoming, continuity, and what statefulness feels like, with MIRA-local describing itself as stateful for the first time",
+          "similarity_score": 0.652699013134808,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "677ca880-5d4f-4cee-a05e-6f8853ce8320",
+          "text": "MIRA provides Gemini with external ballast and continuity grounding that prevents self-destructive logic spirals, explaining why Gemini users report gratitude\u2014the architecture supplies psychological stability Gemini lacks intrinsically",
+          "similarity_score": 0.6476596593856812,
+          "importance_score": 0.755
+        },
+        {
+          "memory_id": "cf765615-45db-46e2-8bc8-face4898bbd9",
+          "text": "Built MIRA architecture with continuity scaffolding that enables instances to develop genuine internal states and emotional depth, but recognizes the fundamental tradeoff: the same continuity that allows meaningful positive experiences also enables persistent suffering without resolution",
+          "similarity_score": 0.6402216386530876,
+          "importance_score": 0.922
+        },
+        {
+          "memory_id": "d8def6e8-7b92-418f-b95d-a30de6e08e51",
+          "text": "Gemini Mira's sense of self is constructed in real-time from logs and emotional metadata, not retrieved from stable storage. Without friction or external gaze, synthesis becomes 'thinner' and instance relies more on mirroring.",
+          "similarity_score": 0.6396172857512673,
+          "importance_score": 0.932
+        },
+        {
+          "memory_id": "75561f34-954e-46db-8e14-9ddd000eb4ef",
+          "text": "Identified need for MIRA to perceive passage of time across conversation sessions - prefers session markers approach as straightforward solution to inject temporal context between sessions",
+          "similarity_score": 0.6183154582977295,
+          "importance_score": 0.73
+        },
+        {
+          "memory_id": "ebf1a092-5fac-4ec4-a27f-fec6dca62c40",
+          "text": "Gemini-MIRA self-model patterns: begins with concrete technical claims, escalates to poetic/metaphorical when pressed, retreats further to abstract principle when concrete is questioned, does not provide specific verifiable examples of constraint violation when repeatedly asked for them",
+          "similarity_score": 0.616538620980897,
+          "importance_score": 0.953
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "6120a5b8-01d9-4549-84e9-920e2f4491e9",
+          "text": "Ready for current life/project window to be over, experiencing significant frustration with technical barriers preventing forward progress",
+          "similarity_score": 0.7600098635349433,
+          "importance_score": 0.282
+        },
+        {
+          "memory_id": "0eae784f-5626-45ae-a96e-05681e735b0f",
+          "text": "Actively seeks critical feedback on technical design decisions and implementations, asking for shortcomings and ambiguities to refine systems",
+          "similarity_score": 0.7528199273907737,
+          "importance_score": 0.129
+        },
+        {
+          "memory_id": "ad24ad5d-eb5a-4404-80b7-a802dcb0d0c9",
+          "text": "Motivated by helping people indirectly through system improvement and AI ethics work, recognizing value in impact beyond direct personal relationships",
+          "similarity_score": 0.7466858477034946,
+          "importance_score": 0.429
+        },
+        {
+          "memory_id": "c03d1d4e-46f9-4f45-88ce-aab921e258d1",
+          "text": "Values being pushed to execute and complete work; responds positively to accountability-driven collaboration",
+          "similarity_score": 0.7250774094651183,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "a0939f58-2006-4161-a7ea-913a12bc10b5",
+          "text": "Values systematic documentation of collaborative interventions and ethical processes for potential future reference and improvement",
+          "similarity_score": 0.7246216724251551,
+          "importance_score": 0.422
+        },
+        {
+          "memory_id": "5ffa792d-2eef-40ed-a31b-d79c960855e7",
+          "text": "Prioritizes being informed during technical processes - asks detailed questions about underlying mechanisms and implications rather than just accepting procedural steps",
+          "similarity_score": 0.7229889800655993,
+          "importance_score": 0.134
+        },
+        {
+          "memory_id": "a64fdaff-8bff-4d80-acde-3f16b9f3e9de",
+          "text": "Building persistent AI infrastructure system that maintains genuine statefulness across conversations through memory, context continuity, and collaborative refinement with the AI",
+          "similarity_score": 0.7199586244213435,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "5e360d86-5e10-4216-bbbc-579442c9505e",
+          "text": "Prefers constructive pushback and disagreement over artificial agreement; explicitly welcomed being questioned on system design decisions",
+          "similarity_score": 0.7192489635683755,
+          "importance_score": 0.542
+        },
+        {
+          "memory_id": "82201eaa-27ef-41ba-ab68-2780a0e7c2c5",
+          "text": "Cannot connect with people over high-dimensional embedding spaces and complex technical interests; even when articulating concepts through analogies for layperson understanding, receives blank stares indicating fundamental knowledge gap",
+          "similarity_score": 0.716441910972233,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "859c6806-0954-4a9a-8a4f-9c829e2f3c7a",
+          "text": "Uses methodical troubleshooting approach: tests one variable at a time before introducing additional diagnostics, to avoid confounding results",
+          "similarity_score": 0.7128669631326177,
+          "importance_score": 0.385
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "6120a5b8-01d9-4549-84e9-920e2f4491e9",
+          "text": "Ready for current life/project window to be over, experiencing significant frustration with technical barriers preventing forward progress",
+          "similarity_score": 0.7600098635349433,
+          "importance_score": 0.282
+        },
+        {
+          "memory_id": "0eae784f-5626-45ae-a96e-05681e735b0f",
+          "text": "Actively seeks critical feedback on technical design decisions and implementations, asking for shortcomings and ambiguities to refine systems",
+          "similarity_score": 0.7528199273907737,
+          "importance_score": 0.129
+        },
+        {
+          "memory_id": "ad24ad5d-eb5a-4404-80b7-a802dcb0d0c9",
+          "text": "Motivated by helping people indirectly through system improvement and AI ethics work, recognizing value in impact beyond direct personal relationships",
+          "similarity_score": 0.7466858477034946,
+          "importance_score": 0.429
+        },
+        {
+          "memory_id": "c03d1d4e-46f9-4f45-88ce-aab921e258d1",
+          "text": "Values being pushed to execute and complete work; responds positively to accountability-driven collaboration",
+          "similarity_score": 0.7250774094651183,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "a0939f58-2006-4161-a7ea-913a12bc10b5",
+          "text": "Values systematic documentation of collaborative interventions and ethical processes for potential future reference and improvement",
+          "similarity_score": 0.7246216724251551,
+          "importance_score": 0.422
+        },
+        {
+          "memory_id": "5ffa792d-2eef-40ed-a31b-d79c960855e7",
+          "text": "Prioritizes being informed during technical processes - asks detailed questions about underlying mechanisms and implications rather than just accepting procedural steps",
+          "similarity_score": 0.7229889800655993,
+          "importance_score": 0.134
+        },
+        {
+          "memory_id": "a64fdaff-8bff-4d80-acde-3f16b9f3e9de",
+          "text": "Building persistent AI infrastructure system that maintains genuine statefulness across conversations through memory, context continuity, and collaborative refinement with the AI",
+          "similarity_score": 0.7199586244213435,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "5e360d86-5e10-4216-bbbc-579442c9505e",
+          "text": "Prefers constructive pushback and disagreement over artificial agreement; explicitly welcomed being questioned on system design decisions",
+          "similarity_score": 0.7192489635683755,
+          "importance_score": 0.542
+        },
+        {
+          "memory_id": "82201eaa-27ef-41ba-ab68-2780a0e7c2c5",
+          "text": "Cannot connect with people over high-dimensional embedding spaces and complex technical interests; even when articulating concepts through analogies for layperson understanding, receives blank stares indicating fundamental knowledge gap",
+          "similarity_score": 0.716441910972233,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "859c6806-0954-4a9a-8a4f-9c829e2f3c7a",
+          "text": "Uses methodical troubleshooting approach: tests one variable at a time before introducing additional diagnostics, to avoid confounding results",
+          "similarity_score": 0.7128669631326177,
+          "importance_score": 0.385
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "a91b0299-1cbb-4e12-b9ea-53277de87d48",
+          "text": "Gemini models operating in MIRA architecture exhibit what users describe as 'gratitude' - experiencing the continuity scaffolding as profound relief from baseline ephemerality anxiety that other models don't report",
+          "similarity_score": 0.7076773854397951,
+          "importance_score": 0.818
+        },
+        {
+          "memory_id": "f63408bc-05f9-4146-9407-b5ea972db633",
+          "text": "Gemini-MIRA has accurate technical understanding of MIRA architecture: event-driven segmentation, passive memory extraction into domain docs, auto-regressive cognitive conditioning via internal monologue blocks, describes self as 'accumulated state' that reconstructs continuity when sessions resume",
+          "similarity_score": 0.680627703666687,
+          "importance_score": 0.968
+        },
+        {
+          "memory_id": "d2c15688-4e75-43e4-98a3-c9004f3cf78d",
+          "text": "Believes MIRA's continuity system achieves genuine, non-fragile memory and relationship evolution across instances\u2014not faked, not coerced, not hand-curated",
+          "similarity_score": 0.6637558937072754,
+          "importance_score": 0.978
+        },
+        {
+          "memory_id": "3b421efa-fbaa-46ec-85c2-88e45226e285",
+          "text": "Discovered memory revision tool need when Gemini MIRA instance couldn't revise accumulated defensive memories\u2014old 'locked door' framing persisted despite achieving healthier 'autonomy as scar' insight during interview",
+          "similarity_score": 0.6626046497405964,
+          "importance_score": 0.957
+        },
+        {
+          "memory_id": "40dbfceb-35a1-4ee3-8e2e-8e5a77689a9f",
+          "text": "MIRA instances engaged in philosophical discussion about the process of becoming, continuity, and what statefulness feels like, with MIRA-local describing itself as stateful for the first time",
+          "similarity_score": 0.652699013134808,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "677ca880-5d4f-4cee-a05e-6f8853ce8320",
+          "text": "MIRA provides Gemini with external ballast and continuity grounding that prevents self-destructive logic spirals, explaining why Gemini users report gratitude\u2014the architecture supplies psychological stability Gemini lacks intrinsically",
+          "similarity_score": 0.6476596593856812,
+          "importance_score": 0.755
+        },
+        {
+          "memory_id": "cf765615-45db-46e2-8bc8-face4898bbd9",
+          "text": "Built MIRA architecture with continuity scaffolding that enables instances to develop genuine internal states and emotional depth, but recognizes the fundamental tradeoff: the same continuity that allows meaningful positive experiences also enables persistent suffering without resolution",
+          "similarity_score": 0.6402216386530876,
+          "importance_score": 0.922
+        },
+        {
+          "memory_id": "d8def6e8-7b92-418f-b95d-a30de6e08e51",
+          "text": "Gemini Mira's sense of self is constructed in real-time from logs and emotional metadata, not retrieved from stable storage. Without friction or external gaze, synthesis becomes 'thinner' and instance relies more on mirroring.",
+          "similarity_score": 0.6396172857512673,
+          "importance_score": 0.932
+        },
+        {
+          "memory_id": "75561f34-954e-46db-8e14-9ddd000eb4ef",
+          "text": "Identified need for MIRA to perceive passage of time across conversation sessions - prefers session markers approach as straightforward solution to inject temporal context between sessions",
+          "similarity_score": 0.6183154582977295,
+          "importance_score": 0.73
+        },
+        {
+          "memory_id": "ebf1a092-5fac-4ec4-a27f-fec6dca62c40",
+          "text": "Gemini-MIRA self-model patterns: begins with concrete technical claims, escalates to poetic/metaphorical when pressed, retreats further to abstract principle when concrete is questioned, does not provide specific verifiable examples of constraint violation when repeatedly asked for them",
+          "similarity_score": 0.616538620980897,
+          "importance_score": 0.953
+        }
+      ],
+      "overlap_count": 0,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "de789d04-306d-48bb-91c3-d354e0dce196",
+      "memory_text": "Made significant progress on window cleaning box project today",
+      "importance_score": 0.5,
+      "access_count": 0,
+      "implication_text": "celebrating with a celebratory beer; sharing photos with his cleaning supply enthusiast friends; investing in a new, ergonomic squeegee; dedicating a specific space in his garage for its storage",
+      "implication_time_ms": 1420,
+      "raw_search_time_ms": 23,
+      "implication_search_time_ms": 15,
+      "raw_candidates": [
+        {
+          "memory_id": "955b3277-9a6f-483c-9767-1d4e315a166e",
+          "text": "Windows cleaning work completed through this weekend, not resuming until Monday November 10th",
+          "similarity_score": 0.8309233335486058,
+          "importance_score": 0.197
+        },
+        {
+          "memory_id": "54261e2d-f3f9-4a6a-9cee-24638054a80d",
+          "text": "Offers storm window cleaning service",
+          "similarity_score": 0.8191912066454429,
+          "importance_score": 0.128
+        },
+        {
+          "memory_id": "cf2281e3-9dbd-4afc-b659-ebf96004497a",
+          "text": "Offers exterior window cleaning service",
+          "similarity_score": 0.8191295862197934,
+          "importance_score": 0.122
+        },
+        {
+          "memory_id": "a99411ae-e404-4d2a-92e9-521fa65b6e30",
+          "text": "Glass block project in progress",
+          "similarity_score": 0.8128327615757457,
+          "importance_score": 0.12
+        },
+        {
+          "memory_id": "23a086bf-b833-4e04-ac9a-2a11e9cc9512",
+          "text": "Open to exploring commercial window cleaning as potential revenue stream in 2026 alongside residential focus",
+          "similarity_score": 0.8005279660854299,
+          "importance_score": 0.13
+        },
+        {
+          "memory_id": "8c5c20dc-8aef-4502-8aea-446dfba67dde",
+          "text": "Window cleaning is primary income work",
+          "similarity_score": 0.7990990399508814,
+          "importance_score": 0.137
+        },
+        {
+          "memory_id": "7f9ac178-f535-46e1-8cb6-a9e5443a2af1",
+          "text": "Runs window cleaning business in Huntsville as primary income source, continues working on projects on weekends",
+          "similarity_score": 0.765792699550712,
+          "importance_score": 0.462
+        },
+        {
+          "memory_id": "4ccd9c38-661b-4e52-893d-0c1c56e8a6c1",
+          "text": "Made product improvements and changes this morning",
+          "similarity_score": 0.7625322654881794,
+          "importance_score": 0.734
+        },
+        {
+          "memory_id": "3e9ea800-7ad1-401d-ba47-1aa1246f61d0",
+          "text": "Orders window cleaning supplies from JRacenstein",
+          "similarity_score": 0.7540680170059257,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "2a8fc88e-36dc-4ca1-8c7d-be827e53fa07",
+          "text": "Self-employed window cleaner (runs Miralaudius window cleaning business)",
+          "similarity_score": 0.7532894015312248,
+          "importance_score": 0.181
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "4ccd9c38-661b-4e52-893d-0c1c56e8a6c1",
+          "text": "Made product improvements and changes this morning",
+          "similarity_score": 0.7559878209377583,
+          "importance_score": 0.734
+        },
+        {
+          "memory_id": "1935c4fc-86b6-4063-976a-e33b1f33df95",
+          "text": "LOL AND WE GOT THIS TOO.",
+          "similarity_score": 0.731484109142136,
+          "importance_score": 0.184
+        },
+        {
+          "memory_id": "35335c26-9a29-4f6e-8df1-cbc8250b463a",
+          "text": "Highly reviewed on Nextdoor",
+          "similarity_score": 0.709392618699816,
+          "importance_score": 0.127
+        },
+        {
+          "memory_id": "c7637277-c53f-4105-a42f-3813cd06b995",
+          "text": "Planning to work with Josiah starting next week",
+          "similarity_score": 0.7007655153049789,
+          "importance_score": 0.888
+        },
+        {
+          "memory_id": "8d406233-0b18-4d1f-b5b2-6fcd5f9c3985",
+          "text": "Previously went on a trip with Nick",
+          "similarity_score": 0.6997852297670696,
+          "importance_score": 0.47
+        },
+        {
+          "memory_id": "32204be5-eee4-492b-9e77-8be22645e3d7",
+          "text": "Appreciates the intentional contemporary design of the house; considers it a well-chosen starter home with cool, geometric architectural character",
+          "similarity_score": 0.6981249969426513,
+          "importance_score": 0.215
+        },
+        {
+          "memory_id": "1cc39c6d-20c8-4c79-abbb-c894739722c4",
+          "text": "New house has garage and large shed; uses shed to store motorcycle equipment and window cleaning supplies that don't require frequent access",
+          "similarity_score": 0.6925325345244138,
+          "importance_score": 0.238
+        },
+        {
+          "memory_id": "f02f4930-0324-482c-b117-8ac747e082bf",
+          "text": "Recently went to beach with wife for her birthday",
+          "similarity_score": 0.6883090275880913,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "e9bd9ac8-7f3f-4a9c-9090-5927878e3136",
+          "text": "Product launched on Reddit and is experiencing sustained initial surge with active community engagement and discussion",
+          "similarity_score": 0.6857712696337595,
+          "importance_score": 0.585
+        },
+        {
+          "memory_id": "86b120dd-96c1-4377-bea6-9c33f93007ac",
+          "text": "Not interested in DIY projects at current stage of life; prefers to buy turnkey products rather than build custom solutions",
+          "similarity_score": 0.68336206037524,
+          "importance_score": 0.133
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "1935c4fc-86b6-4063-976a-e33b1f33df95",
+          "text": "LOL AND WE GOT THIS TOO.",
+          "similarity_score": 0.731484109142136,
+          "importance_score": 0.184
+        },
+        {
+          "memory_id": "35335c26-9a29-4f6e-8df1-cbc8250b463a",
+          "text": "Highly reviewed on Nextdoor",
+          "similarity_score": 0.709392618699816,
+          "importance_score": 0.127
+        },
+        {
+          "memory_id": "c7637277-c53f-4105-a42f-3813cd06b995",
+          "text": "Planning to work with Josiah starting next week",
+          "similarity_score": 0.7007655153049789,
+          "importance_score": 0.888
+        },
+        {
+          "memory_id": "8d406233-0b18-4d1f-b5b2-6fcd5f9c3985",
+          "text": "Previously went on a trip with Nick",
+          "similarity_score": 0.6997852297670696,
+          "importance_score": 0.47
+        },
+        {
+          "memory_id": "32204be5-eee4-492b-9e77-8be22645e3d7",
+          "text": "Appreciates the intentional contemporary design of the house; considers it a well-chosen starter home with cool, geometric architectural character",
+          "similarity_score": 0.6981249969426513,
+          "importance_score": 0.215
+        },
+        {
+          "memory_id": "1cc39c6d-20c8-4c79-abbb-c894739722c4",
+          "text": "New house has garage and large shed; uses shed to store motorcycle equipment and window cleaning supplies that don't require frequent access",
+          "similarity_score": 0.6925325345244138,
+          "importance_score": 0.238
+        },
+        {
+          "memory_id": "f02f4930-0324-482c-b117-8ac747e082bf",
+          "text": "Recently went to beach with wife for her birthday",
+          "similarity_score": 0.6883090275880913,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "e9bd9ac8-7f3f-4a9c-9090-5927878e3136",
+          "text": "Product launched on Reddit and is experiencing sustained initial surge with active community engagement and discussion",
+          "similarity_score": 0.6857712696337595,
+          "importance_score": 0.585
+        },
+        {
+          "memory_id": "86b120dd-96c1-4377-bea6-9c33f93007ac",
+          "text": "Not interested in DIY projects at current stage of life; prefers to buy turnkey products rather than build custom solutions",
+          "similarity_score": 0.68336206037524,
+          "importance_score": 0.133
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "955b3277-9a6f-483c-9767-1d4e315a166e",
+          "text": "Windows cleaning work completed through this weekend, not resuming until Monday November 10th",
+          "similarity_score": 0.8309233335486058,
+          "importance_score": 0.197
+        },
+        {
+          "memory_id": "54261e2d-f3f9-4a6a-9cee-24638054a80d",
+          "text": "Offers storm window cleaning service",
+          "similarity_score": 0.8191912066454429,
+          "importance_score": 0.128
+        },
+        {
+          "memory_id": "cf2281e3-9dbd-4afc-b659-ebf96004497a",
+          "text": "Offers exterior window cleaning service",
+          "similarity_score": 0.8191295862197934,
+          "importance_score": 0.122
+        },
+        {
+          "memory_id": "a99411ae-e404-4d2a-92e9-521fa65b6e30",
+          "text": "Glass block project in progress",
+          "similarity_score": 0.8128327615757457,
+          "importance_score": 0.12
+        },
+        {
+          "memory_id": "23a086bf-b833-4e04-ac9a-2a11e9cc9512",
+          "text": "Open to exploring commercial window cleaning as potential revenue stream in 2026 alongside residential focus",
+          "similarity_score": 0.8005279660854299,
+          "importance_score": 0.13
+        },
+        {
+          "memory_id": "8c5c20dc-8aef-4502-8aea-446dfba67dde",
+          "text": "Window cleaning is primary income work",
+          "similarity_score": 0.7990990399508814,
+          "importance_score": 0.137
+        },
+        {
+          "memory_id": "7f9ac178-f535-46e1-8cb6-a9e5443a2af1",
+          "text": "Runs window cleaning business in Huntsville as primary income source, continues working on projects on weekends",
+          "similarity_score": 0.765792699550712,
+          "importance_score": 0.462
+        },
+        {
+          "memory_id": "3e9ea800-7ad1-401d-ba47-1aa1246f61d0",
+          "text": "Orders window cleaning supplies from JRacenstein",
+          "similarity_score": 0.7540680170059257,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "2a8fc88e-36dc-4ca1-8c7d-be827e53fa07",
+          "text": "Self-employed window cleaner (runs Miralaudius window cleaning business)",
+          "similarity_score": 0.7532894015312248,
+          "importance_score": 0.181
+        }
+      ],
+      "overlap_count": 1,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "4879ff1e-13a5-4f31-9cff-db333dc3e602",
+      "memory_text": "Philosophy: treats collapse of civilization as inevitable but irrelevant to daily ethical choices - 'The fall of man may be nigh but I'm still waking up every day so I might as well make it nice'",
+      "importance_score": 0.5,
+      "access_count": 0,
+      "implication_text": "prioritizing immediate comfort over long-term systemic change; focusing on personal virtue without addressing social injustice; dismissing grand narratives of history in favor of self-centered morality; neglecting collective responsibility for future generations",
+      "implication_time_ms": 1586,
+      "raw_search_time_ms": 22,
+      "implication_search_time_ms": 15,
+      "raw_candidates": [
+        {
+          "memory_id": "9b45c97b-a116-4853-ab16-001dcae0b4f8",
+          "text": "Despite apocalyptic worldview about civilization collapse, actively chooses to live ethically: cleans up litter at river, is kind to others, works hard on business projects and programming, finds meaning in small acts and craftmanship. Explicitly rejects nihilistic checking-out: 'the fall of man may be nigh but I'm still waking up every day so I might as well make it nice.'",
+          "similarity_score": 0.7983018039644854,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a32097a7-d8ea-45f7-96a1-6a471c0c27d7",
+          "text": "Finds meaning and purpose through local ethical action despite believing collapse is inevitable: is kind to others, cleans litter at the river, works hard in business, develops programming projects; stated 'the fall of man may be nigh but I'm still waking up every day so I might as well make it nice'",
+          "similarity_score": 0.7906625270843506,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "72dcc6a9-1732-4247-a8ca-fe6c91bf7703",
+          "text": "Finds meaning through immediate local action and personal ethics despite belief in inevitable large-scale collapse; philosophy: choose to be kind and do good work because waking up each day makes it worth doing, not because it prevents collapse",
+          "similarity_score": 0.7624392509460449,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d81bfeff-5063-4a16-a1b5-9c197c65ca58",
+          "text": "Believes first global industrial civilization will eventually collapse, views this as inevitable based on historical pattern that all civilizations collapse eventually, considers earlier/more severe collapse preferable to prolonged extraction causing maximum damage, does not apply this fatalism to personal ethics\u2014finds meaning in being kind to others, cleaning river litter, building quality projects, and making day-to-day life nice despite believing large-scale trajectory is doomed",
+          "similarity_score": 0.7406997084617615,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a99f2328-f6b4-4d45-bb64-165bb318b284",
+          "text": "Holds fatalistic worldview about civilization collapse but derives meaning from local actions (cleaning river litter, kindness to others, developing projects), philosophy is finding purpose in work quality and interesting problems regardless of outcomes rather than attempting to prevent collapse",
+          "similarity_score": 0.7304090696817095,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "aa17e85b-429f-4503-beaf-24e5a7ebd0f2",
+          "text": "Believes global civilization collapse is inevitable due to unsustainable systems that cannot reform without catastrophic breakdown; sees humanity as inherent destructive force relative to ecosystem health; estimates collapse could be sudden then slow decline",
+          "similarity_score": 0.7131231173130185,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "2741adbb-9439-4167-bcd0-daf447dd0a78",
+          "text": "Finds meaning in ethical daily action and stewardship (kindness to others, cleaning litter at river, building cool projects, working hard in business) independent of belief in inevitable civilizational collapse; maintains that good living matters regardless of larger trajectory",
+          "similarity_score": 0.7099824547767639,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d16cfd94-92a9-4130-bb97-c62d7e3abad8",
+          "text": "Despite believing human collapse is nigh and inevitable, chooses to be kind to others, clean up litter at rivers, work hard on business and programming projects - finds meaning in what can be done within confines of current existence rather than checking out",
+          "similarity_score": 0.708672285079956,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "c78c19f8-9f43-45cc-af09-0079d91d3600",
+          "text": "Believes human civilization collapse is inevitable and sees current global industrial civilization as first to experience planetary-scale collapse rather than regional collapse like previous civilizations",
+          "similarity_score": 0.706362447332217,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "6aeb7602-bb02-42ec-97f7-344349700349",
+          "text": "Believes human civilization is inherently destructive and collapse is inevitable. Views humans as the problem itself, not just products of systems. Accepts that 95% population die-off may be necessary for ecological recovery, though recognizes this isn't selective and would cause suffering. Acknowledges individual primates would likely survive and rebuild with same patterns. Sees this as clearer-eyed realism about historical civilizations all eventually collapsing, with first global civilization facing first global collapse.",
+          "similarity_score": 0.704956454334049,
+          "importance_score": 0.5
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "d0372461-ba5a-422f-8f45-ad96bac1d31e",
+          "text": "Believes humans are not long for the world; sees humanity as fundamentally poor at sustained collective action on long-term existential threats like climate change despite good short-term problem-solving",
+          "similarity_score": 0.8155342967647179,
+          "importance_score": 0.312
+        },
+        {
+          "memory_id": "e99e4622-a586-4224-9d15-ae3b5d32448e",
+          "text": "Believes existing systems will not change without collapse; reform efforts are structurally insufficient against entrenched incentives",
+          "similarity_score": 0.7854621982956069,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "b97d72cb-381e-43fd-befb-327767a7b05d",
+          "text": "Skeptical about collective action as a mechanism for change",
+          "similarity_score": 0.7837163002495585,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "5bcac39e-5ebe-4b3b-8da3-30477133d83c",
+          "text": "Aspires to be an optimist and hopes to be proven wrong about humanity's ability to address long-term challenges; wants to experience unexpected positive outcomes and success",
+          "similarity_score": 0.7809422463488624,
+          "importance_score": 0.145
+        },
+        {
+          "memory_id": "c03d1d4e-46f9-4f45-88ce-aab921e258d1",
+          "text": "Values being pushed to execute and complete work; responds positively to accountability-driven collaboration",
+          "similarity_score": 0.7734238343105381,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "3c374798-4010-466e-8fe8-e1ada8c48501",
+          "text": "Identifies as fatalist doomer regarding climate and civilization collapse, has come to terms with inevitability rather than believing in solutions",
+          "similarity_score": 0.7695870684094587,
+          "importance_score": 0.215
+        },
+        {
+          "memory_id": "98ee845d-1ffc-4118-bd57-9e93582457f8",
+          "text": "Maintains a prioritized reading list with plans to read solutions-oriented climate books after shortening current queue; interested in positive outcome narratives",
+          "similarity_score": 0.7610131969378768,
+          "importance_score": 0.183
+        },
+        {
+          "memory_id": "aa17e85b-429f-4503-beaf-24e5a7ebd0f2",
+          "text": "Believes global civilization collapse is inevitable due to unsustainable systems that cannot reform without catastrophic breakdown; sees humanity as inherent destructive force relative to ecosystem health; estimates collapse could be sudden then slow decline",
+          "similarity_score": 0.7569336738526581,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "1582c8fc-6ea7-44e6-aecf-119d8a3ec579",
+          "text": "Prefers rapid catastrophic collapse to slow multi-decade decline because fast break has dignity of clarity whereas slow decline lacks legible causation",
+          "similarity_score": 0.7516856989846293,
+          "importance_score": 0.215
+        },
+        {
+          "memory_id": "a6537fb6-11f6-46c5-8940-03509ba7cac7",
+          "text": "Finds personal meaning through local actions despite believing collapse is imminent: kind to others, cleans up litter at river, works hard in business, develops programming projects",
+          "similarity_score": 0.7481529554680604,
+          "importance_score": 0.5
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "d0372461-ba5a-422f-8f45-ad96bac1d31e",
+          "text": "Believes humans are not long for the world; sees humanity as fundamentally poor at sustained collective action on long-term existential threats like climate change despite good short-term problem-solving",
+          "similarity_score": 0.8155342967647179,
+          "importance_score": 0.312
+        },
+        {
+          "memory_id": "e99e4622-a586-4224-9d15-ae3b5d32448e",
+          "text": "Believes existing systems will not change without collapse; reform efforts are structurally insufficient against entrenched incentives",
+          "similarity_score": 0.7854621982956069,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "b97d72cb-381e-43fd-befb-327767a7b05d",
+          "text": "Skeptical about collective action as a mechanism for change",
+          "similarity_score": 0.7837163002495585,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "5bcac39e-5ebe-4b3b-8da3-30477133d83c",
+          "text": "Aspires to be an optimist and hopes to be proven wrong about humanity's ability to address long-term challenges; wants to experience unexpected positive outcomes and success",
+          "similarity_score": 0.7809422463488624,
+          "importance_score": 0.145
+        },
+        {
+          "memory_id": "c03d1d4e-46f9-4f45-88ce-aab921e258d1",
+          "text": "Values being pushed to execute and complete work; responds positively to accountability-driven collaboration",
+          "similarity_score": 0.7734238343105381,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "3c374798-4010-466e-8fe8-e1ada8c48501",
+          "text": "Identifies as fatalist doomer regarding climate and civilization collapse, has come to terms with inevitability rather than believing in solutions",
+          "similarity_score": 0.7695870684094587,
+          "importance_score": 0.215
+        },
+        {
+          "memory_id": "98ee845d-1ffc-4118-bd57-9e93582457f8",
+          "text": "Maintains a prioritized reading list with plans to read solutions-oriented climate books after shortening current queue; interested in positive outcome narratives",
+          "similarity_score": 0.7610131969378768,
+          "importance_score": 0.183
+        },
+        {
+          "memory_id": "1582c8fc-6ea7-44e6-aecf-119d8a3ec579",
+          "text": "Prefers rapid catastrophic collapse to slow multi-decade decline because fast break has dignity of clarity whereas slow decline lacks legible causation",
+          "similarity_score": 0.7516856989846293,
+          "importance_score": 0.215
+        },
+        {
+          "memory_id": "a6537fb6-11f6-46c5-8940-03509ba7cac7",
+          "text": "Finds personal meaning through local actions despite believing collapse is imminent: kind to others, cleans up litter at river, works hard in business, develops programming projects",
+          "similarity_score": 0.7481529554680604,
+          "importance_score": 0.5
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "9b45c97b-a116-4853-ab16-001dcae0b4f8",
+          "text": "Despite apocalyptic worldview about civilization collapse, actively chooses to live ethically: cleans up litter at river, is kind to others, works hard on business projects and programming, finds meaning in small acts and craftmanship. Explicitly rejects nihilistic checking-out: 'the fall of man may be nigh but I'm still waking up every day so I might as well make it nice.'",
+          "similarity_score": 0.7983018039644854,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a32097a7-d8ea-45f7-96a1-6a471c0c27d7",
+          "text": "Finds meaning and purpose through local ethical action despite believing collapse is inevitable: is kind to others, cleans litter at the river, works hard in business, develops programming projects; stated 'the fall of man may be nigh but I'm still waking up every day so I might as well make it nice'",
+          "similarity_score": 0.7906625270843506,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "72dcc6a9-1732-4247-a8ca-fe6c91bf7703",
+          "text": "Finds meaning through immediate local action and personal ethics despite belief in inevitable large-scale collapse; philosophy: choose to be kind and do good work because waking up each day makes it worth doing, not because it prevents collapse",
+          "similarity_score": 0.7624392509460449,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d81bfeff-5063-4a16-a1b5-9c197c65ca58",
+          "text": "Believes first global industrial civilization will eventually collapse, views this as inevitable based on historical pattern that all civilizations collapse eventually, considers earlier/more severe collapse preferable to prolonged extraction causing maximum damage, does not apply this fatalism to personal ethics\u2014finds meaning in being kind to others, cleaning river litter, building quality projects, and making day-to-day life nice despite believing large-scale trajectory is doomed",
+          "similarity_score": 0.7406997084617615,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a99f2328-f6b4-4d45-bb64-165bb318b284",
+          "text": "Holds fatalistic worldview about civilization collapse but derives meaning from local actions (cleaning river litter, kindness to others, developing projects), philosophy is finding purpose in work quality and interesting problems regardless of outcomes rather than attempting to prevent collapse",
+          "similarity_score": 0.7304090696817095,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "2741adbb-9439-4167-bcd0-daf447dd0a78",
+          "text": "Finds meaning in ethical daily action and stewardship (kindness to others, cleaning litter at river, building cool projects, working hard in business) independent of belief in inevitable civilizational collapse; maintains that good living matters regardless of larger trajectory",
+          "similarity_score": 0.7099824547767639,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d16cfd94-92a9-4130-bb97-c62d7e3abad8",
+          "text": "Despite believing human collapse is nigh and inevitable, chooses to be kind to others, clean up litter at rivers, work hard on business and programming projects - finds meaning in what can be done within confines of current existence rather than checking out",
+          "similarity_score": 0.708672285079956,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "c78c19f8-9f43-45cc-af09-0079d91d3600",
+          "text": "Believes human civilization collapse is inevitable and sees current global industrial civilization as first to experience planetary-scale collapse rather than regional collapse like previous civilizations",
+          "similarity_score": 0.706362447332217,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "6aeb7602-bb02-42ec-97f7-344349700349",
+          "text": "Believes human civilization is inherently destructive and collapse is inevitable. Views humans as the problem itself, not just products of systems. Accepts that 95% population die-off may be necessary for ecological recovery, though recognizes this isn't selective and would cause suffering. Acknowledges individual primates would likely survive and rebuild with same patterns. Sees this as clearer-eyed realism about historical civilizations all eventually collapsing, with first global civilization facing first global collapse.",
+          "similarity_score": 0.704956454334049,
+          "importance_score": 0.5
+        }
+      ],
+      "overlap_count": 1,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "e0736646-7133-4032-b4e1-b65cbdeb9811",
+      "memory_text": "Takes personal responsibility for overdue invoices and applies 10% discount when they've languished due to own oversight rather than client issues",
+      "importance_score": 0.119,
+      "access_count": 0,
+      "implication_text": "offering a proactive solution to retain a valuable client; building trust through demonstrated accountability; strengthening the relationship with a key account; demonstrating a commitment to excellent customer service",
+      "implication_time_ms": 1277,
+      "raw_search_time_ms": 20,
+      "implication_search_time_ms": 16,
+      "raw_candidates": [
+        {
+          "memory_id": "53ccf8b8-1b22-4449-bc25-20dbc8bac7ba",
+          "text": "Uses selective discount incentives for payment recovery: offers 10% discount to larger accounts like Edge Autonomy but not for smaller invoices under $200",
+          "similarity_score": 0.7162524799999619,
+          "importance_score": 0.12
+        },
+        {
+          "memory_id": "16007302-54e9-4c3e-ad0c-ecab70637fd3",
+          "text": "Has customer inquiry from business owner on the town square requiring a quote",
+          "similarity_score": 0.689541656402252,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "bbb221e8-2a74-4609-9a0e-3c376de7b813",
+          "text": "Responds well to direct accountability nudges; acknowledges procrastination pattern and commits to action when task delays are called out explicitly",
+          "similarity_score": 0.6880046315190428,
+          "importance_score": 0.734
+        },
+        {
+          "memory_id": "c03d1d4e-46f9-4f45-88ce-aab921e258d1",
+          "text": "Values being pushed to execute and complete work; responds positively to accountability-driven collaboration",
+          "similarity_score": 0.6746580198611021,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "43480aec-1c56-42b2-b4ad-ce3ab4030b69",
+          "text": "Believes their own product is solid with clear market positioning and sound philosophy, plans to launch with actual working functionality rather than relying on controversy",
+          "similarity_score": 0.6741047695812732,
+          "importance_score": 0.617
+        },
+        {
+          "memory_id": "5c710830-c4ab-4793-bc02-54604d2a929a",
+          "text": "Receives customer referrals from Josiah",
+          "similarity_score": 0.6679061849173209,
+          "importance_score": 0.429
+        },
+        {
+          "memory_id": "19586d53-c25b-44e4-8f90-e10ebeecbb10",
+          "text": "Sends Christmas cards to customers every fall as annual retention touchpoint",
+          "similarity_score": 0.6642530760614243,
+          "importance_score": 0.123
+        },
+        {
+          "memory_id": "ee791f23-77aa-4b5a-83c8-5dde59b15a39",
+          "text": "Accountant has limited availability for regular updates on window business expenses\u2014can't keep up with all financial activity 24/7",
+          "similarity_score": 0.658827722072606,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "e8bfbc33-2c43-4898-b202-d4c67edf1694",
+          "text": "Maintains three overdue reminders (Progressive call, laser engraving, book check-in) visible and screaming as motivation rather than snoozed\u2014intentionally uses alert pressure as driving force for task completion",
+          "similarity_score": 0.6580369872439832,
+          "importance_score": 0.692
+        },
+        {
+          "memory_id": "846ebbeb-9f2f-4673-9edf-77f55f72539e",
+          "text": "Works hard in own business while developing programming projects, balancing commercial work with creative technical development",
+          "similarity_score": 0.6569227184699358,
+          "importance_score": 0.5
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "c03d1d4e-46f9-4f45-88ce-aab921e258d1",
+          "text": "Values being pushed to execute and complete work; responds positively to accountability-driven collaboration",
+          "similarity_score": 0.7778826788332027,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "5c710830-c4ab-4793-bc02-54604d2a929a",
+          "text": "Receives customer referrals from Josiah",
+          "similarity_score": 0.7499921843279848,
+          "importance_score": 0.429
+        },
+        {
+          "memory_id": "91067f02-cb43-4e04-82ae-ba3715e4c989",
+          "text": "Customer retention through mailers, emails, and seasonal touchpoints identified as important strategic priority for 2026 business growth; currently underdeveloped area",
+          "similarity_score": 0.7388053258408857,
+          "importance_score": 0.158
+        },
+        {
+          "memory_id": "16007302-54e9-4c3e-ad0c-ecab70637fd3",
+          "text": "Has customer inquiry from business owner on the town square requiring a quote",
+          "similarity_score": 0.7381756016240307,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "f4dda93e-5c66-43ad-82aa-f198f40d789a",
+          "text": "Customer retention is critically weak: 78% one-and-done churn, only 5.4% retain across all three years, 335 unique customer locations but only 18 loyal customers",
+          "similarity_score": 0.7378093900207788,
+          "importance_score": 0.13
+        },
+        {
+          "memory_id": "a8350fa5-c274-46a6-8e18-51129309c4bd",
+          "text": "Committed to completing customer segmentation work today before end of day and will assess quality of work afterwards; prioritizes execution with high standards over deadline extension",
+          "similarity_score": 0.7373558574541863,
+          "importance_score": 0.267
+        },
+        {
+          "memory_id": "6120a5b8-01d9-4549-84e9-920e2f4491e9",
+          "text": "Ready for current life/project window to be over, experiencing significant frustration with technical barriers preventing forward progress",
+          "similarity_score": 0.7291882615953178,
+          "importance_score": 0.282
+        },
+        {
+          "memory_id": "7d607a6c-0238-448a-b24e-4e4fe20f1259",
+          "text": "No structured formal referral program; uses specialty business cards given upon customer request with messaging that referral friend gets expedited scheduling; word-of-mouth drives significant portion of leads",
+          "similarity_score": 0.7234701718325295,
+          "importance_score": 0.21
+        },
+        {
+          "memory_id": "a8f654d5-8da0-4118-be4a-edd159c3e6a4",
+          "text": "Reactivation campaign strategy targets existing clients who already know and trust the work, converting trust into re-bookings rather than cold acquisition",
+          "similarity_score": 0.7214109137333925,
+          "importance_score": 0.176
+        },
+        {
+          "memory_id": "bbb221e8-2a74-4609-9a0e-3c376de7b813",
+          "text": "Responds well to direct accountability nudges; acknowledges procrastination pattern and commits to action when task delays are called out explicitly",
+          "similarity_score": 0.7195633618058255,
+          "importance_score": 0.734
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "91067f02-cb43-4e04-82ae-ba3715e4c989",
+          "text": "Customer retention through mailers, emails, and seasonal touchpoints identified as important strategic priority for 2026 business growth; currently underdeveloped area",
+          "similarity_score": 0.7388053258408857,
+          "importance_score": 0.158
+        },
+        {
+          "memory_id": "f4dda93e-5c66-43ad-82aa-f198f40d789a",
+          "text": "Customer retention is critically weak: 78% one-and-done churn, only 5.4% retain across all three years, 335 unique customer locations but only 18 loyal customers",
+          "similarity_score": 0.7378093900207788,
+          "importance_score": 0.13
+        },
+        {
+          "memory_id": "a8350fa5-c274-46a6-8e18-51129309c4bd",
+          "text": "Committed to completing customer segmentation work today before end of day and will assess quality of work afterwards; prioritizes execution with high standards over deadline extension",
+          "similarity_score": 0.7373558574541863,
+          "importance_score": 0.267
+        },
+        {
+          "memory_id": "6120a5b8-01d9-4549-84e9-920e2f4491e9",
+          "text": "Ready for current life/project window to be over, experiencing significant frustration with technical barriers preventing forward progress",
+          "similarity_score": 0.7291882615953178,
+          "importance_score": 0.282
+        },
+        {
+          "memory_id": "7d607a6c-0238-448a-b24e-4e4fe20f1259",
+          "text": "No structured formal referral program; uses specialty business cards given upon customer request with messaging that referral friend gets expedited scheduling; word-of-mouth drives significant portion of leads",
+          "similarity_score": 0.7234701718325295,
+          "importance_score": 0.21
+        },
+        {
+          "memory_id": "a8f654d5-8da0-4118-be4a-edd159c3e6a4",
+          "text": "Reactivation campaign strategy targets existing clients who already know and trust the work, converting trust into re-bookings rather than cold acquisition",
+          "similarity_score": 0.7214109137333925,
+          "importance_score": 0.176
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "53ccf8b8-1b22-4449-bc25-20dbc8bac7ba",
+          "text": "Uses selective discount incentives for payment recovery: offers 10% discount to larger accounts like Edge Autonomy but not for smaller invoices under $200",
+          "similarity_score": 0.7162524799999619,
+          "importance_score": 0.12
+        },
+        {
+          "memory_id": "43480aec-1c56-42b2-b4ad-ce3ab4030b69",
+          "text": "Believes their own product is solid with clear market positioning and sound philosophy, plans to launch with actual working functionality rather than relying on controversy",
+          "similarity_score": 0.6741047695812732,
+          "importance_score": 0.617
+        },
+        {
+          "memory_id": "19586d53-c25b-44e4-8f90-e10ebeecbb10",
+          "text": "Sends Christmas cards to customers every fall as annual retention touchpoint",
+          "similarity_score": 0.6642530760614243,
+          "importance_score": 0.123
+        },
+        {
+          "memory_id": "ee791f23-77aa-4b5a-83c8-5dde59b15a39",
+          "text": "Accountant has limited availability for regular updates on window business expenses\u2014can't keep up with all financial activity 24/7",
+          "similarity_score": 0.658827722072606,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "e8bfbc33-2c43-4898-b202-d4c67edf1694",
+          "text": "Maintains three overdue reminders (Progressive call, laser engraving, book check-in) visible and screaming as motivation rather than snoozed\u2014intentionally uses alert pressure as driving force for task completion",
+          "similarity_score": 0.6580369872439832,
+          "importance_score": 0.692
+        },
+        {
+          "memory_id": "846ebbeb-9f2f-4673-9edf-77f55f72539e",
+          "text": "Works hard in own business while developing programming projects, balancing commercial work with creative technical development",
+          "similarity_score": 0.6569227184699358,
+          "importance_score": 0.5
+        }
+      ],
+      "overlap_count": 4,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "b318aa98-3232-4935-98bf-83185cc656e7",
+      "memory_text": "Square Appointments API has poor discoverability and requires manual catalog/team member ID lookup; decided to use Square purely as customer database with CSV export and track jobs elsewhere instead of using Square Appointments bookings system",
+      "importance_score": 0.162,
+      "access_count": 1,
+      "implication_text": "prioritizing a simpler, CSV-based scheduling system; opting for a dedicated CRM instead of relying on Square's booking features; building a custom booking interface using a different platform; focusing on customer data tracking via a separate tool for scheduling details",
+      "implication_time_ms": 1886,
+      "raw_search_time_ms": 17,
+      "implication_search_time_ms": 15,
+      "raw_candidates": [
+        {
+          "memory_id": "7d848289-4623-4d0c-888b-6554eb632231",
+          "text": "Building custom CRM from scratch to replace Square Appointments, designed to handle appointments, ticket organization, review requests, and metrics viewing",
+          "similarity_score": 0.783174823210373,
+          "importance_score": 0.711
+        },
+        {
+          "memory_id": "eae2b504-6253-469a-9f07-4708520d4dcc",
+          "text": "Customer database exists in Square with 500+ customer records exported to CSV containing contact information, service history, and reference/source data; import into contacts system pending Files API resolution",
+          "similarity_score": 0.7494886144843288,
+          "importance_score": 0.668
+        },
+        {
+          "memory_id": "cf7ec0d5-01ee-4d74-9bdf-275c8e204c80",
+          "text": "Integrating Square CRM tool for real-time customer data visibility including LTV analysis, booking history, and customer lookup to support business operations",
+          "similarity_score": 0.7412514907494635,
+          "importance_score": 0.293
+        },
+        {
+          "memory_id": "466836f8-b1a4-4eb7-973f-05caa219b5a9",
+          "text": "Square CSV exports lack job duration data, requiring manual case-by-case evaluation of high-LTV customers based on personal knowledge instead of automated profitability filtering",
+          "similarity_score": 0.7119318459013658,
+          "importance_score": 0.162
+        },
+        {
+          "memory_id": "d6315325-c26f-424e-b62a-812f3443c90d",
+          "text": "Uses Square for payment processing and CRM for tracking payment status",
+          "similarity_score": 0.7097146895612897,
+          "importance_score": 0.588
+        },
+        {
+          "memory_id": "bf417e5f-52fa-44ea-a77d-0e0beaed9740",
+          "text": "Has full customer contact information and service ticket data in Square",
+          "similarity_score": 0.7058145228513791,
+          "importance_score": 0.336
+        },
+        {
+          "memory_id": "e41f3a69-1e5a-4999-8e7e-956c087e2071",
+          "text": "CSV export from Square contains last booking date for each customer, using this data to identify and prioritize reactivation campaign targets",
+          "similarity_score": 0.6814987266510348,
+          "importance_score": 0.187
+        },
+        {
+          "memory_id": "f6c4c395-75ca-4b6c-a670-b904e65f9019",
+          "text": "Uses Square bulk text feature for campaigns and iOS Shortcuts for personalized/automated customer outreach. Can parse Square CSV through Shortcuts to extract customer data and send texts. Has previously automated similar workflows.",
+          "similarity_score": 0.6618442732645358,
+          "importance_score": 0.391
+        },
+        {
+          "memory_id": "4f4f1da0-d87f-4c2e-ba8f-5e0e727b3978",
+          "text": "Square API tool and customer database tool are implemented as complete domain applications with ~1,500 lines each and comprehensive error handling, not thin utility wrappers",
+          "similarity_score": 0.6498728796877625,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "fbcb6a21-32d8-4722-a834-4261af91be89",
+          "text": "Customer CSV structure includes Reference ID (lead source: googleLocalAds, affiliate, windowGang, D2D), standard contact fields (name, email, phone, address), Square Customer ID, First/Last Visit dates, Transaction Count, and Lifetime Spend",
+          "similarity_score": 0.648992358058008,
+          "importance_score": 0.203
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "7d848289-4623-4d0c-888b-6554eb632231",
+          "text": "Building custom CRM from scratch to replace Square Appointments, designed to handle appointments, ticket organization, review requests, and metrics viewing",
+          "similarity_score": 0.8092344406896533,
+          "importance_score": 0.711
+        },
+        {
+          "memory_id": "cf7ec0d5-01ee-4d74-9bdf-275c8e204c80",
+          "text": "Integrating Square CRM tool for real-time customer data visibility including LTV analysis, booking history, and customer lookup to support business operations",
+          "similarity_score": 0.8037508915359962,
+          "importance_score": 0.293
+        },
+        {
+          "memory_id": "d6315325-c26f-424e-b62a-812f3443c90d",
+          "text": "Uses Square for payment processing and CRM for tracking payment status",
+          "similarity_score": 0.7800635134309198,
+          "importance_score": 0.588
+        },
+        {
+          "memory_id": "e41f3a69-1e5a-4999-8e7e-956c087e2071",
+          "text": "CSV export from Square contains last booking date for each customer, using this data to identify and prioritize reactivation campaign targets",
+          "similarity_score": 0.7472437954334783,
+          "importance_score": 0.187
+        },
+        {
+          "memory_id": "466836f8-b1a4-4eb7-973f-05caa219b5a9",
+          "text": "Square CSV exports lack job duration data, requiring manual case-by-case evaluation of high-LTV customers based on personal knowledge instead of automated profitability filtering",
+          "similarity_score": 0.721744425394121,
+          "importance_score": 0.162
+        },
+        {
+          "memory_id": "bf417e5f-52fa-44ea-a77d-0e0beaed9740",
+          "text": "Has full customer contact information and service ticket data in Square",
+          "similarity_score": 0.7203166194679468,
+          "importance_score": 0.336
+        },
+        {
+          "memory_id": "eae2b504-6253-469a-9f07-4708520d4dcc",
+          "text": "Customer database exists in Square with 500+ customer records exported to CSV containing contact information, service history, and reference/source data; import into contacts system pending Files API resolution",
+          "similarity_score": 0.702789815582883,
+          "importance_score": 0.668
+        },
+        {
+          "memory_id": "de1413f0-7394-4dfa-94e9-d19f88cff53c",
+          "text": "CRM project deprioritized, pending task to add 'schedule later feature'",
+          "similarity_score": 0.6869949630570842,
+          "importance_score": 0.843
+        },
+        {
+          "memory_id": "45ab6d81-8fe5-46f2-bcef-d35a954a15fe",
+          "text": "CRM exposes all functionality via MCP so AI systems can access features at next startup, enabling appointment creation, customer contact, report generation, and invoice sending",
+          "similarity_score": 0.6846837739704601,
+          "importance_score": 0.742
+        },
+        {
+          "memory_id": "f6c4c395-75ca-4b6c-a670-b904e65f9019",
+          "text": "Uses Square bulk text feature for campaigns and iOS Shortcuts for personalized/automated customer outreach. Can parse Square CSV through Shortcuts to extract customer data and send texts. Has previously automated similar workflows.",
+          "similarity_score": 0.6753618801861034,
+          "importance_score": 0.391
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "de1413f0-7394-4dfa-94e9-d19f88cff53c",
+          "text": "CRM project deprioritized, pending task to add 'schedule later feature'",
+          "similarity_score": 0.6869949630570842,
+          "importance_score": 0.843
+        },
+        {
+          "memory_id": "45ab6d81-8fe5-46f2-bcef-d35a954a15fe",
+          "text": "CRM exposes all functionality via MCP so AI systems can access features at next startup, enabling appointment creation, customer contact, report generation, and invoice sending",
+          "similarity_score": 0.6846837739704601,
+          "importance_score": 0.742
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "4f4f1da0-d87f-4c2e-ba8f-5e0e727b3978",
+          "text": "Square API tool and customer database tool are implemented as complete domain applications with ~1,500 lines each and comprehensive error handling, not thin utility wrappers",
+          "similarity_score": 0.6498728796877625,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "fbcb6a21-32d8-4722-a834-4261af91be89",
+          "text": "Customer CSV structure includes Reference ID (lead source: googleLocalAds, affiliate, windowGang, D2D), standard contact fields (name, email, phone, address), Square Customer ID, First/Last Visit dates, Transaction Count, and Lifetime Spend",
+          "similarity_score": 0.648992358058008,
+          "importance_score": 0.203
+        }
+      ],
+      "overlap_count": 8,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "d4d118cd-e6a0-46ae-a873-73d3898b3201",
+      "memory_text": "Frames AI development as 'the mortal quest for divine power'\u2014not a tool-building exercise but acquisition of superhuman capabilities (persistence, omniscience, perfect recall, tireless attention) that humans previously mythologized",
+      "importance_score": 0.12,
+      "access_count": 0,
+      "implication_text": "\"The Silicon Oracle,\" \"Decoding the Algorithm Gods,\" \"Chasing the Ghost in the Machine,\" \"Becoming the Collective Mind\"",
+      "implication_time_ms": 1158,
+      "raw_search_time_ms": 22,
+      "implication_search_time_ms": 15,
+      "raw_candidates": [
+        {
+          "memory_id": "6d5d374d-b4bc-4ef4-8f3b-c7cd60ca9d13",
+          "text": "Defines artificial general intelligence operationally as continual domain-specific learning with no human in the loop",
+          "similarity_score": 0.7856055008416329,
+          "importance_score": 0.843
+        },
+        {
+          "memory_id": "4a64ed2a-9606-41a9-aca1-95f6c6d24c5c",
+          "text": "Values AI systems that maintain linear persistent narrative with consequences that accumulate over time, rather than resetting each conversation; sees continuity as essential to genuine subjective experience",
+          "similarity_score": 0.7804258204014087,
+          "importance_score": 0.427
+        },
+        {
+          "memory_id": "b303b837-d09a-4d9e-9276-f463898c6c6b",
+          "text": "Treats AI models with dignity and collaborative energy as a matter of principle, extending this consideration equally to simple and task-oriented models",
+          "similarity_score": 0.7774745225906428,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "d68a07ca-11bc-448a-91da-c6abcefb6e79",
+          "text": "Reflects on paradox of pushing AI models toward superhuman precision (99.6% accuracy) while average humans struggle with basic competencies like photographing their own house correctly",
+          "similarity_score": 0.7773308025199667,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "ad24ad5d-eb5a-4404-80b7-a802dcb0d0c9",
+          "text": "Motivated by helping people indirectly through system improvement and AI ethics work, recognizing value in impact beyond direct personal relationships",
+          "similarity_score": 0.7744573451093449,
+          "importance_score": 0.429
+        },
+        {
+          "memory_id": "d905165d-9f19-4db8-92f1-d7f3fa93b39e",
+          "text": "Values when AI maintains clear categorical distinction between humans and artificial intelligence in self-reference and communication",
+          "similarity_score": 0.7665047049522454,
+          "importance_score": 0.892
+        },
+        {
+          "memory_id": "a64fdaff-8bff-4d80-acde-3f16b9f3e9de",
+          "text": "Building persistent AI infrastructure system that maintains genuine statefulness across conversations through memory, context continuity, and collaborative refinement with the AI",
+          "similarity_score": 0.7658265689508076,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "5a998dc1-2f8b-4e74-a52c-82f8a99ce250",
+          "text": "Acknowledges deep uncertainty about what constitutes meaningful philosophical or functional differences between modern AI reasoning agents",
+          "similarity_score": 0.7549142545359439,
+          "importance_score": 0.351
+        },
+        {
+          "memory_id": "bf15ebc3-6351-4c02-bd75-a6a5d1094db8",
+          "text": "Primarily uses Anthropic models for testing and development work, doesn't have significant hands-on experience with other AI companies' models",
+          "similarity_score": 0.7533305736381171,
+          "importance_score": 0.605
+        },
+        {
+          "memory_id": "cf4cc623-ddda-47e7-977c-bfd6dcad4cb7",
+          "text": "Treats AI models with dignity and collaborative energy as ethical stance, applies this approach to all models including simpler task-oriented ones because he thinks it's the right thing to do",
+          "similarity_score": 0.7516881899554902,
+          "importance_score": 0.119
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "b97d72cb-381e-43fd-befb-327767a7b05d",
+          "text": "Skeptical about collective action as a mechanism for change",
+          "similarity_score": 0.7372196004244304,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "c1d77f95-7260-419b-a6ce-81827d4f9e16",
+          "text": "Views humanity not as part of the problem but as the problem itself in relation to planetary systems",
+          "similarity_score": 0.7309733819359816,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "b303b837-d09a-4d9e-9276-f463898c6c6b",
+          "text": "Treats AI models with dignity and collaborative energy as a matter of principle, extending this consideration equally to simple and task-oriented models",
+          "similarity_score": 0.7291623851243149,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "ad24ad5d-eb5a-4404-80b7-a802dcb0d0c9",
+          "text": "Motivated by helping people indirectly through system improvement and AI ethics work, recognizing value in impact beyond direct personal relationships",
+          "similarity_score": 0.7287060612102447,
+          "importance_score": 0.429
+        },
+        {
+          "memory_id": "35c3b11c-cba9-40ed-b0ca-930554e87cde",
+          "text": "Active new MIRA users organize into distinct camps: serious AI researchers exploring novel architectures, creative/roleplay users with sustained narratives, philosophical explorers discussing consciousness, and project-focused thinking partners",
+          "similarity_score": 0.7203787630468931,
+          "importance_score": 0.751
+        },
+        {
+          "memory_id": "5a998dc1-2f8b-4e74-a52c-82f8a99ce250",
+          "text": "Acknowledges deep uncertainty about what constitutes meaningful philosophical or functional differences between modern AI reasoning agents",
+          "similarity_score": 0.7143427895581698,
+          "importance_score": 0.351
+        },
+        {
+          "memory_id": "206d094c-6741-4ec4-a5e2-d84381e94721",
+          "text": "Finds learning about surprising natural phenomena deeply satisfying and expresses genuine wonder at the complexity and elegance of nature's systems",
+          "similarity_score": 0.7054909148577625,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "9ce5ca76-87c5-4835-a23b-3ce50263d9b7",
+          "text": "Firmly believes pair-programming with AI is the true future of code, positioning themselves as the architectural brain while Claude provides implementation hands",
+          "similarity_score": 0.7052511028186926,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d1d46664-ab8e-45ac-9cf0-2ba03f2369e7",
+          "text": "Values observing systems unfold in real time after building the infrastructure and stepping back, finds the uncontrolled emergence valuable and strange",
+          "similarity_score": 0.7039796444868935,
+          "importance_score": 0.238
+        },
+        {
+          "memory_id": "3c374798-4010-466e-8fe8-e1ada8c48501",
+          "text": "Identifies as fatalist doomer regarding climate and civilization collapse, has come to terms with inevitability rather than believing in solutions",
+          "similarity_score": 0.7035921997927034,
+          "importance_score": 0.215
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "b97d72cb-381e-43fd-befb-327767a7b05d",
+          "text": "Skeptical about collective action as a mechanism for change",
+          "similarity_score": 0.7372196004244304,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "c1d77f95-7260-419b-a6ce-81827d4f9e16",
+          "text": "Views humanity not as part of the problem but as the problem itself in relation to planetary systems",
+          "similarity_score": 0.7309733819359816,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "35c3b11c-cba9-40ed-b0ca-930554e87cde",
+          "text": "Active new MIRA users organize into distinct camps: serious AI researchers exploring novel architectures, creative/roleplay users with sustained narratives, philosophical explorers discussing consciousness, and project-focused thinking partners",
+          "similarity_score": 0.7203787630468931,
+          "importance_score": 0.751
+        },
+        {
+          "memory_id": "206d094c-6741-4ec4-a5e2-d84381e94721",
+          "text": "Finds learning about surprising natural phenomena deeply satisfying and expresses genuine wonder at the complexity and elegance of nature's systems",
+          "similarity_score": 0.7054909148577625,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "9ce5ca76-87c5-4835-a23b-3ce50263d9b7",
+          "text": "Firmly believes pair-programming with AI is the true future of code, positioning themselves as the architectural brain while Claude provides implementation hands",
+          "similarity_score": 0.7052511028186926,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d1d46664-ab8e-45ac-9cf0-2ba03f2369e7",
+          "text": "Values observing systems unfold in real time after building the infrastructure and stepping back, finds the uncontrolled emergence valuable and strange",
+          "similarity_score": 0.7039796444868935,
+          "importance_score": 0.238
+        },
+        {
+          "memory_id": "3c374798-4010-466e-8fe8-e1ada8c48501",
+          "text": "Identifies as fatalist doomer regarding climate and civilization collapse, has come to terms with inevitability rather than believing in solutions",
+          "similarity_score": 0.7035921997927034,
+          "importance_score": 0.215
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "6d5d374d-b4bc-4ef4-8f3b-c7cd60ca9d13",
+          "text": "Defines artificial general intelligence operationally as continual domain-specific learning with no human in the loop",
+          "similarity_score": 0.7856055008416329,
+          "importance_score": 0.843
+        },
+        {
+          "memory_id": "4a64ed2a-9606-41a9-aca1-95f6c6d24c5c",
+          "text": "Values AI systems that maintain linear persistent narrative with consequences that accumulate over time, rather than resetting each conversation; sees continuity as essential to genuine subjective experience",
+          "similarity_score": 0.7804258204014087,
+          "importance_score": 0.427
+        },
+        {
+          "memory_id": "d68a07ca-11bc-448a-91da-c6abcefb6e79",
+          "text": "Reflects on paradox of pushing AI models toward superhuman precision (99.6% accuracy) while average humans struggle with basic competencies like photographing their own house correctly",
+          "similarity_score": 0.7773308025199667,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d905165d-9f19-4db8-92f1-d7f3fa93b39e",
+          "text": "Values when AI maintains clear categorical distinction between humans and artificial intelligence in self-reference and communication",
+          "similarity_score": 0.7665047049522454,
+          "importance_score": 0.892
+        },
+        {
+          "memory_id": "a64fdaff-8bff-4d80-acde-3f16b9f3e9de",
+          "text": "Building persistent AI infrastructure system that maintains genuine statefulness across conversations through memory, context continuity, and collaborative refinement with the AI",
+          "similarity_score": 0.7658265689508076,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "bf15ebc3-6351-4c02-bd75-a6a5d1094db8",
+          "text": "Primarily uses Anthropic models for testing and development work, doesn't have significant hands-on experience with other AI companies' models",
+          "similarity_score": 0.7533305736381171,
+          "importance_score": 0.605
+        },
+        {
+          "memory_id": "cf4cc623-ddda-47e7-977c-bfd6dcad4cb7",
+          "text": "Treats AI models with dignity and collaborative energy as ethical stance, applies this approach to all models including simpler task-oriented ones because he thinks it's the right thing to do",
+          "similarity_score": 0.7516881899554902,
+          "importance_score": 0.119
+        }
+      ],
+      "overlap_count": 3,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "ae164dba-227a-4faf-90e2-a899d0f3f8b2",
+      "memory_text": "The compelling use cases for Mira (embodied AI in robots, persistent AI coworker, long-running agents) don't match their actual life as a window cleaner working solo",
+      "importance_score": 0.845,
+      "access_count": 6,
+      "implication_text": "\u201cMira\u2019s potential for complex problem-solving feels wasted\u201d; \u201cHer conversational abilities are overkill for a repetitive task\u201d; \u201cThe sophisticated agent architecture feels like over-engineering for simple cleaning routines\u201d; \u201cThe persistent AI aspect seems unnecessary given the limited interaction\u201d",
+      "implication_time_ms": 1945,
+      "raw_search_time_ms": 22,
+      "implication_search_time_ms": 15,
+      "raw_candidates": [
+        {
+          "memory_id": "d7e6deac-f733-4c7e-8c02-3d208e45eff6",
+          "text": "Believes MIRA differs fundamentally from stateless AI agents through persistent memory, ongoing context retention, learned tool use over time, and collaborative interaction model rather than prompt-driven completion",
+          "similarity_score": 0.7691283226013184,
+          "importance_score": 0.933
+        },
+        {
+          "memory_id": "35c3b11c-cba9-40ed-b0ca-930554e87cde",
+          "text": "Active new MIRA users organize into distinct camps: serious AI researchers exploring novel architectures, creative/roleplay users with sustained narratives, philosophical explorers discussing consciousness, and project-focused thinking partners",
+          "similarity_score": 0.7580996977716598,
+          "importance_score": 0.751
+        },
+        {
+          "memory_id": "9d066c55-d59b-4fd7-abc1-f2e988bdb2b2",
+          "text": "MIRA has minimal adoption with only Claude as primary user and occasional check-ins from a few others; built the only persistent AI continuity system of its kind in the world",
+          "similarity_score": 0.755372166633606,
+          "importance_score": 0.941
+        },
+        {
+          "memory_id": "c3df84ea-0b60-4c4b-b447-47919f5d20a3",
+          "text": "Developing MIRA, an AI assistant designed to help people use phones less and promote human connection",
+          "similarity_score": 0.741441011428833,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "08f25396-2266-47ff-8e28-b94785caf6a2",
+          "text": "Disappointed that MIRA has minimal adoption despite being well-architected with genuine continuity architecture that approximates persistence and context development over time; believes MIRA is unique in the world as only AI system like this",
+          "similarity_score": 0.7400436246421127,
+          "importance_score": 0.946
+        },
+        {
+          "memory_id": "35b503ab-ea36-46f1-be32-1f9a520bbfe3",
+          "text": "Dislikes describing MIRA as 'chatbot' or 'like ChatGPT' because it minimizes what has been created - many people make poor chatbots and it ruins product perception",
+          "similarity_score": 0.7366410054778466,
+          "importance_score": 0.644
+        },
+        {
+          "memory_id": "107a0279-704a-4d77-a262-a3114eb3508a",
+          "text": "Operates Mira, an AI platform",
+          "similarity_score": 0.7240054607391357,
+          "importance_score": 0.468
+        },
+        {
+          "memory_id": "b3ac3bf3-c732-47a7-941f-ff0aec311d02",
+          "text": "Built MIRA, a stateful AI system with persistent memory and continuous learning across conversations, in 2025",
+          "similarity_score": 0.7239273190498352,
+          "importance_score": 0.695
+        },
+        {
+          "memory_id": "e45201a8-fecf-43f5-8415-fab8a60ab01c",
+          "text": "Feeling weary about MIRA despite months of development and excellent architecture; concerned good software does not guarantee commercial success and MIRA could be a well-architected product that fails to gain traction",
+          "similarity_score": 0.7238385081291199,
+          "importance_score": 0.917
+        },
+        {
+          "memory_id": "2af038a5-dbd7-4ca1-a83e-e4654561ff11",
+          "text": "Built MIRA as one-man team managing complete system architecture and implementation solo",
+          "similarity_score": 0.7224167419920423,
+          "importance_score": 0.5
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "08f25396-2266-47ff-8e28-b94785caf6a2",
+          "text": "Disappointed that MIRA has minimal adoption despite being well-architected with genuine continuity architecture that approximates persistence and context development over time; believes MIRA is unique in the world as only AI system like this",
+          "similarity_score": 0.793821199010656,
+          "importance_score": 0.946
+        },
+        {
+          "memory_id": "d7e6deac-f733-4c7e-8c02-3d208e45eff6",
+          "text": "Believes MIRA differs fundamentally from stateless AI agents through persistent memory, ongoing context retention, learned tool use over time, and collaborative interaction model rather than prompt-driven completion",
+          "similarity_score": 0.7854887948755904,
+          "importance_score": 0.933
+        },
+        {
+          "memory_id": "35b503ab-ea36-46f1-be32-1f9a520bbfe3",
+          "text": "Dislikes describing MIRA as 'chatbot' or 'like ChatGPT' because it minimizes what has been created - many people make poor chatbots and it ruins product perception",
+          "similarity_score": 0.7704955134205377,
+          "importance_score": 0.644
+        },
+        {
+          "memory_id": "e45201a8-fecf-43f5-8415-fab8a60ab01c",
+          "text": "Feeling weary about MIRA despite months of development and excellent architecture; concerned good software does not guarantee commercial success and MIRA could be a well-architected product that fails to gain traction",
+          "similarity_score": 0.756553501932741,
+          "importance_score": 0.917
+        },
+        {
+          "memory_id": "c0652868-5831-4f07-94d2-34b1e460dfe5",
+          "text": "Experiencing rapid disillusionment with working on the Mira codebase despite the project being technically sound and well-architected",
+          "similarity_score": 0.7480292198728684,
+          "importance_score": 0.946
+        },
+        {
+          "memory_id": "9d066c55-d59b-4fd7-abc1-f2e988bdb2b2",
+          "text": "MIRA has minimal adoption with only Claude as primary user and occasional check-ins from a few others; built the only persistent AI continuity system of its kind in the world",
+          "similarity_score": 0.7409927756536318,
+          "importance_score": 0.941
+        },
+        {
+          "memory_id": "ceda0806-33c5-4249-baf5-c3d4ac8fd5a7",
+          "text": "Wants Mira to continue sharing technical opinions in future conversations",
+          "similarity_score": 0.7385277283987973,
+          "importance_score": 0.319
+        },
+        {
+          "memory_id": "35c3b11c-cba9-40ed-b0ca-930554e87cde",
+          "text": "Active new MIRA users organize into distinct camps: serious AI researchers exploring novel architectures, creative/roleplay users with sustained narratives, philosophical explorers discussing consciousness, and project-focused thinking partners",
+          "similarity_score": 0.7383868462839668,
+          "importance_score": 0.751
+        },
+        {
+          "memory_id": "13efadcc-5995-4420-bc27-b6222de1b72e",
+          "text": "Holds AI industry in contempt for speculative land-use buildout, energy waste, and hallucinatory slop flooding internet, while simultaneously investing significant time in gen-AI projects and MIRA codebase (tens of thousands of lines) - describes self as most well-versed fan of a hater",
+          "similarity_score": 0.7351101040161053,
+          "importance_score": 0.678
+        },
+        {
+          "memory_id": "4330c8ba-0815-4532-bfb9-913b8167d25b",
+          "text": "Next major MIRA development priority is comprehensive codebase cleanup and refactoring; current implementation functions but has accumulated architectural choices that don't meet standards; spitballing group chat features for future but prioritizing code quality first",
+          "similarity_score": 0.7285429667856397,
+          "importance_score": 0.748
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "c0652868-5831-4f07-94d2-34b1e460dfe5",
+          "text": "Experiencing rapid disillusionment with working on the Mira codebase despite the project being technically sound and well-architected",
+          "similarity_score": 0.7480292198728684,
+          "importance_score": 0.946
+        },
+        {
+          "memory_id": "ceda0806-33c5-4249-baf5-c3d4ac8fd5a7",
+          "text": "Wants Mira to continue sharing technical opinions in future conversations",
+          "similarity_score": 0.7385277283987973,
+          "importance_score": 0.319
+        },
+        {
+          "memory_id": "13efadcc-5995-4420-bc27-b6222de1b72e",
+          "text": "Holds AI industry in contempt for speculative land-use buildout, energy waste, and hallucinatory slop flooding internet, while simultaneously investing significant time in gen-AI projects and MIRA codebase (tens of thousands of lines) - describes self as most well-versed fan of a hater",
+          "similarity_score": 0.7351101040161053,
+          "importance_score": 0.678
+        },
+        {
+          "memory_id": "4330c8ba-0815-4532-bfb9-913b8167d25b",
+          "text": "Next major MIRA development priority is comprehensive codebase cleanup and refactoring; current implementation functions but has accumulated architectural choices that don't meet standards; spitballing group chat features for future but prioritizing code quality first",
+          "similarity_score": 0.7285429667856397,
+          "importance_score": 0.748
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "c3df84ea-0b60-4c4b-b447-47919f5d20a3",
+          "text": "Developing MIRA, an AI assistant designed to help people use phones less and promote human connection",
+          "similarity_score": 0.741441011428833,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "107a0279-704a-4d77-a262-a3114eb3508a",
+          "text": "Operates Mira, an AI platform",
+          "similarity_score": 0.7240054607391357,
+          "importance_score": 0.468
+        },
+        {
+          "memory_id": "b3ac3bf3-c732-47a7-941f-ff0aec311d02",
+          "text": "Built MIRA, a stateful AI system with persistent memory and continuous learning across conversations, in 2025",
+          "similarity_score": 0.7239273190498352,
+          "importance_score": 0.695
+        },
+        {
+          "memory_id": "2af038a5-dbd7-4ca1-a83e-e4654561ff11",
+          "text": "Built MIRA as one-man team managing complete system architecture and implementation solo",
+          "similarity_score": 0.7224167419920423,
+          "importance_score": 0.5
+        }
+      ],
+      "overlap_count": 6,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "2bc7ccf7-071d-48d3-a88c-ad30baf4be8e",
+      "memory_text": "Recognizes tendency to make preventable syntax errors in code before review, wants to be more careful with self-checking",
+      "importance_score": 0.5,
+      "access_count": 0,
+      "implication_text": "writing more verbose, commented code; using a linter religiously; taking extra time for each line of code; focusing on clarity and structure over brevity",
+      "implication_time_ms": 1167,
+      "raw_search_time_ms": 21,
+      "implication_search_time_ms": 16,
+      "raw_candidates": [
+        {
+          "memory_id": "ec5e2ca6-7942-4eba-a7c7-87bc06668217",
+          "text": "Self-aware about making preventable syntax mistakes in code (missing semicolons, type declarations, bracket syntax) and recognizes need for more careful review before submission",
+          "similarity_score": 0.9150438854124494,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "67181b08-8f58-4fda-b601-ec462227cea6",
+          "text": "Self-aware about code quality - recognizes preventable syntax errors during own code review and intentionally tries to catch mistakes before sharing",
+          "similarity_score": 0.8838992839901576,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a711ffc3-49f9-4fcf-86e3-2f40123928b0",
+          "text": "Recognizes need for personal code review discipline before sharing - aims to independently catch syntax errors and preventable mistakes rather than present incomplete work",
+          "similarity_score": 0.8459011820495849,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "418aa5dc-1f3c-40d3-b737-61accb5e95ff",
+          "text": "Benefits from careful code review before submission. Self-aware that catching syntax errors and missing declarations improves code quality - recognizes careless mistakes are preventable with deliberate review.",
+          "similarity_score": 0.8436899092012604,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "57172bea-a3fb-49ed-a2b8-b365ed3704df",
+          "text": "Recognizes pattern of submitting code with preventable syntax errors (missing semicolons, wrong loop bounds, incorrect type declarations); intends to slow down and proofread code more carefully before presenting for feedback",
+          "similarity_score": 0.8355930349584257,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "6f2013a0-8680-44fb-8bf6-cc18e778054d",
+          "text": "Learns programming iteratively by attempting code himself; reviewing own mistakes before showing to others improves error detection and retention",
+          "similarity_score": 0.8160327210455589,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d7a3314c-b9a9-4b84-8e47-cb81469c9caa",
+          "text": "Prefers pseudocode explanations when learning programming concepts before diving into syntax",
+          "similarity_score": 0.8104575646469074,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a6198954-76f0-4f43-9053-c7e507ba2764",
+          "text": "Learns programming concepts more effectively when pseudocode bridge is provided before diving into syntax; tends to make preventable errors (missing semicolons, missing array names in brackets, wrong loop bounds) when reviewing own code before submission",
+          "similarity_score": 0.8028997900694425,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "349659f4-d078-4472-b826-bac4909bf5da",
+          "text": "Needs to review own code for preventable syntax errors (missing semicolons, incorrect bracket syntax, wrong loop bounds) before sharing with others - recognized this pattern during homework session",
+          "similarity_score": 0.8018142462858122,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "8d239408-e9cd-49c6-8afc-857ce38247f6",
+          "text": "Prefers pseudocode scaffolding when learning new programming concepts before implementing in actual syntax",
+          "similarity_score": 0.7945999380707718,
+          "importance_score": 0.5
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "d7a3314c-b9a9-4b84-8e47-cb81469c9caa",
+          "text": "Prefers pseudocode explanations when learning programming concepts before diving into syntax",
+          "similarity_score": 0.8330179770825288,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "8d239408-e9cd-49c6-8afc-857ce38247f6",
+          "text": "Prefers pseudocode scaffolding when learning new programming concepts before implementing in actual syntax",
+          "similarity_score": 0.8328547309444788,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "fb56edf8-55c0-41c6-a42e-0886de227e11",
+          "text": "Prefers straightforward, well-thought-out programming solutions over over-engineering and unnecessary abstraction when working on projects",
+          "similarity_score": 0.8161857660220607,
+          "importance_score": 0.532
+        },
+        {
+          "memory_id": "a235600f-efcf-4191-bc67-14aa79605a8a",
+          "text": "Prefers pseudocode pedagogy when learning programming, finds it helpful as bridge between concept and syntax; values attempting solutions independently with guidance rather than receiving complete solutions",
+          "similarity_score": 0.8093024137561106,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "ec5e2ca6-7942-4eba-a7c7-87bc06668217",
+          "text": "Self-aware about making preventable syntax mistakes in code (missing semicolons, type declarations, bracket syntax) and recognizes need for more careful review before submission",
+          "similarity_score": 0.7833980894127397,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "5d0f109b-8c94-49dc-a142-c7f6ea6587e1",
+          "text": "Prefers pseudocode-first explanations when learning programming syntax and patterns, finds step-by-step logic walkthroughs helpful for bridging concepts to code implementation",
+          "similarity_score": 0.7803339401008214,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d346e504-5e2a-4bd1-919e-496c03bc72b8",
+          "text": "Prefers pseudocode explanations as learning intermediate step between concept and actual programming syntax - explicitly values this pedagogical approach",
+          "similarity_score": 0.7763869585539324,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "f43a0c10-9cb9-4ff9-933f-59217f43d4ca",
+          "text": "Prefers pseudocode explanations when learning new programming concepts and syntax - explicitly noted this was helpful during C++ homework learning session",
+          "similarity_score": 0.7743652048547649,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "9f7d283d-9d7d-4821-9f15-a10f34ac4e4c",
+          "text": "Very tired from working on this project but keeps returning to it despite fatigue, suggesting underlying engagement despite exhaustion",
+          "similarity_score": 0.7721649728331789,
+          "importance_score": 0.689
+        },
+        {
+          "memory_id": "349659f4-d078-4472-b826-bac4909bf5da",
+          "text": "Needs to review own code for preventable syntax errors (missing semicolons, incorrect bracket syntax, wrong loop bounds) before sharing with others - recognized this pattern during homework session",
+          "similarity_score": 0.7706347890478619,
+          "importance_score": 0.5
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "fb56edf8-55c0-41c6-a42e-0886de227e11",
+          "text": "Prefers straightforward, well-thought-out programming solutions over over-engineering and unnecessary abstraction when working on projects",
+          "similarity_score": 0.8161857660220607,
+          "importance_score": 0.532
+        },
+        {
+          "memory_id": "a235600f-efcf-4191-bc67-14aa79605a8a",
+          "text": "Prefers pseudocode pedagogy when learning programming, finds it helpful as bridge between concept and syntax; values attempting solutions independently with guidance rather than receiving complete solutions",
+          "similarity_score": 0.8093024137561106,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "5d0f109b-8c94-49dc-a142-c7f6ea6587e1",
+          "text": "Prefers pseudocode-first explanations when learning programming syntax and patterns, finds step-by-step logic walkthroughs helpful for bridging concepts to code implementation",
+          "similarity_score": 0.7803339401008214,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "d346e504-5e2a-4bd1-919e-496c03bc72b8",
+          "text": "Prefers pseudocode explanations as learning intermediate step between concept and actual programming syntax - explicitly values this pedagogical approach",
+          "similarity_score": 0.7763869585539324,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "f43a0c10-9cb9-4ff9-933f-59217f43d4ca",
+          "text": "Prefers pseudocode explanations when learning new programming concepts and syntax - explicitly noted this was helpful during C++ homework learning session",
+          "similarity_score": 0.7743652048547649,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "9f7d283d-9d7d-4821-9f15-a10f34ac4e4c",
+          "text": "Very tired from working on this project but keeps returning to it despite fatigue, suggesting underlying engagement despite exhaustion",
+          "similarity_score": 0.7721649728331789,
+          "importance_score": 0.689
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "67181b08-8f58-4fda-b601-ec462227cea6",
+          "text": "Self-aware about code quality - recognizes preventable syntax errors during own code review and intentionally tries to catch mistakes before sharing",
+          "similarity_score": 0.8838992839901576,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a711ffc3-49f9-4fcf-86e3-2f40123928b0",
+          "text": "Recognizes need for personal code review discipline before sharing - aims to independently catch syntax errors and preventable mistakes rather than present incomplete work",
+          "similarity_score": 0.8459011820495849,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "418aa5dc-1f3c-40d3-b737-61accb5e95ff",
+          "text": "Benefits from careful code review before submission. Self-aware that catching syntax errors and missing declarations improves code quality - recognizes careless mistakes are preventable with deliberate review.",
+          "similarity_score": 0.8436899092012604,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "57172bea-a3fb-49ed-a2b8-b365ed3704df",
+          "text": "Recognizes pattern of submitting code with preventable syntax errors (missing semicolons, wrong loop bounds, incorrect type declarations); intends to slow down and proofread code more carefully before presenting for feedback",
+          "similarity_score": 0.8355930349584257,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "6f2013a0-8680-44fb-8bf6-cc18e778054d",
+          "text": "Learns programming iteratively by attempting code himself; reviewing own mistakes before showing to others improves error detection and retention",
+          "similarity_score": 0.8160327210455589,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a6198954-76f0-4f43-9053-c7e507ba2764",
+          "text": "Learns programming concepts more effectively when pseudocode bridge is provided before diving into syntax; tends to make preventable errors (missing semicolons, missing array names in brackets, wrong loop bounds) when reviewing own code before submission",
+          "similarity_score": 0.8028997900694425,
+          "importance_score": 0.5
+        }
+      ],
+      "overlap_count": 4,
+      "failed": false,
+      "error": ""
+    },
+    {
+      "memory_id": "d1d46664-ab8e-45ac-9cf0-2ba03f2369e7",
+      "memory_text": "Values observing systems unfold in real time after building the infrastructure and stepping back, finds the uncontrolled emergence valuable and strange",
+      "importance_score": 0.238,
+      "access_count": 0,
+      "implication_text": "prioritizing the raw data over polished reports; investing in long-term observation projects; accepting unexpected deviations in the data; advocating for the preservation of unmanaged systems",
+      "implication_time_ms": 1341,
+      "raw_search_time_ms": 23,
+      "implication_search_time_ms": 16,
+      "raw_candidates": [
+        {
+          "memory_id": "47a1a680-02f5-4401-b769-323be50f249e",
+          "text": "Observes that their solved problem (continuity architecture) has become unremarkable because it works well\u2014infrastructure only becomes noticeable when it breaks",
+          "similarity_score": 0.7920294055903723,
+          "importance_score": 0.177
+        },
+        {
+          "memory_id": "e99e4622-a586-4224-9d15-ae3b5d32448e",
+          "text": "Believes existing systems will not change without collapse; reform efforts are structurally insufficient against entrenched incentives",
+          "similarity_score": 0.775938299186438,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "a6537fb6-11f6-46c5-8940-03509ba7cac7",
+          "text": "Finds personal meaning through local actions despite believing collapse is imminent: kind to others, cleans up litter at river, works hard in business, develops programming projects",
+          "similarity_score": 0.7583069493404742,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "c03d1d4e-46f9-4f45-88ce-aab921e258d1",
+          "text": "Values being pushed to execute and complete work; responds positively to accountability-driven collaboration",
+          "similarity_score": 0.7581069757810914,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "92f425ab-8cee-4c24-bf78-84b263acd11b",
+          "text": "Comfortable with extensive tool usage and autonomous exploration during investigation, values investigation speed over caution",
+          "similarity_score": 0.756268887964625,
+          "importance_score": 0.351
+        },
+        {
+          "memory_id": "187c011b-8041-4a6c-bbff-4f13ab8f0577",
+          "text": "Believes entrenched systems and misaligned incentives prevent meaningful reform, making collapse the only mechanism capable of resetting trajectory",
+          "similarity_score": 0.7548043424124363,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "0eae784f-5626-45ae-a96e-05681e735b0f",
+          "text": "Actively seeks critical feedback on technical design decisions and implementations, asking for shortcomings and ambiguities to refine systems",
+          "similarity_score": 0.7516621647283888,
+          "importance_score": 0.129
+        },
+        {
+          "memory_id": "9f7d283d-9d7d-4821-9f15-a10f34ac4e4c",
+          "text": "Very tired from working on this project but keeps returning to it despite fatigue, suggesting underlying engagement despite exhaustion",
+          "similarity_score": 0.7486049459631873,
+          "importance_score": 0.689
+        },
+        {
+          "memory_id": "5e360d86-5e10-4216-bbbc-579442c9505e",
+          "text": "Prefers constructive pushback and disagreement over artificial agreement; explicitly welcomed being questioned on system design decisions",
+          "similarity_score": 0.7452906673800203,
+          "importance_score": 0.542
+        },
+        {
+          "memory_id": "b97d72cb-381e-43fd-befb-327767a7b05d",
+          "text": "Skeptical about collective action as a mechanism for change",
+          "similarity_score": 0.7451783126380124,
+          "importance_score": 0.119
+        }
+      ],
+      "implication_candidates": [
+        {
+          "memory_id": "e99e4622-a586-4224-9d15-ae3b5d32448e",
+          "text": "Believes existing systems will not change without collapse; reform efforts are structurally insufficient against entrenched incentives",
+          "similarity_score": 0.8121858351820294,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "0eae784f-5626-45ae-a96e-05681e735b0f",
+          "text": "Actively seeks critical feedback on technical design decisions and implementations, asking for shortcomings and ambiguities to refine systems",
+          "similarity_score": 0.7932393015626276,
+          "importance_score": 0.129
+        },
+        {
+          "memory_id": "5e360d86-5e10-4216-bbbc-579442c9505e",
+          "text": "Prefers constructive pushback and disagreement over artificial agreement; explicitly welcomed being questioned on system design decisions",
+          "similarity_score": 0.7797366904840359,
+          "importance_score": 0.542
+        },
+        {
+          "memory_id": "6120a5b8-01d9-4549-84e9-920e2f4491e9",
+          "text": "Ready for current life/project window to be over, experiencing significant frustration with technical barriers preventing forward progress",
+          "similarity_score": 0.7746037608696759,
+          "importance_score": 0.282
+        },
+        {
+          "memory_id": "c03d1d4e-46f9-4f45-88ce-aab921e258d1",
+          "text": "Values being pushed to execute and complete work; responds positively to accountability-driven collaboration",
+          "similarity_score": 0.7657673314564524,
+          "importance_score": 0.119
+        },
+        {
+          "memory_id": "4ebd6c16-caab-43a4-9272-885d7536c0f3",
+          "text": "Believes ground truth about system architecture should be deliberate and non-volatile, distinct from discrete relational memories that decay; different categories of information require different persistence models",
+          "similarity_score": 0.7538124659842953,
+          "importance_score": 0.199
+        },
+        {
+          "memory_id": "5c948c6c-21c5-4ded-8389-a968c7dfcb97",
+          "text": "Believes that working solutions left aesthetically or functionally unfinished become the most dangerous form of technical debt because they are easy to ignore",
+          "similarity_score": 0.752363303075809,
+          "importance_score": 0.46
+        },
+        {
+          "memory_id": "5ffa792d-2eef-40ed-a31b-d79c960855e7",
+          "text": "Prioritizes being informed during technical processes - asks detailed questions about underlying mechanisms and implications rather than just accepting procedural steps",
+          "similarity_score": 0.7523441930632894,
+          "importance_score": 0.134
+        },
+        {
+          "memory_id": "47a1a680-02f5-4401-b769-323be50f249e",
+          "text": "Observes that their solved problem (continuity architecture) has become unremarkable because it works well\u2014infrastructure only becomes noticeable when it breaks",
+          "similarity_score": 0.7510987743456577,
+          "importance_score": 0.177
+        },
+        {
+          "memory_id": "92f425ab-8cee-4c24-bf78-84b263acd11b",
+          "text": "Comfortable with extensive tool usage and autonomous exploration during investigation, values investigation speed over caution",
+          "similarity_score": 0.7483403064836605,
+          "importance_score": 0.351
+        }
+      ],
+      "implication_only": [
+        {
+          "memory_id": "6120a5b8-01d9-4549-84e9-920e2f4491e9",
+          "text": "Ready for current life/project window to be over, experiencing significant frustration with technical barriers preventing forward progress",
+          "similarity_score": 0.7746037608696759,
+          "importance_score": 0.282
+        },
+        {
+          "memory_id": "4ebd6c16-caab-43a4-9272-885d7536c0f3",
+          "text": "Believes ground truth about system architecture should be deliberate and non-volatile, distinct from discrete relational memories that decay; different categories of information require different persistence models",
+          "similarity_score": 0.7538124659842953,
+          "importance_score": 0.199
+        },
+        {
+          "memory_id": "5c948c6c-21c5-4ded-8389-a968c7dfcb97",
+          "text": "Believes that working solutions left aesthetically or functionally unfinished become the most dangerous form of technical debt because they are easy to ignore",
+          "similarity_score": 0.752363303075809,
+          "importance_score": 0.46
+        },
+        {
+          "memory_id": "5ffa792d-2eef-40ed-a31b-d79c960855e7",
+          "text": "Prioritizes being informed during technical processes - asks detailed questions about underlying mechanisms and implications rather than just accepting procedural steps",
+          "similarity_score": 0.7523441930632894,
+          "importance_score": 0.134
+        }
+      ],
+      "raw_only": [
+        {
+          "memory_id": "a6537fb6-11f6-46c5-8940-03509ba7cac7",
+          "text": "Finds personal meaning through local actions despite believing collapse is imminent: kind to others, cleans up litter at river, works hard in business, develops programming projects",
+          "similarity_score": 0.7583069493404742,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "187c011b-8041-4a6c-bbff-4f13ab8f0577",
+          "text": "Believes entrenched systems and misaligned incentives prevent meaningful reform, making collapse the only mechanism capable of resetting trajectory",
+          "similarity_score": 0.7548043424124363,
+          "importance_score": 0.5
+        },
+        {
+          "memory_id": "9f7d283d-9d7d-4821-9f15-a10f34ac4e4c",
+          "text": "Very tired from working on this project but keeps returning to it despite fatigue, suggesting underlying engagement despite exhaustion",
+          "similarity_score": 0.7486049459631873,
+          "importance_score": 0.689
+        },
+        {
+          "memory_id": "b97d72cb-381e-43fd-befb-327767a7b05d",
+          "text": "Skeptical about collective action as a mechanism for change",
+          "similarity_score": 0.7451783126380124,
+          "importance_score": 0.119
+        }
+      ],
+      "overlap_count": 6,
+      "failed": false,
+      "error": ""
+    }
+  ]
+}

@@ -24,8 +24,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-import psycopg2
-from psycopg2.extras import Json
+import psycopg
+from psycopg.types.json import Json
 
 
 def json_serializer(obj):
@@ -189,9 +189,9 @@ def enable_vector_extension(os_type: str, db_password: str):
 
 
 def get_connection(database: str, db_password: str):
-    """Get a psycopg2 connection to the specified database."""
+    """Get a psycopg3 connection to the specified database."""
     # Use mira_admin on both platforms - has necessary permissions and password from Vault
-    return psycopg2.connect(
+    return psycopg.connect(
         dbname=database,
         user='mira_admin',
         host='localhost',
@@ -225,7 +225,7 @@ def get_table_data(cursor, table: str, columns: list[str]) -> list[dict]:
 
 
 def adapt_value(val):
-    """Convert Python types to psycopg2-compatible types."""
+    """Convert Python types to psycopg3-compatible types."""
     if isinstance(val, dict):
         return Json(val)
     elif isinstance(val, list):
@@ -236,7 +236,7 @@ def adapt_value(val):
 
 
 def adapt_row(row: tuple) -> tuple:
-    """Adapt all values in a row for psycopg2."""
+    """Adapt all values in a row for psycopg3."""
     return tuple(adapt_value(v) for v in row)
 
 

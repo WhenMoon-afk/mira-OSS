@@ -5,17 +5,19 @@ Displays asynchronous context search results when they become available.
 Handles multiple concurrent searches, displays errors for 5 turns,
 and clears all state on segment collapse.
 """
-import json
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, TYPE_CHECKING
 
-from working_memory.trinkets.base import EventAwareTrinket
-from utils.user_context import get_current_user_id
+from working_memory.trinkets.base import StatefulTrinket
+
+if TYPE_CHECKING:
+    from cns.integration.event_bus import EventBus
+    from working_memory.core import WorkingMemory
 
 logger = logging.getLogger(__name__)
 
 
-class GetContextTrinket(EventAwareTrinket):
+class GetContextTrinket(StatefulTrinket):
     """
     Displays context search results from getcontext_tool.
 
@@ -23,26 +25,36 @@ class GetContextTrinket(EventAwareTrinket):
     - Handles multiple concurrent searches in the same segment
     - Displays success results until segment collapse
     - Displays error/timeout messages for 5 turns
-    - Clears all state when segment collapses
+    - Clears all state when segment collapses (via WorkingMemory flush)
     """
 
-    def __init__(self, event_bus, working_memory):
-        """Initialize with state tracking and event subscriptions."""
+    variable_name = "context_search_results"
+
+    def __init__(self, event_bus: 'EventBus', working_memory: 'WorkingMemory'):
+        """Initialize with state tracking."""
         super().__init__(event_bus, working_memory)
-
-        # State tracking for multiple concurrent results
         self.active_results = {}  # task_id -> {type, data, received_turn, display_until_turn}
-        self.current_turn = 0
+        logger.info("GetContextTrinket initialized with multi-result support")
 
-        # Subscribe to events
-        self.event_bus.subscribe('TurnCompletedEvent', self._handle_turn_completed)
-        self.event_bus.subscribe('SegmentCollapsedEvent', self._handle_segment_collapsed)
+    def _expire_items(self) -> bool:
+        """Remove error/timeout results past their display window."""
+        expired = [
+            task_id for task_id, result in self.active_results.items()
+            if result['type'] in ['timeout', 'failed']
+            and self.current_turn > result.get('display_until_turn', 0)
+        ]
 
-        logger.info("GetContextTrinket initialized with multi-result support and segment cleanup")
+        for task_id in expired:
+            del self.active_results[task_id]
+            logger.debug(f"Cleaned up expired error for task {task_id[:8]}")
 
-    def _get_variable_name(self) -> str:
-        """GetContext publishes to 'context_search_results'."""
-        return "context_search_results"
+        return bool(expired)
+
+    def _clear_all_state(self) -> None:
+        """Clear all search results."""
+        if self.active_results:
+            logger.info(f"Clearing {len(self.active_results)} search results on segment collapse")
+        self.active_results.clear()
 
     def handle_update_request(self, event) -> None:
         """
@@ -192,53 +204,3 @@ class GetContextTrinket(EventAwareTrinket):
             f"<status>Results will appear here when the search completes...</status>\n"
             f"</result>"
         )
-
-    def _handle_turn_completed(self, event) -> None:
-        """
-        Handle turn completion: update turn counter and cleanup expired errors.
-
-        Errors display for 5 turns after received, then auto-cleanup.
-        Success results stay until segment collapse.
-        """
-        self.current_turn = event.turn_number
-
-        # Find expired error messages (past their display window)
-        expired = [
-            task_id for task_id, result in self.active_results.items()
-            if result['type'] in ['timeout', 'failed']
-            and self.current_turn > result.get('display_until_turn', 0)
-        ]
-
-        # Remove expired errors
-        for task_id in expired:
-            del self.active_results[task_id]
-            logger.debug(f"Cleaned up expired error for task {task_id[:8]}")
-
-        # If we cleaned up anything, trigger a content refresh
-        if expired:
-            self.working_memory.publish_trinket_update(
-                target_trinket="GetContextTrinket",
-                context={"action": "cleanup_completed"}
-            )
-
-    def _handle_segment_collapsed(self, event) -> None:
-        """
-        Clear all search results when segment collapses.
-
-        This ensures old search results don't leak into new segments.
-        Segment collapse means a new conversation context begins, so
-        previous search results are no longer relevant.
-        """
-        if self.active_results:
-            logger.info(
-                f"Clearing {len(self.active_results)} search results on segment collapse "
-                f"(segment_id: {event.segment_id})"
-            )
-            self.active_results.clear()
-            self.current_turn = 0
-
-            # Trigger content refresh to clear from working memory
-            self.working_memory.publish_trinket_update(
-                target_trinket="GetContextTrinket",
-                context={"action": "segment_collapsed"}
-            )

@@ -6,15 +6,22 @@ All operations are synchronous - events are published and handled immediately.
 """
 import json
 import logging
-from typing import Dict, List, Any, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from clients.valkey_client import get_valkey_client
-from utils.user_context import get_current_user_id, get_current_user
-from utils.timezone_utils import utc_now, format_utc_iso
-from .composer import SystemPromptComposer, ComposerConfig
-from .trinkets.base import TRINKET_KEY_PREFIX
+from utils.user_context import get_current_user_id, get_user_preferences
+from utils.timezone_utils import utc_now, format_utc_iso, format_relationship_duration
+from .composer import SystemPromptComposer
+from .trinkets.base import EventAwareTrinket, TRINKET_KEY_PREFIX, StatefulTrinket
+from .types import AllTrinketStates, TrinketState
 
 if TYPE_CHECKING:
+    from cns.core.events import (
+        ComposeSystemPromptEvent,
+        SegmentCollapsedEvent,
+        TrinketContentEvent,
+        UpdateTrinketEvent,
+    )
     from cns.integration.event_bus import EventBus
 
 logger = logging.getLogger(__name__)
@@ -33,19 +40,17 @@ class WorkingMemory:
     All operations are synchronous to maintain simplicity.
     """
     
-    def __init__(self, event_bus: 'EventBus', composer_config: Optional[ComposerConfig] = None):
+    def __init__(self, event_bus: 'EventBus'):
         """
         Initialize working memory with event bus connection.
-        
+
         Args:
             event_bus: CNS event bus for subscribing and publishing
-            composer_config: Optional configuration for the composer
         """
         self.event_bus = event_bus
-        self.composer = SystemPromptComposer(composer_config)
-        self._trinkets: Dict[str, object] = {}
+        self.composer = SystemPromptComposer()
+        self._trinkets: Dict[str, EventAwareTrinket] = {}
         self._current_continuum_id: Optional[str] = None
-        self._current_user_id: Optional[str] = None
 
         # Subscribe to core events
         # System prompt composition request
@@ -56,14 +61,17 @@ class WorkingMemory:
         
         # Trinket content collection
         self.event_bus.subscribe('TrinketContentEvent', self._handle_trinket_content)
-        
+
+        # Centralized segment collapse flush
+        self.event_bus.subscribe('SegmentCollapsedEvent', self._flush_stateful_trinkets)
+
         logger.debug("Subscribed to working memory events")
         logger.info("WorkingMemory initialized")
         
-    def register_trinket(self, trinket: object) -> None:
+    def register_trinket(self, trinket: EventAwareTrinket) -> None:
         """
         Register a trinket with working memory.
-        
+
         Args:
             trinket: Trinket instance to register
         """
@@ -71,27 +79,33 @@ class WorkingMemory:
         self._trinkets[trinket_name] = trinket
         logger.info(f"Registered trinket: {trinket_name}")
     
-    def _handle_compose_prompt(self, event) -> None:
+    def _handle_compose_prompt(self, event: 'ComposeSystemPromptEvent') -> None:
         """
         Handle request to compose system prompt.
-        
+
         This triggers all trinkets to update and then composes the final prompt.
         """
-        from cns.core.events import ComposeSystemPromptEvent, UpdateTrinketEvent, SystemPromptComposedEvent
-        event: ComposeSystemPromptEvent
+        from cns.core.events import UpdateTrinketEvent, SystemPromptComposedEvent
         
         # Store context for future trinket updates
         self._current_continuum_id = event.continuum_id
-        self._current_user_id = event.user_id
 
-        # Get user's first name for system prompt personalization
-        user_data = get_current_user() or {}
-        first_name = (user_data.get('first_name') or '').strip()
-        user_name = first_name if first_name else "The User"
-        logger.debug(f"Using name '{user_name}' for system prompt")
+        # Substitute template variables in system prompt
+        prefs = get_user_preferences()
+        first_name = (prefs.first_name or '').strip() or "friend"
+        logger.debug(f"Personalizing system prompt for '{first_name}'")
 
-        # Replace "The User" with actual user name (or keep default if no name set)
-        personalized_prompt = event.base_prompt.replace("The User", user_name)
+        personalized_prompt = event.base_prompt.replace("{first_name}", first_name)
+        personalized_prompt = personalized_prompt.replace("{user_context}", "")
+
+        # Replace {relative time since account creation} with computed duration
+        if prefs.created_at:
+            duration = format_relationship_duration(prefs.created_at)
+        else:
+            duration = "some time"
+        personalized_prompt = personalized_prompt.replace(
+            "{relative time since account creation}", duration
+        )
 
         # Set base prompt
         self.composer.set_base_prompt(personalized_prompt)
@@ -104,7 +118,7 @@ class WorkingMemory:
             self.event_bus.publish(UpdateTrinketEvent.create(
                 continuum_id=event.continuum_id,
                 target_trinket=trinket_name,
-                context={'user_id': event.user_id}  # Provide user_id for trinkets that need it
+                context={}
             ))
         
         # After all trinkets have updated (synchronously), compose the prompt
@@ -115,76 +129,89 @@ class WorkingMemory:
             continuum_id=event.continuum_id,
             cached_content=structured['cached_content'],
             non_cached_content=structured['non_cached_content'],
+            conversation_prefix_items=tuple(structured['conversation_prefix_items']),
+            post_history_items=tuple(structured['post_history_items']),
             notification_center=structured['notification_center']
         ))
 
         logger.info(
             f"Composed system prompt: cached {len(structured['cached_content'])} chars, "
             f"non-cached {len(structured['non_cached_content'])} chars, "
+            f"{len(structured['conversation_prefix_items'])} prefix items, "
+            f"{len(structured['post_history_items'])} post-history items, "
             f"notification center {len(structured['notification_center'])} chars"
         )
     
-    def _handle_update_trinket(self, event) -> None:
+    def _handle_update_trinket(self, event: 'UpdateTrinketEvent') -> None:
         """
         Route update request to specific trinket.
 
         Event handler continues processing even if individual trinkets fail,
         but distinguishes infrastructure failures from logic errors for observability.
         """
-        from cns.core.events import UpdateTrinketEvent
-        event: UpdateTrinketEvent
-
         trinket = self._trinkets.get(event.target_trinket)
         if not trinket:
             logger.warning(f"No trinket registered with name: {event.target_trinket}")
             return
 
-        # Call the trinket's update method if it has one
-        if hasattr(trinket, 'handle_update_request'):
-            try:
-                trinket.handle_update_request(event)
-                logger.debug(f"Routed update to {event.target_trinket}")
-            except Exception as e:
-                # Event handler continues - isolate trinket failures
-                # Use exception type to distinguish infrastructure from logic errors
-                error_type = type(e).__name__
-                if 'Database' in error_type or 'Valkey' in error_type or 'Connection' in error_type:
-                    logger.error(
-                        f"Infrastructure failure in trinket {event.target_trinket}: {e}",
-                        exc_info=True,
-                        extra={'error_category': 'infrastructure'}
-                    )
-                else:
-                    logger.error(
-                        f"Trinket {event.target_trinket} failed: {e}",
-                        exc_info=True,
-                        extra={'error_category': 'logic'}
-                    )
-        else:
-            logger.warning(f"Trinket {event.target_trinket} has no handle_update_request method")
+        try:
+            trinket.handle_update_request(event)
+            logger.debug(f"Routed update to {event.target_trinket}")
+        except Exception as e:
+            # Event handler continues - isolate trinket failures
+            # Use exception type to distinguish infrastructure from logic errors
+            error_type = type(e).__name__
+            if 'Database' in error_type or 'Valkey' in error_type or 'Connection' in error_type:
+                logger.error(
+                    f"Infrastructure failure in trinket {event.target_trinket}: {e}",
+                    exc_info=True,
+                    extra={'error_category': 'infrastructure'}
+                )
+            else:
+                logger.error(
+                    f"Trinket {event.target_trinket} failed: {e}",
+                    exc_info=True,
+                    extra={'error_category': 'logic'}
+                )
     
-    def _handle_trinket_content(self, event) -> None:
+    def _handle_trinket_content(self, event: 'TrinketContentEvent') -> None:
         """
         Handle trinket content updates.
 
         Trinkets publish their sections which we add to the composer.
-        Placement determines routing: "system" or "notification".
+        Placement is determined by SECTION_LAYOUT in the composer.
         """
-        from cns.core.events import TrinketContentEvent
-        event: TrinketContentEvent
 
         self.composer.add_section(
             event.variable_name,
             event.content,
             cache_policy=event.cache_policy,
-            placement=event.placement
         )
-        logger.debug(f"Received content for '{event.variable_name}' from {event.trinket_name} (placement={event.placement})")
+        logger.debug(f"Received content for '{event.variable_name}' from {event.trinket_name}")
     
-    def publish_trinket_update(self, target_trinket: str, context: Optional[Dict] = None) -> None:
+    def _flush_stateful_trinkets(self, event: 'SegmentCollapsedEvent') -> None:
+        """
+        Centralized flush of all stateful trinkets on segment collapse.
+
+        Clears in-memory state and Valkey cache for every StatefulTrinket.
+        This ensures no trinket can "forget" to handle collapse — extending
+        StatefulTrinket is sufficient to get correct cleanup behavior.
+        """
+        flushed = []
+        for name, trinket in self._trinkets.items():
+            if isinstance(trinket, StatefulTrinket):
+                trinket._clear_all_state()
+                trinket.current_turn = 0
+                trinket._clear_from_valkey()
+                flushed.append(name)
+
+        if flushed:
+            logger.info(f"Flushed {len(flushed)} stateful trinkets on segment collapse: {', '.join(flushed)}")
+
+    def publish_trinket_update(self, target_trinket: str, context: dict[str, Any] | None = None) -> None:
         """
         Publish an update request for a specific trinket.
-        
+
         This is used when external events need to trigger specific trinket updates.
         For example, when memories are surfaced, we update ProactiveMemoryTrinket.
         
@@ -192,7 +219,7 @@ class WorkingMemory:
             target_trinket: Name of the trinket class to update
             context: Optional context data for the trinket
         """
-        if not self._current_continuum_id or not self._current_user_id:
+        if not self._current_continuum_id:
             logger.warning("No active continuum context for trinket update")
             return
         
@@ -204,17 +231,7 @@ class WorkingMemory:
             context=context or {}
         ))
     
-    
-    def get_active_trinkets(self) -> List[str]:
-        """
-        Get list of registered trinket names.
-
-        Returns:
-            List of trinket class names
-        """
-        return list(self._trinkets.keys())
-
-    def get_trinket(self, name: str) -> Optional[object]:
+    def get_trinket(self, name: str) -> EventAwareTrinket | None:
         """
         Get a registered trinket by name.
 
@@ -229,7 +246,7 @@ class WorkingMemory:
         """
         return self._trinkets.get(name)
 
-    def get_trinket_state(self, section_name: str) -> Optional[Dict[str, Any]]:
+    def get_trinket_state(self, section_name: str) -> TrinketState | None:
         """
         Get cached state of a single trinket from Valkey.
 
@@ -261,7 +278,7 @@ class WorkingMemory:
             logger.warning(f"Invalid JSON in trinket cache for section: {section_name}")
             return None
 
-    def get_all_trinket_states(self) -> Dict[str, Any]:
+    def get_all_trinket_states(self) -> AllTrinketStates:
         """
         Get cached state of all trinkets from Valkey.
 

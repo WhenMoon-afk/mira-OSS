@@ -17,9 +17,8 @@ import logging
 import json
 import os
 import hashlib
-import time
-from typing import Dict, List, Any, Optional, Union, Set
-from datetime import datetime, timedelta
+from typing import Dict, List, Any, Optional, Union
+from datetime import timedelta
 
 # Third-party imports
 from utils import http_client
@@ -29,8 +28,6 @@ from pydantic import BaseModel, Field
 from utils.timezone_utils import (
     utc_now,
     ensure_utc,
-    convert_from_utc,
-    format_datetime,
     parse_utc_time_string,
     parse_time_string,
 )
@@ -74,8 +71,8 @@ class WeatherToolConfig(BaseModel):
         description="Cache duration in seconds (default: 1 hour)"
     )
     cache_directory: str = Field(
-        default="data/tools/weather_tool/cache", 
-        description="Directory to store cached weather data"
+        default="cache",
+        description="Subdirectory name for cached weather data (resolved via user_data_path)"
     )
     
     # Default parameters

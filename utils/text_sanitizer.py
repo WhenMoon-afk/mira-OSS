@@ -9,8 +9,8 @@ from typing import Union, List, Dict, Any
 
 logger = logging.getLogger(__name__)
 
-# Maximum message length (50KB)
-MAX_MESSAGE_LENGTH = 50000
+# Note: Message length is enforced at API layer (chat.py, websocket_chat.py)
+# with user-friendly rejection. Sanitizer no longer truncates.
 
 
 def sanitize_message_content(content: Union[str, List[Dict[str, Any]]]) -> Union[str, List[Dict[str, Any]]]:
@@ -68,12 +68,7 @@ def _sanitize_text(text: str) -> str:
         # Fix encoding issues by replacing invalid sequences
         text = text.encode('utf-8', errors='replace').decode('utf-8')
         logger.warning("Fixed invalid UTF-8 sequences in message")
-    
-    # Apply length limit only if necessary
-    if len(text) > MAX_MESSAGE_LENGTH:
-        text = text[:MAX_MESSAGE_LENGTH - 15] + '... (truncated)'
-        logger.info(f"Truncated message from {len(text)} to {MAX_MESSAGE_LENGTH} chars")
-    
+
     return text
 
 

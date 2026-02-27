@@ -13,7 +13,7 @@ import logging
 import zipfile
 from dataclasses import dataclass
 from io import BytesIO
-from typing import Optional, TYPE_CHECKING
+from typing import Literal, Optional, TYPE_CHECKING
 from xml.etree import ElementTree
 
 if TYPE_CHECKING:
@@ -60,7 +60,7 @@ class ProcessedDocument:
     - "text": Extracted text from DOCX
     """
 
-    content_type: str   # "container_upload" | "document" | "text"
+    content_type: Literal["container_upload", "document", "text"]
     media_type: str     # Original MIME type
     data: str           # file_id | base64 | extracted_text
     original_filename: Optional[str] = None  # Filename for tracking

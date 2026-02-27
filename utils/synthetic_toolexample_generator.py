@@ -199,26 +199,23 @@ class SyntheticToolExampleGenerator:
             logger.error(f"{context} parsing failed: {e}")
             raise ValueError(f"{context} parsing failed: {e}") from e
     
-    def _generate_and_parse_response(self, messages: List[Dict], llm_provider, context: str, extra_body: Optional[Dict] = None) -> Dict[str, Any]:
+    def _generate_and_parse_response(self, messages: List[Dict], llm_provider: LLMProvider, context: str, thinking_tokens: Optional[int] = None) -> Dict[str, Any]:
         """Generate LLM response and parse JSON with unified error handling.
-        
+
         Args:
             messages: Messages for LLM
             llm_provider: LLM provider instance (analyzer or generator)
             context: Context description for errors
-            extra_body: Optional extra parameters for generation
-            
+            thinking_tokens: Optional thinking token budget for generation
+
         Returns:
             Parsed JSON response
-            
+
         Raises:
             ValueError: If generation or parsing fails
         """
         try:
-            if extra_body:
-                response = llm_provider.generate_response(messages, extra_body=extra_body)
-            else:
-                response = llm_provider.generate_response(messages)
+            response = llm_provider.generate_response(messages, thinking_tokens=thinking_tokens)
             
             response_text = llm_provider.extract_text_content(response)
             return self._parse_llm_json_response(response_text, context)
@@ -405,10 +402,10 @@ class SyntheticToolExampleGenerator:
         
         try:
                 examples = self._generate_and_parse_response(
-                    messages, 
-                    self.generator, 
+                    messages,
+                    self.generator,
                     "example generation",
-                    extra_body={"thinking": {"type": "enabled", "budget_tokens": 1500}}
+                    thinking_tokens=1500,
                 )
                 
                 if not isinstance(examples, list):

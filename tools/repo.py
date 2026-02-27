@@ -8,10 +8,9 @@ import inspect
 import importlib
 import json
 import logging
-import os
 import pkgutil
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any, Set, Type, Callable, Union, get_args, get_origin
+from typing import Dict, List, Optional, Any, Set, Type, Union, get_args, get_origin
 from pathlib import Path
 
 from pydantic import BaseModel, create_model
@@ -48,11 +47,28 @@ class Tool(ABC):
         name (str): The unique name of the tool.
         description (str): A human-readable description of the tool's purpose.
         usage_examples (List[Dict]): Example usage of the tool.
+        parallel_safe (bool): Whether this tool can safely be called in parallel with
+            other tools. Set to False for tools that mutate shared state where ordering
+            matters (e.g., create-then-edit operations). Default is True.
+            For per-operation control, override is_call_parallel_safe() instead.
     """
 
     name = "base_tool"
     description = "Base class for all tools"
     usage_examples: List[Dict[str, Any]] = []
+    parallel_safe: bool = True
+
+    @classmethod
+    def is_call_parallel_safe(cls, tool_input: Dict[str, Any]) -> bool:
+        """Determine if a specific tool call can run in parallel.
+
+        Override this in tools with mixed parallel/sequential operations.
+        The execution engine calls this per tool call to decide scheduling.
+
+        Args:
+            tool_input: The input dict for this tool call (contains 'operation', etc.)
+        """
+        return cls.parallel_safe
 
     @classmethod
     def validate_config(cls, config: Dict[str, Any]) -> Dict[str, Any]:
@@ -238,14 +254,13 @@ class ToolRepository:
     Repository for managing and accessing tools.
 
     This class is responsible for registering, discovering, and resolving
-    dependencies between tools. Tool hints are published to working memory
-    via events when tools are enabled/disabled.
+    dependencies between tools.
 
     Attributes:
         tool_classes (Dict[str, Type[Tool]]): Dictionary mapping tool names to tool classes.
         enabled_tools (Set[str]): Set of names of currently enabled tools.
         gated_tools (Set[str]): Set of gated tools that self-determine availability via is_available().
-        working_memory (Optional[WorkingMemory]): WorkingMemory instance for publishing tool updates.
+        working_memory (Optional[WorkingMemory]): WorkingMemory instance for tool DI.
     """
 
     def __init__(self, working_memory=None):
@@ -254,8 +269,7 @@ class ToolRepository:
         self.enabled_tools: Set[str] = set()
         self.gated_tools: Set[str] = set()  # Tools that self-determine availability
         self.working_memory = working_memory
-        config = get_config()
-        self.tool_list_path: str = os.path.join(config.paths.data_dir, "tools", "tool_list.json")
+        self._pinned_tools: Set[str] = set()  # Tools pinned for rest of session via load_for_rest_of_session
     
     def register_tool_class(self, tool_class: Type[Tool], tool_name: str) -> None:
         """Register a tool class for lazy instantiation."""
@@ -265,18 +279,6 @@ class ToolRepository:
             
         self.tool_classes[tool_name] = tool_class
         self.logger.info(f"Registered tool class: {tool_name}")
-        
-        # Ensure tool has dedicated directory for persistent data storage
-        config = get_config()
-        tool_data_dir = os.path.join(config.paths.data_dir, "tools", tool_name)
-        try:
-            os.makedirs(tool_data_dir, exist_ok=True)
-            self.logger.debug(f"Created or verified tool data directory: {tool_data_dir}")
-        except Exception as e:
-            self.logger.warning(f"Failed to create tool data directory for {tool_name}: {e}")
-        
-        self._update_tool_list_file()
-        self._update_tool_guidance()
 
     def register_gated_tool(self, tool_name: str) -> None:
         """
@@ -314,7 +316,6 @@ class ToolRepository:
         
         self.enabled_tools.add(name)
         self.logger.info(f"Enabled tool: {name}")
-        self._update_tool_guidance()
     
     def disable_tool(self, name: str) -> None:
         if name not in self.tool_classes:
@@ -324,10 +325,18 @@ class ToolRepository:
         if name in self.enabled_tools:
             self.enabled_tools.remove(name)
             self.logger.info(f"Disabled tool: {name}")
-            self._update_tool_guidance()
         else:
             self.logger.debug(f"Tool '{name}' was already disabled")
-    
+
+    def cleanup_ephemeral_tools(self, essential_tools: Set[str]) -> None:
+        """Disable all non-essential, non-pinned tools. Called on TurnCompletedEvent."""
+        ephemeral = self.enabled_tools - essential_tools - self._pinned_tools
+        if not ephemeral:
+            return
+
+        self.logger.info(f"Cleaning up {len(ephemeral)} ephemeral tools")
+        self.enabled_tools -= ephemeral
+
     def get_tool(self, name: str) -> Tool:
         """Get tool instance, creating it lazily with current user context."""
         if name not in self.tool_classes:
@@ -402,8 +411,9 @@ class ToolRepository:
                     raise RuntimeError(f"Cannot invoke gated tool '{name}': Tool is not available")
                 # Gated tool is available - allow invocation to proceed
             else:
-                self.logger.error(f"Cannot invoke tool '{name}': Tool is not enabled")
-                raise RuntimeError(f"Cannot invoke tool '{name}': Tool is not enabled")
+                # Auto-enable the tool on first invocation
+                self.logger.info(f"Auto-enabling tool '{name}' on first invocation")
+                self.enable_tool(name)
 
         if isinstance(params, str):
             try:
@@ -425,19 +435,18 @@ class ToolRepository:
         tool = self.get_tool(name)  # This creates a fresh instance with current user context
         self.logger.debug(f"Invoking tool: {name} with params: {params}")
 
+        # TODO: Add type coercion layer here based on tool's anthropic_schema.
+        # Currently, tools receive params as-is from JSON parsing, which means numeric
+        # values may arrive as strings (e.g., "10" instead of 10). Each tool handles
+        # this individually with int()/float() casts (see email_tool, kasa_tool,
+        # weather_tool, continuum_tool._coerce_to_int). A unified solution would:
+        # 1. Read the tool's input_schema from anthropic_schema
+        # 2. Coerce each param to its declared type (integer, number, boolean, array)
+        # 3. Handle LLM quirks like [10] instead of 10 (single-element list unwrapping)
+        # This would eliminate ad-hoc casting in every tool and centralize error handling.
+
         try:
             result = tool.run(**params)
-
-            # Notify ToolLoaderTrinket about tool usage for idle tracking
-            if self.working_memory and name != "invokeother_tool":
-                self.working_memory.publish_trinket_update(
-                    target_trinket="ToolLoaderTrinket",
-                    context={
-                        "action": "tool_used",
-                        "tool_name": name
-                    }
-                )
-
             return result
         except TypeError as e:
             self.logger.error(f"Invalid parameters for tool '{name}': {str(e)}")
@@ -487,7 +496,8 @@ class ToolRepository:
         Get tool schemas for LLM context - only enabled and available tools.
 
         invokeother_tool pattern: Essential tools are always enabled. Other tools
-        loaded on-demand when needed, managed by ToolLoaderTrinket and invokeother_tool.
+        loaded on-demand via invokeother_tool. Ephemeral tools cleaned up on turn end;
+        pinned tools persist for the session.
         """
         definitions = []
 
@@ -629,87 +639,3 @@ class ToolRepository:
             except Exception as e:
                 self.logger.error(f"Error enabling tool {name}: {e}")
     
-    def update_working_memory(self) -> None:
-        self._update_tool_guidance()
-
-    def _update_tool_guidance(self) -> None:
-        if not self.working_memory:
-            return
-
-        enabled_tools = self.get_enabled_tools()
-        
-        # Collect hints from enabled tools
-        tool_hints = {}
-        for tool_name in enabled_tools:
-            try:
-                tool_instance = self.get_tool(tool_name)
-                if tool_instance:
-                    # Get tool hints if available (gracefully handle missing attribute)
-                    hint = getattr(tool_instance, 'tool_hints', None)
-                    if hint:
-                        tool_hints[tool_name] = hint
-            except Exception as e:
-                self.logger.warning(f"Could not get hints for tool {tool_name}: {e}")
-        
-        # Send hints to ToolGuidanceTrinket
-        context = {'tool_hints': tool_hints}
-        
-        self.working_memory.publish_trinket_update(
-            target_trinket="ToolGuidanceTrinket",
-            context=context
-        )
-
-        self.logger.debug(f"Sent {len(tool_hints)} tool hints to ToolGuidanceTrinket")
-
-    def _update_tool_list_file(self) -> None:
-        try:
-            os.makedirs(os.path.dirname(self.tool_list_path), exist_ok=True)
-            
-            # Build comprehensive tool registry for external inspection/debugging
-            tool_list = []
-            
-            for name, tool_class in self.tool_classes.items():
-                try:
-                    # Create basic metadata from class info without instantiation if no user context
-                    from utils.user_context import has_user_context
-                    
-                    if has_user_context():
-                        # If user context exists, get full metadata from instance
-                        tool = self.get_tool(name)
-                        metadata = tool.get_metadata()
-                        dependencies = tool.get_dependencies()
-                    else:
-                        # Fallback: create basic metadata from class without user context
-                        metadata = {
-                            "name": name,
-                            "description": getattr(tool_class, 'description', 'No description available'),
-                            "parameters": {},
-                            "required_parameters": []
-                        }
-                        dependencies = []
-                        
-                    tool_list.append({
-                        "name": name,
-                        "description": metadata["description"],
-                        "parameters": metadata["parameters"],
-                        "required_parameters": metadata["required_parameters"],
-                        "dependencies": dependencies
-                    })
-                except Exception as e:
-                    self.logger.warning(f"Error getting metadata for tool {name}: {e}")
-                    # Add basic entry so tool isn't completely missing from list
-                    tool_list.append({
-                        "name": name,
-                        "description": getattr(tool_class, 'description', 'Error loading tool'),
-                        "parameters": {},
-                        "required_parameters": [],
-                        "dependencies": []
-                    })
-            
-            with open(self.tool_list_path, 'w') as f:
-                json.dump(tool_list, indent=2, sort_keys=True, default=str, fp=f)
-                
-            self.logger.debug(f"Updated tool list file: {self.tool_list_path}")
-            
-        except Exception as e:
-            self.logger.error(f"Error updating tool list file: {e}")

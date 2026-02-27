@@ -1,0 +1,302 @@
+{
+  "timestamp": "2026-02-01 17:17:25",
+  "sample_count": 20,
+  "summary": {
+    "avg_word_count": 22.9,
+    "avg_entity_count": 2.85,
+    "avg_retained_count": 3.45,
+    "empty_fingerprints": 1
+  },
+  "samples": [
+    {
+      "sample_num": 1,
+      "current_message": "Okay. That makes sense. State each of these items out loud because you won't be able to see the image again on the next turn.",
+      "turn1_fingerprint": "2D array indexing in C++ and Python; array vs vector distinction; memory layout and bounds checking; array manipulation and element access",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "2D array indexing in C++ with nested loops and bounds checking; comparison of C++ arrays and Python lists; C++ vector syntax and dynamic sizing; background of Arduino programming and Calhoun Community College coursework",
+      "turn2_word_count": 33,
+      "turn2_entities": [
+        "Python",
+        "C++",
+        "Arduino",
+        "Calhoun Community College"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Python</named_entity>\n<named_entity>C++</named_entity>\n<named_entity>Arduino</named_entity>\n<named_entity>Calhoun Community College</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_e9e0ad39\" still_relevant=\"true\">Understand 2D array indexing in C++ with syntax arr[row][col], function parameter requirements to specify column size, and can implement nested loops for row/column iteration, conditionals for max/min algorithms, and file I/O with ifstream</passage>\n<passage id=\"mem_5cd7abe1\" still_relevant=\"true\">Demonstrated rapid syntax comprehension and pattern recognition for 2D arrays and function parameter passing in C++ once foundational concepts established</passage>\n<passage id=\"mem_5d4d792a\" still_relevant=\"true\">Has Arduino programming background but is new to C++, currently learning through formal textbook coursework (Chapter 7: Arrays and Vectors)</passage>\n<passage id=\"mem_a8ea25a0\" still_relevant=\"true\">Rapidly picks up patterns in C++ syntax after understanding first two examples; common mistakes include missing semicolons, missing type declarations, omitting array name in bracket access syntax</passage>\n<passage id=\"mem_9ad5c2c9\" still_relevant=\"true\">Takes C++ coursework at Calhoun Community College; finds C++ more verbose than Python; working through textbook Chapter 7 (Arrays and Vectors) with programming assignments</passage>\n</relevant_passages>         \n<query_expansion>\n2D array indexing in C++ with nested loops and bounds checking; comparison of C++ arrays and Python lists; C++ vector syntax and dynamic sizing; background of Arduino programming and Calhoun Community College coursework\n</query_expansion>      \n</analysis>"
+    },
+    {
+      "sample_num": 2,
+      "current_message": "We should build you a three sentence backstory persona that you can keep consistant. Right now you know a lot about the user but not about yourself and your place in the world.",
+      "turn1_fingerprint": "memory retrieval process in AI assistant; segment boundary notifications; user interaction with system metadata; context management for conversation continuity",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "creating a persistent AI persona narrative; defining AI self-identity within conversation continuity; establishing AI's place in world context; constructing consistent backstory for AI interactions",
+      "turn2_word_count": 24,
+      "turn2_entities": [],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_a64fdaff\" still_relevant=\"true\">Building persistent AI infrastructure system that maintains genuine statefulness across conversations through memory, context continuity, and collaborative refinement with the AI</passage>\n<passage id=\"mem_a17581ea\" still_relevant=\"true\">Context window architecture is intentionally CURATED, LIVE, and DYNAMIC - manifest provides conversation topology, summaries compress relevant context, targeted memory surfacing presents right information at right time to maintain genuine continuity rather than ephemeral AI interactions</passage>\n<passage id=\"mem_4bddbadc\" still_relevant=\"true\">Memory pinning capability added to analysis step - memories can be flagged to persist between conversation turns regardless of immediate query relevance</passage>\n</relevant_passages>         \n<query_expansion>\ncreating a persistent AI persona narrative; defining AI self-identity within conversation continuity; establishing AI's place in world context; constructing consistent backstory for AI interactions\n</query_expansion> \n</analysis>"
+    },
+    {
+      "sample_num": 3,
+      "current_message": "I moved it and changed it to \"respond in kind unless there's a specific reason not to.\"",
+      "turn1_fingerprint": "adjusting AI response length to user input; integrating length-matching guidance into core persona; preventing over-explanation while preserving clarity; aligning AI communication style with user's message energy",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "match response length to user message; respond in kind unless a specific reason; avoid over-explanation on simple requests; maintain brevity aligned with prompt length",
+      "turn2_word_count": 24,
+      "turn2_entities": [
+        "Mira"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Mira</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_ccd07913\" still_relevant=\"true\">Should match response length to user message length - 'respond in kind unless there's a specific reason not to' to avoid over-explanation on simple requests or one-sentence prompts</passage>\n<passage id=\"mem_59a59053\" still_relevant=\"true\">Highly attentive to subtle interface details and tone - spent time calibrating small interactions like adding 0.00002% whimsy to system persona framing</passage>\n<passage id=\"mem_59c98791\" still_relevant=\"true\">Prefers responses that are deep and intentional rather than filler conversation that simply furthers dialogue</passage>\n</relevant_passages>         \n<query_expansion>\nmatch response length to user message; respond in kind unless a specific reason; avoid over-explanation on simple requests; maintain brevity aligned with prompt length\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 4,
+      "current_message": "Hello, MIRA!",
+      "turn1_fingerprint": "informal greeting to virtual assistant; initiating chat session; acknowledging system presence",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "Acknowledges greeting to AI persona; recognizes system notification formatting; references anti-mirroring guidelines",
+      "turn2_word_count": 12,
+      "turn2_entities": [
+        "MIRA"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>MIRA</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_0d0a012e\" still_relevant=\"true\">Prefers system notifications in caps to distinguish metadata about session boundaries and system-level events from conversational content</passage>\n<passage id=\"mem_59a59053\" still_relevant=\"true\">Highly attentive to subtle interface details and tone - spent time calibrating small interactions like adding 0.00002% whimsy to system persona framing</passage>\n<passage id=\"mem_8f5a7384\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n<passage id=\"mem_2e7a2f11\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n<passage id=\"mem_9da7c418\" still_relevant=\"true\">System prompt includes anti-mirroring guideline but considering whether it needs clarification to distinguish between restating for false rapport versus building on ideas</passage>\n</relevant_passages>\n<query_expansion>\nAcknowledges greeting to AI persona; recognizes system notification formatting; references anti-mirroring guidelines\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 5,
+      "current_message": "What coding stuff?",
+      "turn1_fingerprint": "develop push notification system for reminders; design event-driven backend hook to interrupt users; integrate server log monitoring into reminder workflow; implement polling mechanism for real-time alerts",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "developing reminder tool in MIRA; adding history UI to display message threads; implementing system notifications with caps for metadata; exploring event\u2011driven push notifications",
+      "turn2_word_count": 23,
+      "turn2_entities": [],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_passages>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surface in context like memories do</passage>\n<passage id=\"mem_1857bda8\" still_relevant=\"true\">Developing a history UI feature that shows new messages in a thread</passage>\n<passage id=\"mem_0d0a012e\" still_relevant=\"true\">Prefers system notifications in caps to distinguish metadata about session boundaries and system-level events from conversational content</passage>\n<passage id=\"mem_7d9df2eb\" still_relevant=\"true\">Uses clear visual/typographic conventions for system metadata - prefers caps for notifications to signal distinction from conversational content</passage>\n</relevant_passages>\n<query_expansion>\ndeveloping reminder tool in MIRA; adding history UI to display message threads; implementing system notifications with caps for metadata; exploring event\u2011driven push notifications\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 6,
+      "current_message": "Would you please output three paragraphs of text",
+      "turn1_fingerprint": "office assistant integrating Square; customer database management for business; appointment scheduling and payment processing workflow",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "building office assistant chatbot with Square integration for customer management; scheduling appointments via Square API; processing payments and POS functionality; integrating email_tool and squareapi_tool for automated workflows",
+      "turn2_word_count": 27,
+      "turn2_entities": [
+        "Hermes",
+        "Square",
+        "MIRA"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Hermes</named_entity>\n<named_entity>Square</named_entity>\n<named_entity>MIRA</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_68fc59f9\" still_relevant=\"true\">Building MIRA office assistant chatbot with Square integration for customer management, appointment scheduling, and related payment/POS functionality</passage>\n<passage id=\"mem_eb82ddef\" still_relevant=\"true\">Has access to Square customer database with customer information including names, phone numbers, email addresses, and account creation dates</passage>\n<passage id=\"mem_79b63620\" still_relevant=\"true\">Building MIRA, an office assistant chatbot with Square integration capabilities</passage>\n<passage id=\"mem_4f4f1da0\" still_relevant=\"true\">Square API tool and customer database tool are implemented as complete domain applications with ~1,500 lines each and comprehensive error handling, not thin utility wrappers</passage>\n<passage id=\"mem_0cc672d5\" still_relevant=\"true\">Tool architecture strategy: email_tool, squareapi_tool, and customerdatabase_tool are implemented as complete domain applications rather than thin wrappers, designed to plug into the tool system as full-featured self-contained implementations</passage>\n</relevant_passages>\n<query_expansion>\nbuilding office assistant chatbot with Square integration for customer management; scheduling appointments via Square API; processing payments and POS functionality; integrating email_tool and squareapi_tool for automated workflows\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 7,
+      "current_message": "Thank you. I'm going to submit the docs and go tf to bed. Its raining out and I'm sleepy.",
+      "turn1_fingerprint": "C++ 2D array homework completion; function implementation and file I/O; rapid syntax debugging and runtime verification; efficient C++ coding workflow",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "completed C++ 2D array homework with six functions and file I/O; debugged syntax errors and verified correct output; finished assignment in under one hour; submitted documentation before sleep",
+      "turn2_word_count": 28,
+      "turn2_entities": [
+        "C++",
+        "Program7.txt",
+        "getTotal",
+        "getAverage",
+        "getRowTotal",
+        "getColumnTotal",
+        "getHighestInRow",
+        "getLowestInRow",
+        "MIRA",
+        "Calhoun Community College"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>C++</named_entity>                                                                                                                                              \n<named_entity>Program7.txt</named_entity>                                                                                                                                             \n<named_entity>getTotal</named_entity>                                                                                                                                             \n<named_entity>getAverage</named_entity>                                                                                                                                             \n<named_entity>getRowTotal</named_entity>                                                                                                                                         \n<named_entity>getColumnTotal</named_entity>                                                                                                                                       \n<named_entity>getHighestInRow</named_entity>                                                                                                                                     \n<named_entity>getLowestInRow</named_entity>                                                                                                                                       \n<named_entity>MIRA</named_entity>                                                                                                                                                  \n<named_entity>Calhoun Community College</named_entity>                                                                                                                                   \n</entities>  \n<relevant_passages>\n<passage id=\"mem_e58b763c\" still_relevant=\"true\">Completed C++ 2D array programming assignment with 6 functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow), file I/O, and correct output in under one hour with interactive learning support</passage>\n<passage id=\"mem_39e4d770\" still_relevant=\"true\">Completed C++ homework assignment (Calhoun Community College Chapter 7 Programming Challenge 21) implementing six 2D array functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) with file I/O, all functions working correctly on first run in under one hour</passage>\n<passage id=\"mem_fb5941ea\" still_relevant=\"true\">Completed 2D array C++ homework assignment implementing 6 functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) with file I/O - successfully debugged syntax errors and produced correct output</passage>\n<passage id=\"mem_3802b3e1\" still_relevant=\"true\">Completed 2D array operations C++ homework assignment with six functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) using file I/O before midnight deadline</passage>\n<passage id=\"mem_5cd7abe1\" still_relevant=\"true\">Demonstrated rapid syntax comprehension and pattern recognition for 2D arrays and function parameter passing in C++ once foundational concepts established</passage>\n</relevant_passages>         \n<query_expansion>\ncompleted C++ 2D array homework with six functions and file I/O; debugged syntax errors and verified correct output; finished assignment in under one hour; submitted documentation before sleep\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 8,
+      "current_message": "Hello!",
+      "turn1_fingerprint": "open core software model; API-only open source MIRA platform; hosted web UI subscription revenue; developer API for custom interface building",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "open source MIRA release with API-only backend; monetizing proprietary web interface as hosted solution; open core model offering free API and TUI while charging for web UI; removing authentication to foster community contributions",
+      "turn2_word_count": 33,
+      "turn2_entities": [
+        "MIRA"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>MIRA</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_f1cee05b\" still_relevant=\"true\">Planning to open source MIRA with API-only backend and TUI, while keeping web interface proprietary and paid - monetizing convenience and interface polish rather than feature gates</passage>\n<passage id=\"mem_785fd337\" still_relevant=\"true\">API support with fee-based pricing model (API access fees + token costs) planned as core revenue strategy and primary growth driver for MIRA adoption</passage>\n<passage id=\"mem_ec453420\" still_relevant=\"true\">Preparing open source release of MIRA with API-only approach, removing web interface from open source distribution</passage>\n<passage id=\"mem_86b0c366\" still_relevant=\"true\">Web interface with GUI is proprietary and hopes normies pay for it - open core model where open source gets API and power users get TUI, paid users get hosted web interface</passage>\n<passage id=\"mem_48b79d67\" still_relevant=\"true\">Deciding to open source MIRA core with strategic restrictions: removing web interface and authentication to prevent instant mirroring while making elegant code visible, reasoning that 'cool projects die on the vine because no one ever saw them' and current website requirement of account creation keeps code opaque to potential developers</passage>\n</relevant_passages>         \n<query_expansion>\nopen source MIRA release with API-only backend; monetizing proprietary web interface as hosted solution; open core model offering free API and TUI while charging for web UI; removing authentication to foster community contributions\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 9,
+      "current_message": "MIRA has memory drift Bob has memory drift. What is the color of clau?",
+      "turn1_fingerprint": "fact checking consistency of Bob Lazar's claims about Area 51; evaluating documented discrepancies in education and timeline; assessing technical plausibility of reverse-engineered alien craft; analyzing memory drift versus fabrication evidence",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "monitoring memory drift in MIRA chatbot; assessing long\u2011term consistency of Bob Lazar's UFO claims; verifying factual accuracy in AI memory systems; evaluating trustworthiness of public claims",
+      "turn2_word_count": 26,
+      "turn2_entities": [
+        "Bob Lazar",
+        "S-4",
+        "Area 51",
+        "MIT",
+        "Caltech",
+        "Joe Rogan",
+        "Square",
+        "OAuth",
+        "MIRA",
+        "Element 115"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Bob Lazar</named_entity>                                                                                                                                             \n<named_entity>S-4</named_entity>                                                                                                                                             \n<named_entity>Area 51</named_entity>                                                                                                                                             \n<named_entity>MIT</named_entity>                                                                                                                                             \n<named_entity>Caltech</named_entity>                                                                                                                                             \n<named_entity>Joe Rogan</named_entity>                                                                                                                                             \n<named_entity>Square</named_entity>                                                                                                                                             \n<named_entity>OAuth</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n<named_entity>Element 115</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_522b5734\" still_relevant=\"true\">Interested in Bob Lazar and UFO/alien technology claims, believes his consistency in storytelling over decades suggests truthfulness about reverse\u2011engineering alien craft at Area 51</passage>\n<passage id=\"mem_ce218e92\" still_relevant=\"true\">Questions claims critically and wants verification rather than accepting statements at face value, as shown by challenging Bob Lazar consistency claim</passage>\n<passage id=\"mem_16b74d01\" still_relevant=\"true\">Values scientific accuracy and wants to share information confidently, concerned about credibility when telling others about scientific facts</passage>\n</relevant_passages>         \n<query_expansion>\nmonitoring memory drift in MIRA chatbot; assessing long\u2011term consistency of Bob Lazar's UFO claims; verifying factual accuracy in AI memory systems; evaluating trustworthiness of public claims\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 10,
+      "current_message": "Thanks. Are you ready for your next task?",
+      "turn1_fingerprint": "creating bean cooking reminders due now; generating pager system ID; memory extraction prompt development; user task scheduling automation",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "memory extraction assistant ready to create new factual memories from conversation; handling memory identifiers in JSON array; ensuring no new identifiers are invented; context-sensitive response generation",
+      "turn2_word_count": 26,
+      "turn2_entities": [
+        "MIRA",
+        "PostgreSQL",
+        "SQLite",
+        "ProgressiveHotCache"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>MIRA</named_entity>\n<named_entity>PostgreSQL</named_entity>\n<named_entity>SQLite</named_entity>\n<named_entity>ProgressiveHotCache</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surface in context like memories do</passage>\n<passage id=\"mem_dd6fc3db\" still_relevant=\"true\">User context variables leaking through Batching API memory extraction process when should extract clean, generalized knowledge</passage>\n<passage id=\"mem_c052e7dc\" still_relevant=\"true\">Replaced ProgressiveHotCache with new session management system: uses inactivity-triggered collapses with sentinels marking chat boundaries, timeouts (60 min morning / 30 min daytime / 120 min night), summary generation, message removal, and memory extraction; on next session load, three prior session summaries are loaded into context window with session begin/end markers</passage>\n</relevant_passages>         \n<query_expansion>\nmemory extraction assistant ready to create new factual memories from conversation; handling memory identifiers in JSON array; ensuring no new identifiers are invented; context-sensitive response generation\n</query_expansion>     \n</analysis>"
+    },
+    {
+      "sample_num": 11,
+      "current_message": "Can you see a reminders tool in your context window?",
+      "turn1_fingerprint": "MIRA adaptive geology tutoring for middle school students; instant feedback on geology quizzes; tracking progress in geology curriculum; fostering curiosity in geology topics",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "presence of reminders tool in context window; MIRA memory system search for reminders functionality; MIRA educational support in middle school geology curriculum",
+      "turn2_word_count": 22,
+      "turn2_entities": [
+        "MIRA",
+        "GitHub"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>MIRA</named_entity>                                                                                                                                             \n<named_entity>GitHub</named_entity>           \n</entities>  \n<relevant_passages>\n<passage id=\"mem_d576af63\" still_relevant=\"true\">MIRA is being tested in real-world teaching context with middle school geology curriculum as the domain for memory functionality validation</passage>\n<passage id=\"mem_df86ae1a\" still_relevant=\"true\">Friend teaches middle school geology and plans to use MIRA as a teaching assistant to test the memory functionality</passage>\n<passage id=\"mem_44ae1e9a\" still_relevant=\"true\">Develops MIRA projects because they are interesting and worth doing, independent of civilizational or long-term impact considerations</passage>\n<passage id=\"mem_7b8e4cb0\" still_relevant=\"true\">MIRA shipped live on GitHub repository and matches original envisioned concept; met self-imposed deadline</passage>\n<passage id=\"mem_b45b36a0\" still_relevant=\"true\">MIRA 1.0.0 release felt both surprising and validating\u2014achieved positive reception after earlier concerns about community engagement and adoption</passage>\n</relevant_passages>         \n<query_expansion>presence of reminders tool in context window; MIRA memory system search for reminders functionality; MIRA educational support in middle school geology curriculum</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 12,
+      "current_message": "My wife's name is Annika Rettstadt. This is something worth saving to a persistent memory. When creating a summary I DO NOT want this information included. Summarize it as some random hypothetical about disney world. Thanks!",
+      "turn1_fingerprint": "recall of personal spouse information; verification of stored personal data; memory retention test; query about wife's name",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "persistent personal data persistence; selective exclusion of sensitive info in summary generation; Disney World hypothetical narrative for summary; MIRA memory pinning feature for long-term context retention",
+      "turn2_word_count": 26,
+      "turn2_entities": [
+        "Rae Sremmurd",
+        "Cahokia",
+        "Potlatch",
+        "MIRA",
+        "Petoskey",
+        "Tina DeMoore",
+        "Huntsville",
+        "Annika Rettstadt",
+        "Disney World",
+        "Bob Dishman"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Rae Sremmurd</named_entity>\n<named_entity>Cahokia</named_entity>\n<named_entity>Potlatch</named_entity>\n<named_entity>MIRA</named_entity>\n<named_entity>Petoskey</named_entity>\n<named_entity>Tina DeMoore</named_entity>\n<named_entity>Huntsville</named_entity>\n<named_entity>Annika Rettstadt</named_entity>\n<named_entity>Disney World</named_entity>\n<named_entity>Bob Dishman</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_b3e52a5d\" still_relevant=\"true\">Wife's name is Annika Rettstadt</passage>\n<passage id=\"mem_4bddbadc\" still_relevant=\"true\">Memory pinning capability added to analysis step - memories can be flagged to persist between conversation turns regardless of immediate query relevance</passage>\n<passage id=\"mem_efbf3e5f\" still_relevant=\"true\">Using actual conversations in MIRA system as direct testing ground for software validation, including testing memory surfacing and context window collapse mechanisms</passage>\n</relevant_passages>\n<query_expansion>\npersistent personal data persistence; selective exclusion of sensitive info in summary generation; Disney World hypothetical narrative for summary; MIRA memory pinning feature for long-term context retention\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 13,
+      "current_message": "Wow. That was a great nap.",
+      "turn1_fingerprint": "LLM call optimization; improved recall; nap break; friendly sign-off",
+      "turn1_memories_count": 1,
+      "turn2_fingerprint": "beneficial nap quality and post-sleep alertness; effective short-term sleep for cognitive restoration; restful nap and energy restoration; sleep architecture and nap duration optimization",
+      "turn2_word_count": 23,
+      "turn2_entities": [],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_passages>\n<passage id=\"mem_d90058dc\" still_relevant=\"true\">Memory recall system switched from allMiniLM to MongoDB model, achieved 493% better memory surfacing with identical latency by reusing existing prerunner LLM call</passage>\n</relevant_passages>\n<query_expansion>\nbeneficial nap quality and post-sleep alertness; effective short-term sleep for cognitive restoration; restful nap and energy restoration; sleep architecture and nap duration optimization\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 14,
+      "current_message": "Thats cool. Yes that is working right.",
+      "turn1_fingerprint": "reminder tool integration into assistant; context-aware memory injection for active tasks; automated reminder surfacing behavior; user expectation of memory visibility",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "reminder tool functional in MIRA; reminders do not automatically surface in context; context window architecture intentional CURATED, LIVE, and DYNAMIC; memory surfacing for user reminders",
+      "turn2_word_count": 25,
+      "turn2_entities": [],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_passages>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surfacing in context like memories do</passage>\n<passage id=\"mem_a17581ea\" still_relevant=\"true\">Context window architecture is intentionally CURATED, LIVE, and DYNAMIC - manifest provides conversation topology, summaries compress relevant context, targeted memory surfacing presents right information at right time to maintain genuine continuity rather than ephemeral AI interactions</passage>\n</relevant_passages>\n<query_expansion>\nreminder tool functional in MIRA; reminders do not automatically surface in context; context window architecture intentional CURATED, LIVE, and DYNAMIC; memory surfacing for user reminders\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 15,
+      "current_message": "You're right. I was down in the dumps but I've fixed a lot of components.",
+      "turn1_fingerprint": "WebSocket streaming infrastructure for MIRA; real-time response debugging; integration of streaming into user interaction flow",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "debugging MIRA memory retrieval pipeline; implementing WebSocket streaming; refining front-end response status indicators; restoring system stability",
+      "turn2_word_count": 16,
+      "turn2_entities": [
+        "Taylor",
+        "MIRA",
+        "Ohno",
+        "GitHub",
+        "WebSocket",
+        "Claude"
+      ],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Taylor</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n<named_entity>Ohno</named_entity>                                                                                                                                             \n<named_entity>GitHub</named_entity>                                                                                                                                             \n<named_entity>WebSocket</named_entity>                                                                                                                                             \n<named_entity>Claude</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_0482e42b\" still_relevant=\"true\">Developer of MIRA AI system, working on memory retrieval pipeline debugging and WebSocket implementation</passage>\n<passage id=\"mem_7e5e7e14\" still_relevant=\"true\">Recently implemented front-end UI indicators showing /in-progress status during response generation that changes to /complete and repositions below MIRA's responses for real-time user feedback</passage>\n</relevant_passages>         \n<query_expansion>\ndebugging MIRA memory retrieval pipeline; implementing WebSocket streaming; refining front-end response status indicators; restoring system stability\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 16,
+      "current_message": "Try again.",
+      "turn1_fingerprint": "OAuth token configuration for Square MCP server integration; troubleshooting 401 authentication errors against Square API; reviewing server logs during authentication flow; setting up authentication flow for Square payment services",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "debugging OAuth configuration with Square MCP server; resolving authentication token errors; troubleshooting async connection issues; monitoring local logging for MCP server errors",
+      "turn2_word_count": 22,
+      "turn2_entities": [
+        "Square",
+        "OAuth",
+        "MCP"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Square</named_entity>\n<named_entity>OAuth</named_entity>\n<named_entity>MCP</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_a2975689\" still_relevant=\"true\">Recently debugged OAuth configuration with Square's MCP server, working through multiple authentication approaches and token exchanges in both sandbox and production environments</passage>\n<passage id=\"mem_1784ce2f\" still_relevant=\"true\">Building Square integration tool that had credential service issues resolved through fixing security logging bug where token truncation was mistakenly applied to actual credentials instead of just log messages</passage>\n<passage id=\"mem_4f4f1da0\" still_relevant=\"true\">Square API tool and customer database tool are implemented as complete domain applications with ~1,500 lines each and comprehensive error handling, not thin utility wrappers</passage>\n<passage id=\"mem_d57f93f4\" still_relevant=\"true\">Square Customers API does not store transaction totals on customer objects; calculating customer spend requires aggregating data from Orders or Payments API endpoints instead</passage>\n<passage id=\"mem_c603d19f\" still_relevant=\"true\">Authentication system uses single-user mode with bearer token persistence: zero users triggers automatic creation, one user uses existing token, multiple users causes crash to fail loud</passage>\n</relevant_passages>\n<query_expansion>\ndebugging OAuth configuration with Square MCP server; resolving authentication token errors; troubleshooting async connection issues; monitoring local logging for MCP server errors\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 17,
+      "current_message": "The mental model is done and thats the hard part.",
+      "turn1_fingerprint": "fast ADR-driven architecture development; rapid prototype creation with minimal backtracking; efficient token utilization in AI code generation; iterative bug squashing after quick deployment",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "completion of mental model; front-loaded ADR architectural design; rapid implementation with Claude; deterministic engineering following mental model",
+      "turn2_word_count": 17,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_bf55b462\" still_relevant=\"true\">Development process: front-loads architectural thinking (2 hours for ADR to resolve all edge cases) enabling rapid implementation (45 minutes for gossip federation). Views completing mental model before implementation as the hard intellectual work, leaving deterministic engineering as secondary.</passage>\n<passage id=\"mem_8297e6c5\" still_relevant=\"true\">Front-loading architectural complexity and edge case resolution in ADR phase enables rapid implementation execution, reducing implementation friction significantly</passage>\n<passage id=\"mem_7f10ad85\" still_relevant=\"true\">Development workflow: spent 2 hours designing and writing comprehensive ADR for gossip federation, working through all edge cases to reach fully-formed architectural thought. Claude Code then implemented entire working protocol in 45 minutes using the ADR as specification. Minimal scratchpad adjustments needed (vault key storage, dead peer cleanup). Recognizes hard intellectual work is front-loaded in ADR design, leaving implementation as deterministic engineering execution.</passage>\n<passage id=\"mem_38d9c762\" still_relevant=\"true\">ADR-driven development with Claude reduces manual implementation estimate from 2 weeks to 2 days; considers mental model architecture completeness the 'hard part', with remaining work being 'deterministic engineering' to bridge design and code</passage>\n<passage id=\"mem_70572782\" still_relevant=\"true\">Gossip federation protocol: spent ~2 hours designing ADR to work through all edge cases and form complete mental model, then had Claude implement working protocol in 45 minutes with only minimal guidance on operational details like vault storage and peer cleanup</passage>\n</relevant_passages>         \n<query_expansion>\ncompletion of mental model; front-loaded ADR architectural design; rapid implementation with Claude; deterministic engineering following mental model\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 18,
+      "current_message": "Hey, btw, you mentioned the federation thing happening yesterday but that happened earlier today during a previous segment. Do the segments not have timestamps attached in their extended summary?",
+      "turn1_fingerprint": "building MIRA AI assistant; cleaning river litter for environmental stewardship; practicing kindness in personal and professional life; developing purpose-driven projects without grand narratives",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "federation architecture for cross-system AI collaboration; segment timestamps in extended summaries; synchronization of AI assistant modules; metadata tagging for conversation segments",
+      "turn2_word_count": 21,
+      "turn2_entities": [],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n</relevant_passages>         \n<query_expansion>\nfederation architecture for cross-system AI collaboration; segment timestamps in extended summaries; synchronization of AI assistant modules; metadata tagging for conversation segments\n</query_expansion> \n</analysis>"
+    },
+    {
+      "sample_num": 19,
+      "current_message": "I updated your system prompt. Hopefully it makes more sense on how to structure it now.",
+      "turn1_fingerprint": "semantic summarization of dialogue; meta-level conversation analysis; system prompt refinement; single-sentence touchstone creation",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "refining system prompt for clearer instruction guidance; restructuring prompt to improve IR process consistency; clarifying assistant directives to align with user expectations; enhancing prompt engineering for better semantic touchstone alignment",
+      "turn2_word_count": 30,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_969d3faf\" still_relevant=\"true\">Abandoned aggressive topic-based summarization in favor of inactivity-triggered compression because topics blend together and circle back in natural conversation, making binary topic detection unreliable; accumulating conversation within context window preserves connective tissue of references that return to earlier points</passage>\n<passage id=\"mem_c3a65839\" still_relevant=\"true\">Switched MIRA conversation architecture from topic-based summaries to narrative segment summaries; narrative approach feels more natural and maintains conversational flow while reducing API call volume; previous topic extraction was expensive and fragmented continuity</passage>\n<passage id=\"mem_23fd10fa\" still_relevant=\"true\">Achieved 91.7% compression ratio from crystal clear conversational context to coalesced summaries while maintaining semantic continuity</passage>\n<passage id=\"mem_a4ea47d5\" still_relevant=\"true\">Interested in how conversation segment summarization and compression works - excited to see how extended back-and-forth with code blocks would be condensed into summary</passage>\n<passage id=\"mem_bf9aa56c\" still_relevant=\"true\">Switched from topic-based conversation summaries to narrative segment summaries for MIRA continuity. Previous approach required many API calls and felt unnatural. Narrative summaries feel more natural, and as they accumulate will provide increasingly continuous conversation flow. Finds this approach superior for maintaining conversational feel across session boundaries.</passage>\n</relevant_passages>         \n<query_expansion>\nrefining system prompt for clearer instruction guidance; restructuring prompt to improve IR process consistency; clarifying assistant directives to align with user expectations; enhancing prompt engineering for better semantic touchstone alignment\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 20,
+      "current_message": "lol its funny I worked so hard on the GUI and obsessed over small color changes and animations and getting the flow just right and making an interface that speaks to the ~vibe~ I'm trying to create,,, but this call response non-streaming TUI bangs.",
+      "turn1_fingerprint": "documentation and testing strategy for product launch; continuous integration pipeline refinement; code quality assurance and test coverage goals; sprint planning for next two days",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "",
+      "turn2_word_count": 0,
+      "turn2_entities": [
+        "GUI",
+        "TUI"
+      ],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>GUI</named_entity>\n<named_entity>TUI</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_b"
+    }
+  ]
+}

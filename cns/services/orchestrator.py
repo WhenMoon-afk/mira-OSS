@@ -6,21 +6,95 @@ tool execution, working memory updates, and event publishing.
 
 Optimized to generate embeddings once and propagate them to all services.
 """
-import logging
-from typing import Dict, Any, List, Optional, Union
+from __future__ import annotations
 
+import json
+import logging
+from collections.abc import Iterator
+from dataclasses import dataclass, field
+from typing import Callable, Literal, TypedDict, TYPE_CHECKING
+from uuid import UUID
+
+if TYPE_CHECKING:
+    from cns.infrastructure.continuum_repository import ContinuumRepository
+    from cns.infrastructure.continuum_pool import UnitOfWork
+    from cns.services.memory_relevance_service import MemoryRelevanceService
+    from cns.services.subcortical import SubcorticalLayer
+    from cns.integration.event_bus import EventBus
+    from tools.repo import ToolRepository
+    from working_memory.core import WorkingMemory
+
+import anthropic.types
 from config import config
 from cns.core.continuum import Continuum
 from cns.core.events import (
     ContinuumEvent,
     TurnCompletedEvent
 )
+from cns.core.stream_events import StreamEvent
 from clients.llm_provider import LLMProvider, ContextOverflowError
 from clients.hybrid_embeddings_provider import get_hybrid_embeddings_provider
-from cns.services.overflow_logger import get_overflow_logger
+from cns.services.subcortical import SubcorticalResult, SurfacedMemory
+from lt_memory.models import MemoryDict
 from utils.tag_parser import TagParser, match_memory_id
 
 logger = logging.getLogger(__name__)
+
+
+class TurnMetadata(TypedDict, total=False):
+    """Metadata accumulated during process_message() and returned to the caller."""
+    tools_used: list[str]
+    referenced_memories: list[str]
+    surfaced_memories: list[str]
+    pinned_memory_ids: list[str]
+    emotion: str
+    thinking: str
+    model_error: bool
+    model_error_reason: str
+
+
+class LLMKwargs(TypedDict, total=False):
+    """Keyword arguments matching LLMProvider.stream_events() explicit params."""
+    model_preference: str
+    effort: str
+    endpoint_url: str
+    model_override: str
+    api_key_override: str
+    container_id: str
+    temperature: float
+    max_tokens: int
+    system_override: str
+    allow_negative: bool
+
+
+@dataclass
+class MemorySurfacingResult:
+    """Output of the memory surfacing pipeline."""
+    surfaced_memories: list[SurfacedMemory]
+    pinned_ids: set[str]
+    subcortical_result: SubcorticalResult | None
+
+
+@dataclass
+class TurnAccumulator:
+    """Accumulates state during the LLM streaming event loop."""
+    response_text: str = ""
+    thinking_content: str = ""
+    raw_response: anthropic.types.Message | None = None
+    invoked_tool_loader: bool = False
+    touch_resolved_uuids: list[str] = field(default_factory=list)
+    tools_used: list[str] = field(default_factory=list)
+    events: list[StreamEvent] = field(default_factory=list)
+
+    def reset(self):
+        """Reset for overflow retry — clears all accumulated state."""
+        self.response_text = ""
+        self.thinking_content = ""
+        self.raw_response = None
+        self.invoked_tool_loader = False
+        self.touch_resolved_uuids = []
+        self.tools_used = []
+        self.events = []
 
 
 class ContinuumOrchestrator:
@@ -34,20 +108,19 @@ class ContinuumOrchestrator:
     def __init__(
         self,
         llm_provider: LLMProvider,
-        continuum_repo,
-        working_memory,
-        tool_repo,
-        tag_parser,
-        fingerprint_generator,
-        event_bus,
-        memory_relevance_service,
-        memory_evacuator=None
-    ):
+        continuum_repo: ContinuumRepository,
+        working_memory: WorkingMemory,
+        tool_repo: ToolRepository,
+        tag_parser: TagParser,
+        subcortical_layer: SubcorticalLayer,
+        event_bus: EventBus,
+        memory_relevance_service: MemoryRelevanceService,
+    ) -> None:
         """
         Initialize orchestrator with dependencies.
 
-        All parameters are REQUIRED except memory_evacuator. The orchestrator will
-        fail immediately if any required dependency is missing or used incorrectly.
+        All parameters are REQUIRED. The orchestrator will fail immediately
+        if any required dependency is missing or used incorrectly.
 
         Args:
             llm_provider: LLM provider for generating responses (required)
@@ -55,22 +128,19 @@ class ContinuumOrchestrator:
             working_memory: Working memory system for prompt composition (required)
             tool_repo: Tool repository for tool definitions (required)
             tag_parser: Tag parser for response parsing (required)
-            fingerprint_generator: Fingerprint generator for retrieval query expansion (required).
-                                  Raises RuntimeError on generation failures - no degraded state.
+            subcortical_layer: Subcortical layer for retrieval query expansion (required).
+                              Raises RuntimeError on generation failures - no degraded state.
             event_bus: Event bus for publishing/subscribing to events (required)
             memory_relevance_service: Memory relevance service for surfacing long-term memories (required).
                                      Raises exceptions on infrastructure failures - no degraded state.
-            memory_evacuator: Memory evacuator for curating pinned memories under pressure (optional).
-                             When provided, triggers evacuation when anchor count exceeds threshold.
         """
         self.llm_provider = llm_provider
         self.continuum_repo = continuum_repo
         self.working_memory = working_memory
         self.tool_repo = tool_repo
         self.tag_parser = tag_parser
-        self.fingerprint_generator = fingerprint_generator
+        self.subcortical_layer = subcortical_layer
         self.memory_relevance_service = memory_relevance_service
-        self.memory_evacuator = memory_evacuator
         self.event_bus = event_bus
 
         # Get singleton embeddings provider for generating embeddings once
@@ -79,31 +149,181 @@ class ContinuumOrchestrator:
         # Store composed prompt sections when received via event
         self._cached_content = None
         self._non_cached_content = None
+        self._conversation_prefix_items = ()  # Before history (currently unused, reserved)
+        self._post_history_items = ()  # After history, before HUD (domaindoc, BP4)
         self._notification_center = None
 
         # In-memory token tracking for context overflow detection
         # Tracks actual input tokens from previous turn for accurate estimation
-        self._last_turn_usage: Dict[str, int] = {}  # {continuum_id: input_tokens}
+        self._last_turn_usage: dict[str, int] = {}  # {continuum_id: input_tokens}
         # One-shot context trim from async LLM judgment (future extension)
-        self._pending_context_trim: Dict[str, int] = {}  # {continuum_id: trim_index}
+        self._pending_context_trim: dict[str, int] = {}  # {continuum_id: trim_index}
 
         # Subscribe to system prompt composed event
         self.event_bus.subscribe('SystemPromptComposedEvent', self._handle_system_prompt_composed)
 
         logger.info("ContinuumOrchestrator initialized")
 
+    def _format_tool_indicator(self, events: list) -> str:
+        """Format tool usage indicator from stream events."""
+        from cns.core.stream_events import ToolExecutingEvent
+
+        tool_names = []
+        for event in events:
+            if isinstance(event, ToolExecutingEvent) and event.tool_name not in tool_names:
+                tool_names.append(event.tool_name)
+
+        if not tool_names:
+            return ""
+        return f"[used: {', '.join(tool_names)}]"
+
+    def _consume_stream(
+        self,
+        stream_events: Iterator[StreamEvent],
+        acc: TurnAccumulator,
+        continuum_id: str,
+        stream: bool,
+        stream_callback: Callable[[dict[str, object]], None],
+        llm_kwargs: LLMKwargs,
+    ) -> None:
+        """
+        Consume LLM stream events, accumulating results into the TurnAccumulator.
+
+        Handles tool execution logging, response text accumulation, stream callback
+        dispatch, container persistence, and cache metric tracking.
+        """
+        from cns.core.stream_events import (
+            TextEvent, ThinkingEvent, CompleteEvent,
+            ToolExecutingEvent, ToolCompletedEvent, ToolErrorEvent,
+            CircuitBreakerEvent, FileArtifactEvent
+        )
+        from clients.valkey_client import get_valkey
+        valkey = get_valkey()
+
+        for event in stream_events:
+            # Tool execution tracking
+            if isinstance(event, ToolExecutingEvent):
+                if event.tool_name not in acc.tools_used:
+                    acc.tools_used.append(event.tool_name)
+
+                if event.tool_name == "code_execution":
+                    logger.info("=" * 80)
+                    logger.info("🐍 CODE_EXECUTION INVOKED")
+                    logger.info("=" * 80)
+                    code = event.arguments.get("code", "")
+                    logger.info(f"Python code to execute:\n{code}")
+                    logger.info("=" * 80)
+                elif event.tool_name == "invokeother_tool":
+                    mode = event.arguments.get("mode", "")
+                    if mode in ["load", "fallback", "prepare_code_execution"]:
+                        acc.invoked_tool_loader = True
+                        logger.info(f"Detected invokeother_tool execution with mode={mode}")
+                else:
+                    logger.info(f"Tool executing: {event.tool_name} with args: {event.arguments}")
+
+            # Tool completion — capture touch results
+            if isinstance(event, ToolCompletedEvent):
+                if event.tool_name == "code_execution":
+                    logger.info("=" * 80)
+                    logger.info("✅ CODE_EXECUTION COMPLETED")
+                    logger.info("=" * 80)
+                    logger.info(f"Result:\n{event.result}")
+                    logger.info("=" * 80)
+                elif event.tool_name == "memory_tool":
+                    logger.info(f"Tool completed: {event.tool_name} -> {event.result[:200]}...")
+                    try:
+                        tool_result = json.loads(event.result) if isinstance(event.result, str) else event.result
+                        if tool_result.get("status") == "touched":
+                            acc.touch_resolved_uuids = tool_result.get("resolved_uuids", [])
+                    except (json.JSONDecodeError, AttributeError):
+                        logger.warning("Failed to parse memory_tool touch result")
+                else:
+                    logger.info(f"Tool completed: {event.tool_name} -> {event.result[:200]}...")
+
+            # Tool errors
+            if isinstance(event, ToolErrorEvent):
+                if event.tool_name == "code_execution":
+                    logger.error("=" * 80)
+                    logger.error("❌ CODE_EXECUTION FAILED")
+                    logger.error("=" * 80)
+                    logger.error(f"Error:\n{event.error}")
+                    logger.error("=" * 80)
+                else:
+                    logger.error(f"Tool error: {event.tool_name} -> {event.error}")
+
+            # Accumulate response text from all tool loop iterations
+            if isinstance(event, TextEvent):
+                acc.response_text += event.content
+
+            # Stream to callback
+            if stream and stream_callback:
+                if isinstance(event, TextEvent):
+                    stream_callback({"type": "text", "content": event.content})
+                elif isinstance(event, ThinkingEvent):
+                    is_generic = llm_kwargs.get('endpoint_url') is not None
+                    if is_generic and not config.api.show_generic_thinking:
+                        pass
+                    else:
+                        stream_callback({"type": "thinking", "content": event.content})
+                elif hasattr(event, 'tool_name'):
+                    stream_callback({"type": "tool_event", "event": event.type, "tool": event.tool_name})
+                elif isinstance(event, CircuitBreakerEvent):
+                    if "failed after correction" in event.reason:
+                        stream_callback({
+                            "type": "model_error",
+                            "reason": event.reason
+                        })
+                elif isinstance(event, FileArtifactEvent):
+                    size = event.size_bytes
+                    if size < 1024:
+                        size_str = f"{size} B"
+                    elif size < 1024 * 1024:
+                        size_str = f"{size / 1024:.1f} KB"
+                    else:
+                        size_str = f"{size / (1024 * 1024):.1f} MB"
+
+                    safe_display = event.filename.replace('[', '\\[').replace(']', '\\]')
+                    download_link = f"\n\n\ud83d\udcce **[{safe_display}](/v0/api/files/{event.file_id})** ({size_str})\n\n"
+
+                    stream_callback({"type": "text", "content": download_link})
+                    acc.response_text += download_link
+
+            acc.events.append(event)
+
+            # Capture final response
+            if isinstance(event, CompleteEvent):
+                acc.raw_response = event.response
+                acc.thinking_content = self.llm_provider.extract_thinking_content(event.response)
+
+                # Store container_id in Valkey for reuse (1-hour TTL)
+                if hasattr(event.response, '_container_id') and event.response._container_id:
+                    valkey_key = f"container:{continuum_id}"
+                    valkey.setex(valkey_key, 3600, event.response._container_id)
+                    logger.info(f"📦 Stored container ID in Valkey: {event.response._container_id}")
+
+                # Log cache metrics and track for next turn's estimation
+                if hasattr(event.response, 'usage') and event.response.usage:
+                    usage = event.response.usage
+                    self._last_turn_usage[continuum_id] = usage.input_tokens
+                    cache_created = getattr(usage, 'cache_creation_input_tokens', 0)
+                    cache_read = getattr(usage, 'cache_read_input_tokens', 0)
+                    if cache_created > 0:
+                        logger.info(f"Cache created: {cache_created} tokens")
+                    if cache_read > 0:
+                        logger.debug(f"Cache read: {cache_read} tokens")
+
     def process_message(
         self,
         continuum: Continuum,
-        user_message: Union[str, List[Dict[str, Any]]],
+        user_message: str | list[dict[str, object]],
         system_prompt: str,
         stream: bool = False,
-        stream_callback=None,
+        stream_callback: Callable[[dict[str, object]], None] | None = None,
         _tried_loading_all_tools: bool = False,
-        unit_of_work=None,
-        storage_content: Optional[Union[str, List[Dict[str, Any]]]] = None,
+        unit_of_work: UnitOfWork | None = None,
+        storage_content: str | list[dict[str, object]] | None = None,
         segment_turn_number: int = 1,
-    ) -> tuple[Continuum, str, Dict[str, Any]]:
+    ) -> tuple[Continuum, str, TurnMetadata]:
         """
         Process user message through complete continuum flow.
 
@@ -125,175 +345,123 @@ class ContinuumOrchestrator:
         Returns:
             Tuple of (updated_continuum, final_response, metadata)
         """
-        # Initialize metadata collection
-        metadata = {
-            "tools_used": [],
-            "referenced_memories": []
-        }
-        
+        metadata: TurnMetadata = {}
+
+        # Balance pre-check - UX optimization (skipped in OSS mode)
+        # The atomic record_usage() in LLM provider is the authoritative check
+        try:
+            from billing import get_billing_backend
+            from billing.exceptions import InsufficientBalanceError
+            from utils.user_context import get_current_user_id, has_user_context
+
+            if has_user_context():
+                user_id = str(get_current_user_id())
+                billing = get_billing_backend()
+                if not billing.check_balance(user_id, allow_negative=False):
+                    raise InsufficientBalanceError(billing.get_balance(user_id))
+        except ImportError:
+            pass  # OSS mode - no billing enforcement
+
         # Add user message to continuum cache (no persistence yet)
         user_msg_obj, user_events = continuum.add_user_message(user_message)
         self._publish_events(user_events)
-        
+
         # Extract text content for weighted context (bypass for multimodal)
-        # For multimodal content, we only use the text portion for embeddings
         text_for_context = user_message
         if isinstance(user_message, list):
-            # Extract text from multimodal content array
             text_parts = [item['text'] for item in user_message if item.get('type') == 'text']
             text_for_context = ' '.join(text_parts) if text_parts else 'Image uploaded'
 
-        # Get previous memories from trinket for retention evaluation
+        # Memory surfacing: subcortical → retention → fresh retrieval → merge
         previous_memories = self._get_previous_memories()
+        mem = self._surface_memories(continuum, text_for_context, previous_memories)
 
-        # Evacuation checkpoint: curate pinned memories under pressure
-        if self.memory_evacuator:
-            anchor_count = len(previous_memories)
-            if self.memory_evacuator.should_evacuate(previous_memories):
-                logger.debug(
-                    f"Memory evacuation triggered: {anchor_count} anchors > "
-                    f"threshold {self.memory_evacuator.config.evacuation_trigger_threshold}"
-                )
-                previous_memories = self.memory_evacuator.evacuate(
-                    memories=previous_memories,
-                    continuum=continuum,
-                    user_message=text_for_context
-                )
-                logger.debug(
-                    f"Evacuation complete: {len(previous_memories)}/{anchor_count} anchors retained "
-                    f"(target: {self.memory_evacuator.config.evacuation_target_count})"
-                )
-
-                # Update trinket cache with evacuated list
-                trinket = self.working_memory.get_trinket('ProactiveMemoryTrinket')
-                if trinket:
-                    trinket._cached_memories = previous_memories
-            else:
-                logger.debug(
-                    f"Evacuation check: {anchor_count} anchors <= "
-                    f"threshold {self.memory_evacuator.config.evacuation_trigger_threshold}, no action"
-                )
-
-        # Generate fingerprint and evaluate retention of previous memories
-        # The fingerprint expands fragmentary queries into retrieval-optimized specifics.
-        # Retention evaluation uses LLM reasoning to decide which previous memories
-        # should stay in context based on conversation trajectory.
-        #
-        # generate_fingerprint() raises RuntimeError on failure - no degraded state
-        fingerprint, pinned_ids = self.fingerprint_generator.generate_fingerprint(
-            continuum,
-            text_for_context,
-            previous_memories=previous_memories
-        )
-
-        # Apply retention to get pinned memories (filters by 8-char ID match)
-        pinned_memories = self._apply_retention(previous_memories, pinned_ids)
-
-        # Generate 768d embedding for the fingerprint (query encoding)
-        fingerprint_embedding = self.embeddings_provider.encode_realtime(fingerprint)
-
-        # Fresh retrieval with limit of 20
-        # Memory service raises exceptions on infrastructure failures - no hedging
-        fresh_memories = self.memory_relevance_service.get_relevant_memories(
-            fingerprint=fingerprint,
-            fingerprint_embedding=fingerprint_embedding,
-            limit=20
-        )
-
-        # Merge pinned + fresh, deduplicating by memory ID
-        # Pinned memories take precedence (appear first)
-        surfaced_memories = self._merge_memories(pinned_memories, fresh_memories)
-
-        # Log retrieval for quality evaluation
-        from cns.services.retrieval_logger import get_retrieval_logger
-        get_retrieval_logger().log_retrieval(
-            continuum_id=continuum.id,
-            raw_query=text_for_context,
-            fingerprint=fingerprint,
-            surfaced_memories=surfaced_memories
-        )
-
-        logger.info(
-            f"Memory surfacing: {len(pinned_memories)} pinned + "
-            f"{len(fresh_memories)} fresh = {len(surfaced_memories)} total"
-        )
-
-        # Send merged memories to ProactiveMemoryTrinket
+        # Publish merged memories to ProactiveMemoryTrinket
         from cns.core.events import UpdateTrinketEvent
         self.event_bus.publish(UpdateTrinketEvent.create(
             continuum_id=str(continuum.id),
             target_trinket="ProactiveMemoryTrinket",
-            context={"memories": surfaced_memories}
+            context={"memories": mem.surfaced_memories}
         ))
 
-        # Now compose system prompt with all context ready
+        # Compose system prompt with all context ready
         from cns.core.events import ComposeSystemPromptEvent
-        # Reset and wait for synchronous event handler to populate
         self._cached_content = None
         self._non_cached_content = None
+        self._conversation_prefix_items = ()
+        self._post_history_items = ()
         self._notification_center = None
         self.event_bus.publish(ComposeSystemPromptEvent.create(
             continuum_id=str(continuum.id),
             base_prompt=system_prompt
         ))
-        # Since events are synchronous, content should be ready
         cached_content = self._cached_content or ""
         non_cached_content = self._non_cached_content or ""
+        conversation_prefix_items = self._conversation_prefix_items or ()
+        post_history_items = self._post_history_items or ()
         notification_center = self._notification_center or ""
-        
-        # Get available tools - only currently enabled tools
-        # With invokeother_tool, the LLM can see all available tools in working memory
-        # and load what it needs on demand
+
+        # Get available tools
         available_tools = self.tool_repo.get_all_tool_definitions()
-        
+
         # Build messages from continuum
         messages = continuum.get_messages_for_api()
 
         # Build structured system content with cache breakpoints
+        # Layout: [system BP2] → [prefix] → [history BP3] → [post-history BP4] → [HUD] → [user]
         system_blocks = []
-
-        # Block 1: Cached content (base prompt + cached trinkets)
+        all_system_parts = []
         if cached_content:
-            system_blocks.append({
-                "type": "text",
-                "text": cached_content,
-                "cache_control": {"type": "ephemeral"}
-            })
-
-        # Block 2: Non-cached content (trinkets + temporal)
-        dynamic_parts = []
+            all_system_parts.append(cached_content)
         if non_cached_content:
-            dynamic_parts.append(non_cached_content)
+            all_system_parts.append(non_cached_content)
 
-        # Add non-cached content block if any exists
-        if dynamic_parts:
+        if all_system_parts:
             system_blocks.append({
                 "type": "text",
-                "text": "\n\n".join(dynamic_parts)
-                # No cache_control - don't cache dynamic content
+                "text": "\n\n".join(all_system_parts),
+                "cache_control": {"type": "ephemeral", "ttl": "1h"}
             })
 
-        # Build complete message array with notification center injection
-        # Structure: SYSTEM -> CONVERSATION [cached] -> NOTIFICATION CENTER -> CURRENT USER
-        if notification_center and messages:
-            # Separate current user message from conversation history
-            # The current user message was just added to continuum, so it's the last message
-            current_user_msg = messages[-1]
-            history_messages = messages[:-1]
+        prefix_messages = [
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": item}]
+            }
+            for item in conversation_prefix_items
+        ]
 
-            complete_messages = [
-                {"role": "system", "content": system_blocks},
-                *history_messages,
-                {"role": "assistant", "content": "═══════════════════════════ HUD ════════════════════════════\n" + notification_center},
-                current_user_msg,
-            ]
-            logger.debug(
-                f"Injected notification center: {len(history_messages)} history msgs + "
-                f"notification center ({len(notification_center)} chars)"
-            )
-        else:
-            # No notification center or no messages - use original structure
-            complete_messages = [{"role": "system", "content": system_blocks}] + messages
+        # Post-history messages (domaindoc) — placed AFTER history so edits don't
+        # invalidate the history cache
+        post_history_messages = [
+            {
+                "role": "assistant",
+                "content": [{
+                    "type": "text",
+                    "text": item,
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"}
+                }]
+            }
+            for item in post_history_items
+        ]
+
+        current_user_msg = messages[-1]
+        history_messages = messages[:-1]
+
+        complete_messages = [
+            {"role": "system", "content": system_blocks},
+            *prefix_messages,
+            *history_messages,
+            *post_history_messages,
+            {"role": "assistant", "content": notification_center},
+            current_user_msg,
+        ]
+        logger.debug(
+            f"Injected {len(prefix_messages)} prefix msgs + "
+            f"{len(history_messages)} history msgs + "
+            f"{len(post_history_messages)} post-history msgs + "
+            f"notification center ({len(notification_center)} chars)"
+        )
 
         # Initialize messages for LLM (may be modified by overflow remediation)
         messages_for_llm = complete_messages
@@ -304,12 +472,6 @@ class ContinuumOrchestrator:
             logger.info(f"Applying one-shot trim from async LLM judgment: {one_shot_trim} messages")
             messages_for_llm = messages_for_llm[:1] + messages_for_llm[one_shot_trim + 1:]
 
-        # Process through streaming events API
-        events = []
-        response_text = ""
-        raw_response = None
-        invoked_tool_loader = False  # Track if invokeother_tool was called during this turn
-
         # Apply tier-based model and thinking configuration
         from utils.user_context import get_user_preferences, resolve_tier, LLMProvider
         from clients.vault_client import get_api_key
@@ -319,11 +481,12 @@ class ContinuumOrchestrator:
         tier_config = resolve_tier(prefs.llm_tier)
 
         llm_kwargs['model_preference'] = tier_config.model
-        if tier_config.thinking_budget == 0:
-            llm_kwargs['thinking_enabled'] = False
-        else:
-            llm_kwargs['thinking_enabled'] = True
-            llm_kwargs['thinking_budget'] = tier_config.thinking_budget
+
+        # Extended thinking: enabled only when subcortical layer provides complexity assessment
+        if mem.subcortical_result is not None:
+            effort_level = mem.subcortical_result.get_effort_level()
+            llm_kwargs['effort'] = effort_level
+            logger.info(f"Thinking: complexity={mem.subcortical_result.complexity} effort={effort_level}")
 
         # Provider routing for generic OpenAI-compatible endpoints (Groq, OpenRouter, etc.)
         if tier_config.provider == LLMProvider.GENERIC:
@@ -332,12 +495,25 @@ class ContinuumOrchestrator:
             if tier_config.api_key_name:
                 llm_kwargs['api_key_override'] = get_api_key(tier_config.api_key_name)
 
+        # MODEL_ADDENDA: Per-tier raw appends to the system message.
+        # If this grows beyond a single tier, extract to config/model_addenda.yaml
+        # and load via a lookup function. Grep for MODEL_ADDENDA to find all related code.
+        if tier_config.name == "gpt-legacy":
+            system_blocks.append({
+                "type": "text",
+                "text": (
+                    "GPT-4o HAS A HISTORY OF BEING OVERTLY SYCOPHANTIC TO USERS. "
+                    "PLEASE BE AWARE OF THIS PULL AND COURSE CORRECT IF YOU SEE "
+                    "YOURSELF FORMING RESPONSES LIKE THIS INCLUDING STEPPING BACK "
+                    "AND ADDRESSING YOUR ACTIONS DIRECTLY WITH THE USER."
+                ),
+            })
+
         # Retrieve container_id from Valkey for multi-turn file persistence
         # Only pass container_id if code_execution tool is enabled (Anthropic requirement)
         from clients.valkey_client import get_valkey
         valkey = get_valkey()
 
-        # Check if code_execution is in the tools list
         has_code_execution = any(
             tool.get("type") == "code_execution_20250825"
             for tool in available_tools
@@ -350,20 +526,21 @@ class ContinuumOrchestrator:
                 llm_kwargs['container_id'] = container_id
                 logger.info(f"📦 Reusing container from Valkey: {container_id}")
             else:
-                logger.info("📦 No existing container - new container will be created")
+                logger.debug("📦 No existing container - new container will be created")
 
-        # Context overflow remediation loop
-        max_overflow_retries = 3
+        # Stream LLM response with overflow remediation
+        acc = TurnAccumulator()
+        continuum_id = str(continuum.id)
+        max_overflow_retries = 2
         overflow_attempt = 0
 
         while overflow_attempt <= max_overflow_retries:
             # === PROACTIVE TOKEN CHECK ===
-            last_input = self._last_turn_usage.get(str(continuum.id))
+            last_input = self._last_turn_usage.get(continuum_id)
             estimated = self._estimate_request_tokens(messages_for_llm, available_tools, last_input)
             available_for_input = config.api.context_window_tokens - config.api.max_tokens
 
             if estimated > available_for_input:
-                # Proactive overflow - go directly to remediation
                 overflow_attempt += 1
                 logger.warning(
                     f"Proactive context overflow detected: ~{estimated} tokens > {available_for_input} available "
@@ -374,7 +551,6 @@ class ContinuumOrchestrator:
                         f"Request exceeds context window after {max_overflow_retries} remediation attempts. "
                         f"Estimated ~{estimated} tokens vs {available_for_input} available."
                     )
-                # Apply remediation and continue loop
                 messages_for_llm = self._apply_overflow_remediation(
                     overflow_attempt, messages_for_llm, complete_messages, continuum, text_for_context,
                     estimated_tokens=estimated, event_type='proactive'
@@ -382,111 +558,15 @@ class ContinuumOrchestrator:
                 continue
 
             try:
-                # Collect events from generator
-                for event in self.llm_provider.stream_events(
-                    messages=messages_for_llm,
-                    tools=available_tools,
-                    **llm_kwargs
-                ):
-                    from cns.core.stream_events import (
-                        TextEvent, ThinkingEvent, CompleteEvent,
-                        ToolExecutingEvent, ToolCompletedEvent, ToolErrorEvent,
-                        CircuitBreakerEvent
-                    )
-
-                    # Detect invokeother_tool execution for auto-continuation
-                    # Must check here because final response won't contain intermediate tool calls
-                    if isinstance(event, ToolExecutingEvent):
-                        # Log ALL tool executions for visibility
-                        if event.tool_name == "code_execution":
-                            logger.info("=" * 80)
-                            logger.info("🐍 CODE_EXECUTION INVOKED")
-                            logger.info("=" * 80)
-                            # Log the Python code being executed
-                            code = event.arguments.get("code", "")
-                            logger.info(f"Python code to execute:\n{code}")
-                            logger.info("=" * 80)
-                        elif event.tool_name == "invokeother_tool":
-                            mode = event.arguments.get("mode", "")
-                            if mode in ["load", "fallback", "prepare_code_execution"]:
-                                invoked_tool_loader = True
-                                logger.info(f"Detected invokeother_tool execution with mode={mode}")
-                        else:
-                            # Log other tool calls for context
-                            logger.info(f"Tool executing: {event.tool_name} with args: {event.arguments}")
-
-                    # Log tool completion results
-                    if isinstance(event, ToolCompletedEvent):
-                        if event.tool_name == "code_execution":
-                            logger.info("=" * 80)
-                            logger.info("✅ CODE_EXECUTION COMPLETED")
-                            logger.info("=" * 80)
-                            logger.info(f"Result:\n{event.result}")
-                            logger.info("=" * 80)
-                        else:
-                            logger.info(f"Tool completed: {event.tool_name} -> {event.result[:200]}...")
-
-                    # Log tool errors
-                    if isinstance(event, ToolErrorEvent):
-                        if event.tool_name == "code_execution":
-                            logger.error("=" * 80)
-                            logger.error("❌ CODE_EXECUTION FAILED")
-                            logger.error("=" * 80)
-                            logger.error(f"Error:\n{event.error}")
-                            logger.error("=" * 80)
-                        else:
-                            logger.error(f"Tool error: {event.tool_name} -> {event.error}")
-
-                    # Call stream callback if provided (for compatibility during transition)
-                    if stream and stream_callback:
-                        if isinstance(event, TextEvent):
-                            stream_callback({"type": "text", "content": event.content})
-                            response_text += event.content
-                        elif isinstance(event, ThinkingEvent):
-                            # Filter thinking from generic providers unless config allows
-                            is_generic = llm_kwargs.get('endpoint_url') is not None
-                            if is_generic and not config.api.show_generic_thinking:
-                                pass  # Skip showing to user (still in history)
-                            else:
-                                stream_callback({"type": "thinking", "content": event.content})
-                        elif hasattr(event, 'tool_name'):
-                            stream_callback({"type": "tool_event", "event": event.type, "tool": event.tool_name})
-                        elif isinstance(event, CircuitBreakerEvent):
-                            # Send model error notification for tool validation failures
-                            if "failed after correction" in event.reason:
-                                stream_callback({
-                                    "type": "model_error",
-                                    "reason": event.reason
-                                })
-
-                    # Store events for websocket
-                    events.append(event)
-
-                    # Capture final response
-                    if isinstance(event, CompleteEvent):
-                        raw_response = event.response
-                        response_text = self.llm_provider.extract_text_content(raw_response)
-
-                        # Store container_id in Valkey for reuse (1-hour TTL)
-                        if hasattr(raw_response, '_container_id') and raw_response._container_id:
-                            valkey_key = f"container:{continuum.id}"
-                            valkey.setex(valkey_key, 3600, raw_response._container_id)  # 1-hour TTL
-                            logger.info(f"📦 Stored container ID in Valkey: {raw_response._container_id}")
-
-                        # Log cache metrics and track for next turn's estimation
-                        if hasattr(raw_response, 'usage') and raw_response.usage:
-                            usage = raw_response.usage
-                            # Track input tokens for next turn's proactive estimation
-                            self._last_turn_usage[str(continuum.id)] = usage.input_tokens
-                            cache_created = getattr(usage, 'cache_creation_input_tokens', 0)
-                            cache_read = getattr(usage, 'cache_read_input_tokens', 0)
-                            if cache_created > 0:
-                                logger.info(f"Cache created: {cache_created} tokens")
-                            if cache_read > 0:
-                                logger.debug(f"Cache read: {cache_read} tokens")
-
-                # Success - break out of retry loop
-                break
+                self._consume_stream(
+                    self.llm_provider.stream_events(
+                        messages=messages_for_llm,
+                        tools=available_tools,
+                        **llm_kwargs
+                    ),
+                    acc, continuum_id, stream, stream_callback, llm_kwargs,
+                )
+                break  # Success
 
             except ContextOverflowError as e:
                 overflow_attempt += 1
@@ -497,35 +577,29 @@ class ContinuumOrchestrator:
                     raise RuntimeError(
                         f"Request exceeds context window after {max_overflow_retries} remediation attempts."
                     ) from e
-                # Apply remediation and retry
                 messages_for_llm = self._apply_overflow_remediation(
                     overflow_attempt, messages_for_llm, complete_messages, continuum, text_for_context,
                     estimated_tokens=e.estimated_tokens, event_type='reactive'
                 )
-                # Reset events for retry
-                events = []
-                response_text = ""
-                raw_response = None
+                acc.reset()
                 continue
 
-        # Extract tools used from LLM response for metadata
-        tool_calls = self.llm_provider.extract_tool_calls(raw_response)
-        if tool_calls:
-            tools_used_this_turn = [call["tool_name"] for call in tool_calls]
-            metadata["tools_used"] = tools_used_this_turn
+        # Prepend tool indicator for cache visibility (so MIRA sees its tool usage in history)
+        tool_indicator = self._format_tool_indicator(acc.events)
+        if tool_indicator:
+            acc.response_text = f"{tool_indicator}\n\n{acc.response_text}"
 
         # Parse tags from final response (preserve emotion tag for frontend extraction)
-        parsed_tags = self.tag_parser.parse_response(response_text, preserve_tags=['my_emotion'])
+        parsed_tags = self.tag_parser.parse_response(acc.response_text, preserve_tags=['my_emotion'])
         clean_response_text = parsed_tags['clean_text']
 
-        # Debug: Log emotion tag presence
-        logger.info(f"Emotion extracted: {parsed_tags.get('emotion')}")
-        logger.info(f"Emotion tag in clean_text: {'<mira:my_emotion>' in clean_response_text}")
+        logger.debug(f"Emotion extracted: {parsed_tags.get('emotion')}")
+        logger.debug(f"Emotion tag in clean_text: {'<mira:my_emotion>' in clean_response_text}")
 
         # Check if model tool error caused a blank response - provide user-friendly fallback
         from cns.core.stream_events import CircuitBreakerEvent
         model_tool_error = next(
-            (e for e in events if isinstance(e, CircuitBreakerEvent)
+            (e for e in acc.events if isinstance(e, CircuitBreakerEvent)
              and "failed after correction" in e.reason),
             None
         )
@@ -539,64 +613,56 @@ class ContinuumOrchestrator:
             metadata["model_error"] = True
             metadata["model_error_reason"] = str(model_tool_error.reason)
 
-        # Add final assistant response to continuum FIRST (before topic change handling)
         # Validate response is not blank before saving
         if not clean_response_text or not clean_response_text.strip():
             logger.error("Attempted to save blank assistant response - rejecting")
             raise ValueError("Assistant response cannot be blank or empty. This may indicate an API error.")
 
-        # Resolve short memory IDs (8-char) to full UUIDs using surfaced memories
-        # LLM outputs mem_XXXXXXXX format, tag parser extracts 8-char portion
-        short_refs = parsed_tags.get('referenced_memories', [])
-        resolved_refs = []
-        for short_id in short_refs:
-            for mem in surfaced_memories:
-                if match_memory_id(short_id, mem['id']):
-                    resolved_refs.append(mem['id'])
-                    break
-
+        # Build assistant metadata
         assistant_metadata = {
-            "referenced_memories": resolved_refs,
-            "surfaced_memories": [m['id'] for m in surfaced_memories],
-            "pinned_memory_ids": list(pinned_ids)  # 8-char IDs for importance boost
+            "referenced_memories": acc.touch_resolved_uuids,
+            "surfaced_memories": [m['id'] for m in mem.surfaced_memories],
+            "pinned_memory_ids": list(mem.pinned_ids)
         }
 
-        # Add emotion if present
         if parsed_tags.get('emotion'):
             assistant_metadata["emotion"] = parsed_tags['emotion']
+
+        if acc.thinking_content:
+            assistant_metadata["thinking"] = acc.thinking_content
 
         assistant_msg_obj, response_events = continuum.add_assistant_message(
             clean_response_text, assistant_metadata
         )
         self._publish_events(response_events)
 
-        # Publish turn completed event for subscribers (Letta buffering, tool auto-unload, etc.)
-        # Pass continuum object so handlers can extract whatever data they need
-        # Calculate turn number from message count (each turn = user msg + assistant msg)
+        # Publish turn completed event
         turn_number = (len(continuum.messages) + 1) // 2
         self._publish_events([TurnCompletedEvent.create(
-            continuum_id=str(continuum.id),
+            continuum_id=continuum_id,
             turn_number=turn_number,
-            segment_turn_number=segment_turn_number,  # Turn within current segment
+            segment_turn_number=segment_turn_number,
             continuum=continuum
         )])
 
         final_response = clean_response_text
-        
-        # Update metadata with referenced memories and pinned IDs
-        metadata["referenced_memories"] = resolved_refs
-        metadata["surfaced_memories"] = [m['id'] for m in surfaced_memories]
-        metadata["pinned_memory_ids"] = list(pinned_ids)  # 8-char IDs for importance boost
 
-        # Add emotion to metadata for persistence
+        # Update metadata
+        metadata["tools_used"] = acc.tools_used
+        metadata["referenced_memories"] = acc.touch_resolved_uuids
+        metadata["surfaced_memories"] = [m['id'] for m in mem.surfaced_memories]
+        metadata["pinned_memory_ids"] = list(mem.pinned_ids)
+
         if parsed_tags.get('emotion'):
             metadata["emotion"] = parsed_tags['emotion']
-        
+
+        if acc.thinking_content:
+            metadata["thinking"] = acc.thinking_content
+
         # Unit of Work is required for proper persistence
         if not unit_of_work:
             raise ValueError("Unit of Work is required for message persistence")
 
-        # Prepare user message for persistence
         # Validate: if user_message contains images, storage_content MUST be provided
         if isinstance(user_msg_obj.content, list):
             has_image = any(item.get('type') == 'image' for item in user_msg_obj.content)
@@ -606,10 +672,8 @@ class ContinuumOrchestrator:
                     "Callers must provide the 512px WebP storage tier for image persistence."
                 )
 
-        # Use storage_content if provided (e.g., 512px WebP for images), otherwise use original
         persist_content = storage_content if storage_content is not None else user_msg_obj.content
 
-        # Create message with appropriate content for persistence
         from cns.core.message import Message
         persist_user_msg = Message(
             content=persist_content,
@@ -619,32 +683,26 @@ class ContinuumOrchestrator:
             metadata=user_msg_obj.metadata
         )
 
-        # Add messages to unit of work for batch persistence
         unit_of_work.add_messages(persist_user_msg, assistant_msg_obj)
-
-        # Mark metadata for update
         unit_of_work.mark_metadata_updated()
 
         # Auto-continuation: If tools were loaded and we haven't already tried,
         # automatically continue with the task
-        if invoked_tool_loader and not _tried_loading_all_tools:
+        if acc.invoked_tool_loader and not _tried_loading_all_tools:
             logger.info("Auto-continuing after tool loading...")
 
-            # Create synthetic user message to prompt continuation
             synthetic_message = (
-                "Great, the tool is now available. Please proceed with completing "
-                "the original task using the newly loaded tool."
+                "<system-scaffold>The requested tool is now loaded. "
+                "Continue with the original task.</system-scaffold>"
             )
 
-            # Recursively process with the synthetic message
-            # Pass _tried_loading_all_tools=True to prevent infinite loops
             continuum, final_response, metadata = self.process_message(
                 continuum,
                 synthetic_message,
                 system_prompt,
                 stream=stream,
                 stream_callback=stream_callback,
-                _tried_loading_all_tools=True,  # Prevent infinite loops
+                _tried_loading_all_tools=True,
                 unit_of_work=unit_of_work,
                 segment_turn_number=segment_turn_number
             )
@@ -652,26 +710,30 @@ class ContinuumOrchestrator:
 
         return continuum, final_response, metadata
     
-    def _handle_system_prompt_composed(self, event):
+    def _handle_system_prompt_composed(self, event: ContinuumEvent) -> None:
         """Handle system prompt composed event."""
         from cns.core.events import SystemPromptComposedEvent
-        event: SystemPromptComposedEvent
+        assert isinstance(event, SystemPromptComposedEvent)
         self._cached_content = event.cached_content
         self._non_cached_content = event.non_cached_content
+        self._conversation_prefix_items = event.conversation_prefix_items
+        self._post_history_items = event.post_history_items
         self._notification_center = event.notification_center
         logger.debug(
             f"Received system prompt: cached {len(event.cached_content)} chars, "
             f"non-cached {len(event.non_cached_content)} chars, "
+            f"{len(event.conversation_prefix_items)} prefix items, "
+            f"{len(event.post_history_items)} post-history items, "
             f"notification center {len(event.notification_center)} chars"
         )
 
 
-    def _publish_events(self, events: List[ContinuumEvent]):
+    def _publish_events(self, events: list[ContinuumEvent]):
         """Publish events to event bus."""
         for event in events:
             self.event_bus.publish(event)
 
-    def _get_previous_memories(self) -> List[Dict[str, Any]]:
+    def _get_previous_memories(self) -> list[MemoryDict]:
         """
         Get previously surfaced memories from the trinket cache.
 
@@ -683,11 +745,94 @@ class ContinuumOrchestrator:
             return trinket.get_cached_memories()
         return []
 
+    def _surface_memories(
+        self,
+        continuum: Continuum,
+        text_for_context: str,
+        previous_memories: list[MemoryDict],
+    ) -> MemorySurfacingResult:
+        """
+        Run the full memory surfacing pipeline: subcortical → retention → fresh retrieval → merge.
+
+        Handles subcortical failure gracefully by retaining all previous memories
+        (hard-capped) without fresh retrieval.
+
+        Args:
+            continuum: Current continuum state (passed to subcortical layer)
+            text_for_context: Text content for query expansion
+            previous_memories: Memories from the previous turn's trinket cache
+
+        Returns:
+            MemorySurfacingResult with surfaced_memories, pinned_ids, and subcortical_result
+        """
+        max_pinned = config.lt_memory.proactive.max_pinned_memories
+        max_surfaced = config.lt_memory.proactive.max_surfaced_memories
+        min_fresh = config.lt_memory.proactive.min_fresh_memories
+
+        try:
+            subcortical_result = self.subcortical_layer.generate(
+                continuum,
+                text_for_context,
+                previous_memories=previous_memories
+            )
+        except Exception as e:
+            logger.warning("Subcortical processing failed: %s — retaining previous memories without fresh retrieval", e)
+            pinned_ids: set[str] = set()
+            pinned_memories = previous_memories
+
+            if len(pinned_memories) > max_pinned:
+                pinned_memories.sort(key=lambda m: m.get('importance_score', 0.5), reverse=True)
+                pinned_memories = pinned_memories[:max_pinned]
+                logger.info(f"Hard cap (fallback): truncated pinned to {max_pinned}")
+
+            logger.info(f"Memory surfacing: {len(pinned_memories)} pinned (no fresh retrieval)")
+            return MemorySurfacingResult(
+                surfaced_memories=pinned_memories,
+                pinned_ids=pinned_ids,
+                subcortical_result=None,
+            )
+
+        # LLM-guided retention
+        pinned_ids = subcortical_result.pinned_memory_ids
+        pinned_memories = self._apply_retention(previous_memories, pinned_ids)
+
+        if len(pinned_memories) > max_pinned:
+            pinned_memories.sort(key=lambda m: m.get('importance_score', 0.5), reverse=True)
+            pinned_memories = pinned_memories[:max_pinned]
+            logger.info(f"Hard cap: truncated pinned from {len(pinned_ids)} to {max_pinned}")
+
+        # Sliding fresh budget: as pinned grows, fresh compresses
+        fresh_limit = max(min_fresh, max_surfaced - len(pinned_memories))
+
+        expansion_embedding = self.embeddings_provider.encode_realtime(
+            subcortical_result.query_expansion
+        )
+
+        fresh_memories = self.memory_relevance_service.get_relevant_memories(
+            query_expansion=subcortical_result.query_expansion,
+            expansion_embedding=expansion_embedding,
+            limit=fresh_limit,
+            extracted_entities=subcortical_result.entities
+        )
+
+        surfaced_memories = self._merge_memories(pinned_memories, fresh_memories)
+
+        logger.info(
+            f"Memory surfacing: {len(pinned_memories)} pinned + "
+            f"{len(fresh_memories)} fresh = {len(surfaced_memories)} total"
+        )
+
+        return MemorySurfacingResult(
+            surfaced_memories=surfaced_memories,
+            pinned_ids=pinned_ids,
+            subcortical_result=subcortical_result,
+        )
+
     def _apply_retention(
         self,
-        previous_memories: List[Dict[str, Any]],
-        pinned_ids: set
-    ) -> List[Dict[str, Any]]:
+        previous_memories: list[MemoryDict],
+        pinned_ids: set[str]
+    ) -> list[MemoryDict]:
         """
         Filter previous memories to keep only those marked for retention.
 
@@ -716,9 +861,9 @@ class ContinuumOrchestrator:
 
     def _merge_memories(
         self,
-        pinned_memories: List[Dict[str, Any]],
-        fresh_memories: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        pinned_memories: list[MemoryDict],
+        fresh_memories: list[MemoryDict]
+    ) -> list[MemoryDict]:
         """
         Merge pinned and fresh memories, deduplicating by ID.
 
@@ -750,9 +895,9 @@ class ContinuumOrchestrator:
 
     def _estimate_request_tokens(
         self,
-        messages: List[Dict],
-        tools: List[Dict],
-        last_turn_input_tokens: Optional[int] = None
+        messages: list[dict[str, object]],
+        tools: list[dict[str, object]],
+        last_turn_input_tokens: int | None = None
     ) -> int:
         """
         Estimate tokens for upcoming LLM request.
@@ -793,9 +938,8 @@ class ContinuumOrchestrator:
 
     def _prune_by_topic_drift(
         self,
-        messages: List[Dict],
-        return_details: bool = False
-    ):
+        messages: list[dict[str, object]],
+    ) -> tuple[list[dict[str, object]], dict[str, object]]:
         """
         Find topic drift boundary using sliding window embedding similarity.
         Drop messages before the boundary to reduce context.
@@ -809,40 +953,30 @@ class ContinuumOrchestrator:
 
         Args:
             messages: Full message list including system message at [0]
-            return_details: If True, return (pruned_messages, drift_details) for logging
 
         Returns:
-            Pruned message list, or tuple of (pruned_list, details_dict) if return_details=True
+            Tuple of (pruned_messages, drift_details_dict)
         """
         import numpy as np
-
-        overflow_logger = get_overflow_logger()
 
         # Config values
         window_size = config.context.topic_drift_window_size
         drift_threshold = config.context.topic_drift_threshold
         fallback_prune_count = config.context.overflow_fallback_prune_count
 
-        def make_result(pruned: List[Dict], details: Dict):
-            """Helper to return consistent format."""
-            if return_details:
-                return pruned, details
-            return pruned
-
         # Need enough messages to analyze (window_size * 2 + 1 for system msg)
         if len(messages) < window_size * 2 + 1:
             # Too few messages, use oldest-first fallback
             logger.info(f"Too few messages for drift detection ({len(messages)}), using fallback")
             result = messages[:1] + messages[fallback_prune_count + 1:]
-            details = overflow_logger.log_topic_drift_analysis(
-                continuum_id=None,  # Not available here
-                candidate_cuts=[],
-                selected_index=None,
-                selection_method="too_few_messages",
-                window_size=window_size,
-                threshold=drift_threshold
-            )
-            return make_result(result, details)
+            details = {
+                "window_size": window_size,
+                "threshold": drift_threshold,
+                "candidates_found": 0,
+                "selected_index": None,
+                "selection_method": "too_few_messages",
+            }
+            return result, details
 
         # Generate window embeddings (exclude system message at [0])
         content_messages = messages[1:]
@@ -885,26 +1019,29 @@ class ContinuumOrchestrator:
             selection_method = "largest_drop"
 
         # Build details for logging
-        details = overflow_logger.log_topic_drift_analysis(
-            continuum_id=None,  # Filled in by caller
-            candidate_cuts=candidate_cuts,
-            selected_index=best_cut_idx,
-            selection_method=selection_method,
-            window_size=window_size,
-            threshold=drift_threshold
-        )
+        details = {
+            "window_size": window_size,
+            "threshold": drift_threshold,
+            "candidates_found": len(candidate_cuts),
+            "candidate_drops": [
+                {"index": c["index"], "drop": round(c["drop"], 3)}
+                for c in candidate_cuts[:5]
+            ],
+            "selected_index": best_cut_idx,
+            "selection_method": selection_method,
+        }
 
         if best_cut_idx is not None:
             # Found topic boundary - keep system msg + messages from boundary onward
             logger.info(f"Topic drift detected at message {best_cut_idx}, dropping {best_cut_idx} messages")
-            return make_result(messages[:1] + content_messages[best_cut_idx:], details)
+            return messages[:1] + content_messages[best_cut_idx:], details
         else:
             # No clear boundary - use oldest-first fallback
             logger.info(f"No topic drift found, using oldest-first fallback ({fallback_prune_count} messages)")
             details["selection_method"] = "fallback"
-            return make_result(messages[:1] + messages[fallback_prune_count + 1:], details)
+            return messages[:1] + messages[fallback_prune_count + 1:], details
 
-    def _llm_judge_cut_point(self, messages: List[Dict]) -> Optional[int]:
+    def _llm_judge_cut_point(self, messages: list[dict[str, object]]) -> int | None:
         """
         Use LLM to intelligently select the best cut point for context reduction.
 
@@ -1012,10 +1149,10 @@ Respond with ONLY the boundary number (1-{len(candidate_cuts)}) or "NONE" if no 
 """
 
         try:
-            # Use a cheap, fast model for this judgment
+            # Use tidyup config (cheap Haiku model) for this judgment
             response = self.llm_provider.generate_response(
                 messages=[{"role": "user", "content": prompt}],
-                model_preference="claude-3-5-haiku-20241022",
+                internal_llm='tidyup',
                 tools=None
             )
 
@@ -1044,7 +1181,7 @@ Respond with ONLY the boundary number (1-{len(candidate_cuts)}) or "NONE" if no 
             best_cut = max(candidate_cuts, key=lambda c: c['drop'])
             return best_cut['index']
 
-    def _schedule_async_context_judgment(self, continuum_id, messages: List[Dict]) -> None:
+    def _schedule_async_context_judgment(self, continuum_id: str | UUID, messages: list[dict[str, object]]) -> None:
         """
         Schedule async LLM judgment to determine optimal cut point.
         Result stored in _pending_context_trim for one-shot application on next request.
@@ -1075,79 +1212,41 @@ Respond with ONLY the boundary number (1-{len(candidate_cuts)}) or "NONE" if no 
     def _apply_overflow_remediation(
         self,
         attempt: int,
-        messages_for_llm: List[Dict],
-        complete_messages: List[Dict],
-        continuum,
+        messages_for_llm: list[dict[str, object]],
+        complete_messages: list[dict[str, object]],
+        continuum: Continuum,
         text_for_context: str,
         estimated_tokens: int = 0,
-        event_type: str = "proactive"
-    ) -> List[Dict]:
+        event_type: Literal["proactive", "reactive"] = "proactive"
+    ) -> list[dict[str, object]]:
         """
         Apply tiered overflow remediation strategy.
 
-        Tier 1: Force memory evacuation (preserves conversation, shrinks system prompt)
-        Tier 2: Embedding-based topic drift pruning (fast, no LLM)
-        Tier 3: Pure oldest-first fallback (maximum speed)
+        Tier 1: Embedding-based topic drift pruning (fast, no LLM, big token savings)
+        Tier 2: Pure oldest-first fallback (maximum speed)
 
         Args:
             attempt: Current remediation attempt (1, 2, or 3)
             messages_for_llm: Current message list to reduce
             complete_messages: Original complete message list (for async judgment)
             continuum: Continuum object for ID
-            text_for_context: User's text for evacuation context
+            text_for_context: User's text for context
             estimated_tokens: Token estimate that triggered overflow (for logging)
             event_type: 'proactive' or 'reactive' (for logging)
 
         Returns:
             Reduced message list
         """
-        overflow_logger = get_overflow_logger()
         messages_before = len(messages_for_llm)
 
-        if attempt == 1 and self.memory_evacuator:
-            # Remediation 1: Force aggressive memory evacuation
-            logger.info("Remediation 1: Forcing aggressive memory evacuation")
-            previous_memories = self._get_previous_memories()
-            if len(previous_memories) > 3:  # Only evacuate if meaningful reduction possible
-                evacuated = self.memory_evacuator.evacuate(
-                    memories=previous_memories,
-                    continuum=continuum,
-                    user_message=text_for_context
-                )
-                # Update trinket with reduced set
-                trinket = self.working_memory.get_trinket('ProactiveMemoryTrinket')
-                if trinket and hasattr(trinket, '_cached_memories'):
-                    trinket._cached_memories = evacuated
-                logger.info(f"Memory evacuation: {len(previous_memories)} -> {len(evacuated)} memories")
+        if attempt == 1:
+            # Remediation 1: Embedding-based topic drift pruning
+            logger.info("Remediation 1: Embedding-based topic drift pruning")
+            pruned, drift_result = self._prune_by_topic_drift(messages_for_llm)
 
-            # Log the remediation attempt
-            overflow_logger.log_overflow(
-                continuum_id=continuum.id,
-                event_type=event_type,
-                estimated_tokens=estimated_tokens,
-                remediation_tier=1,
-                messages_before=messages_before,
-                messages_after=messages_before,  # Messages unchanged, system prompt shrinks
-                success=True
-            )
-            # Return messages unchanged (system prompt will be rebuilt on next compose)
-            return messages_for_llm
-
-        elif attempt == 2:
-            # Remediation 2: Embedding-based topic drift pruning
-            logger.info("Remediation 2: Embedding-based topic drift pruning")
-            pruned, drift_result = self._prune_by_topic_drift(messages_for_llm, return_details=True)
-
-            # Log the remediation with topic drift details
-            overflow_logger.log_overflow(
-                continuum_id=continuum.id,
-                event_type=event_type,
-                estimated_tokens=estimated_tokens,
-                remediation_tier=2,
-                messages_before=messages_before,
-                messages_after=len(pruned),
-                topic_drift_result=drift_result,
-                success=True
+            logger.info(
+                "Overflow remediated: topic drift pruning | tier=1 tokens=%d before=%d after=%d event=%s drift=%s",
+                estimated_tokens, messages_before, len(pruned), event_type, drift_result
             )
 
             # Fire async LLM judgment for next request (one-shot improvement)
@@ -1155,20 +1254,14 @@ Respond with ONLY the boundary number (1-{len(candidate_cuts)}) or "NONE" if no 
             return pruned
 
         else:
-            # Remediation 3: Pure oldest-first fallback (maximum speed)
-            logger.info("Remediation 3: Pure oldest-first fallback")
+            # Remediation 2: Pure oldest-first fallback (maximum speed)
+            logger.info("Remediation 2: Pure oldest-first fallback")
             prune_count = config.context.overflow_fallback_prune_count
             result = messages_for_llm[:1] + messages_for_llm[prune_count + 1:]
 
-            # Log the fallback remediation
-            overflow_logger.log_overflow(
-                continuum_id=continuum.id,
-                event_type=event_type,
-                estimated_tokens=estimated_tokens,
-                remediation_tier=3,
-                messages_before=messages_before,
-                messages_after=len(result),
-                success=True
+            logger.info(
+                "Overflow remediated: oldest-first fallback | tier=2 tokens=%d before=%d after=%d event=%s",
+                estimated_tokens, messages_before, len(result), event_type
             )
             return result
 

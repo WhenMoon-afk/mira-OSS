@@ -50,23 +50,41 @@ Benefits of using generate_response():
 """
 import anthropic
 import concurrent.futures
-import contextvars
+import hashlib
 import json
 import logging
 import os
-import requests
+import random
+import re
 import threading
 import time
-import hashlib
-from typing import Dict, List, Any, Optional, Union, Generator, Tuple
+from pathlib import Path
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Any, Literal, Optional, Union, Generator, Tuple, NamedTuple, TypedDict
 
 from config import config
+
 from cns.core.stream_events import (
     StreamEvent, TextEvent, ThinkingEvent, ToolDetectedEvent, ToolExecutingEvent,
     ToolCompletedEvent, ToolErrorEvent, CompleteEvent, ErrorEvent,
-    CircuitBreakerEvent, RetryEvent
+    CircuitBreakerEvent, FileArtifactEvent
 )
 from tools.repo import ANTHROPIC_BETA_FLAGS
+
+# Maximum file size for code execution artifacts (Anthropic server-enforced limit: 32MB)
+MAX_FILE_ARTIFACT_SIZE = 32 * 1024 * 1024
+
+
+def sanitize_filename(filename: str, max_length: int = 200) -> str:
+    """Sanitize filename from external source for safe filesystem storage."""
+    safe = Path(filename).name                          # Strip directory components
+    safe = safe.replace('\x00', '').replace('\n', '').replace('\r', '')  # Control chars
+    safe = safe.lstrip('.')                             # No hidden files
+    safe = re.sub(r'[^a-zA-Z0-9._-]', '_', safe)       # Allowlist chars
+    if len(safe) > max_length:                          # Cap length
+        stem, _, ext = safe.rpartition('.')
+        safe = stem[:max_length - len(ext) - 1] + '.' + ext if ext else safe[:max_length]
+    return safe or 'file'                               # Fallback
 
 
 class ContextOverflowError(Exception):
@@ -83,6 +101,126 @@ class ContextOverflowError(Exception):
         super().__init__(f"Context overflow: ~{estimated_tokens} tokens vs {context_window} limit ({provider})")
 
 
+# Retry configuration for transient API errors (overloaded_error)
+OVERLOAD_MAX_RETRIES = 10
+OVERLOAD_BASE_DELAY = 1.0  # seconds
+OVERLOAD_MAX_DELAY = 8.0   # seconds
+
+
+class ToolCall(TypedDict):
+    """Standardized tool call extracted from Anthropic Message."""
+    id: str
+    tool_name: str
+    input: Dict[str, Any]
+
+
+class ToolExecution(NamedTuple):
+    """Record of a single tool execution for circuit breaker tracking."""
+    tool_name: str
+    result_hash: Optional[str]
+    error: Optional[Exception]
+
+
+class ToolExecutionResult(NamedTuple):
+    """Result of executing a single tool."""
+    tool_call: ToolCall
+    result_content: str
+    raw_result: Any
+    error: Optional[Exception]
+
+
+# Maps named effort levels to token budgets for non-adaptive models
+EFFORT_BUDGET_MAP: Dict[str, int] = {
+    "low": 1024,
+    "medium": 2048,
+    "high": 8192,
+    "max": 31999,  # Anthropic max budget_tokens ceiling
+}
+
+
+@dataclass(frozen=True)
+class ThinkingConfig:
+    """Caller's intent for thinking/effort on a single LLM request.
+
+    Two mutually exclusive modes:
+    - effort: Named level ("low"/"medium"/"high"/"max") — translated per-backend
+    - budget_tokens: Exact token count — always uses type: "enabled"
+    - Both None: no thinking
+    """
+    effort: Optional[Literal["low", "medium", "high", "max"]] = None
+    budget_tokens: Optional[int] = None
+
+    @property
+    def active(self) -> bool:
+        return self.effort is not None or self.budget_tokens is not None
+
+    def resolved_budget(self) -> int:
+        """Effective budget in tokens. Only valid when active."""
+        if self.budget_tokens is not None:
+            return self.budget_tokens
+        return EFFORT_BUDGET_MAP[self.effort]
+
+
+def build_batch_params(
+    purpose: str,
+    system_prompt: str,
+    messages: List[Dict[str, Any]],
+    *,
+    cache_ttl: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Build Anthropic Batch API params dict from internal_llm config.
+
+    All LLM-tuning params (model, max_tokens, effort) are resolved from
+    InternalLLMConfig — callers just pass the purpose key.
+
+    Two states:
+    - effort set: send thinking/effort params (model-era-aware translation)
+    - effort NULL: vanilla API call — no thinking, no effort. Correct for
+      models that don't support effort (Haiku 4.5, Llama, Gemini Flash).
+
+    Args:
+        purpose: Internal LLM config key (e.g., 'extraction', 'relationship')
+        system_prompt: System prompt text
+        messages: Anthropic-format messages list
+        cache_ttl: Optional cache TTL (e.g., "1h" for 1-hour at 2x cost).
+            Omit for default 5-minute ephemeral caching.
+
+    Returns:
+        Complete params dict ready for {"custom_id": ..., "params": params}
+    """
+    from utils.user_context import get_internal_llm
+    llm_cfg = get_internal_llm(purpose)
+
+    cache_control: Dict[str, str] = {"type": "ephemeral"}
+    if cache_ttl:
+        cache_control["ttl"] = cache_ttl
+
+    params: Dict[str, Any] = {
+        "model": llm_cfg.model,
+        "max_tokens": llm_cfg.max_tokens,
+        "system": [{"type": "text", "text": system_prompt, "cache_control": cache_control}],
+        "messages": messages,
+    }
+
+    if llm_cfg.effort:
+        if "-4-6" in llm_cfg.model:
+            params["thinking"] = {"type": "adaptive"}
+            params["output_config"] = {"effort": llm_cfg.effort}
+        else:
+            budget = EFFORT_BUDGET_MAP[llm_cfg.effort]
+            params["thinking"] = {"type": "enabled", "budget_tokens": budget}
+    # No else — vanilla API call for models without effort support
+
+    return params
+
+
+def _is_overloaded_error(error: Exception) -> bool:
+    """Check if an exception is an Anthropic overloaded error (transient, should retry)."""
+    error_str = str(error).lower()
+    return "overloaded" in error_str or "overloaded_error" in error_str
+
+
 class CircuitBreaker:
     """
     Simple circuit breaker for tool execution chains.
@@ -92,34 +230,34 @@ class CircuitBreaker:
     """
 
     def __init__(self):
-        self.tool_results: List[Tuple[str, Optional[str], Optional[Exception]]] = []
+        self.tool_results: List[ToolExecution] = []
 
     def record_execution(self, tool_name: str, result: Any, error: Optional[Exception] = None):
         """Record each tool execution"""
         result_hash = self._hash_result(result) if not error else None
-        self.tool_results.append((tool_name, result_hash, error))
+        self.tool_results.append(ToolExecution(tool_name, result_hash, error))
 
     def should_continue(self) -> Tuple[bool, str]:
         """Check if we should continue the tool chain"""
         if not self.tool_results:
             return True, "First tool"
 
-        last_tool, _, last_error = self.tool_results[-1]
+        last = self.tool_results[-1]
 
         # Check for errors - allow ONE retry per tool before triggering
-        if last_error is not None:
+        if last.error is not None:
             # Count previous errors for this SAME tool
-            prior_errors = sum(1 for name, _, err in self.tool_results[:-1]
-                              if name == last_tool and err is not None)
+            prior_errors = sum(1 for ex in self.tool_results[:-1]
+                              if ex.tool_name == last.tool_name and ex.error is not None)
             if prior_errors > 0:
                 # Second failure for same tool - give up
-                return False, f"Tool '{last_tool}' failed after correction attempt: {last_error}"
+                return False, f"Tool '{last.tool_name}' failed after correction attempt: {last.error}"
             # First failure - allow retry (model will see schema in error message)
 
         # Check for repeated results (last 2 executions) - loop detection
         if len(self.tool_results) >= 2:
-            last_result = self.tool_results[-1][1]
-            second_last_result = self.tool_results[-2][1]
+            last_result = self.tool_results[-1].result_hash
+            second_last_result = self.tool_results[-2].result_hash
 
             if last_result == second_last_result and last_result is not None:
                 return False, "Repeated identical results"
@@ -130,90 +268,6 @@ class CircuitBreaker:
         """Create a hash of the result for comparison"""
         # Convert result to string and hash it
         return hashlib.md5(str(result).encode()).hexdigest()
-
-
-class GenericProviderClient:
-    """
-    Lightweight HTTP client for OpenAI-compatible API endpoints.
-
-    Use this for third-party providers like OpenRouter, or any API
-    that follows the OpenAI chat completions format.
-    """
-
-    def __init__(
-        self,
-        api_key: str,
-        model: str,
-        api_endpoint: str,
-        temperature: float = 0.1,
-        max_tokens: int = 1000,
-        timeout: int = 60
-    ):
-        """
-        Initialize generic provider client.
-
-        Args:
-            api_key: API key for authentication
-            model: Model identifier
-            api_endpoint: Full URL for chat completions endpoint
-            temperature: Sampling temperature
-            max_tokens: Maximum tokens to generate
-            timeout: Request timeout in seconds
-        """
-        self.api_key = api_key
-        self.model = model
-        self.endpoint = api_endpoint
-        self.temperature = temperature
-        self.max_tokens = max_tokens
-        self.timeout = timeout
-
-    def generate_response(self, messages: List[Dict[str, str]]) -> Dict[str, Any]:
-        """
-        Make HTTP call to provider and return response.
-
-        Args:
-            messages: List of message dicts with 'role' and 'content'
-
-        Returns:
-            Full API response dict
-
-        Raises:
-            requests.HTTPError: If request fails
-        """
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens
-        }
-
-        response = requests.post(
-            self.endpoint,
-            headers=headers,
-            json=payload,
-            timeout=self.timeout
-        )
-        response.raise_for_status()
-        return response.json()
-
-    def extract_text_content(self, response: Dict[str, Any]) -> str:
-        """
-        Extract text content from API response.
-
-        Args:
-            response: Full API response dict
-
-        Returns:
-            Extracted text content or empty string
-        """
-        if "choices" in response and len(response["choices"]) > 0:
-            return response["choices"][0]["message"]["content"]
-        return ""
 
 
 class LLMProvider:
@@ -231,33 +285,33 @@ class LLMProvider:
     _logger = logging.getLogger("llm_provider")
 
     def __init__(self,
-                 model: Optional[str] = None,
-                 max_tokens: Optional[int] = None,
-                 temperature: Optional[float] = None,
-                 timeout: Optional[int] = None,
+                 model: str = config.api.model,
+                 max_tokens: int = config.api.max_tokens,
+                 temperature: float = config.api.temperature,
+                 timeout: int = config.api.timeout,
                  api_key: Optional[str] = None,
-                 tool_repo = None,
+                 tool_repo: Optional["ToolRepository"] = None,
                  enable_prompt_caching: bool = True):
         """Initialize LLM provider with Anthropic SDK."""
         self.logger = logging.getLogger("llm_provider")
 
         # Apply configuration with overrides
-        self.model = model if model is not None else config.api.model
-        self.max_tokens = max_tokens if max_tokens is not None else config.api.max_tokens
-        self.temperature = temperature if temperature is not None else config.api.temperature
-        self.timeout = timeout if timeout is not None else config.api.timeout
+        self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.timeout = timeout
         self.api_key = api_key if api_key is not None else config.api_key
         self.enable_prompt_caching = enable_prompt_caching
-
-        # Extended thinking configuration
-        self.extended_thinking = config.api_server.extended_thinking
-        self.extended_thinking_budget = config.api_server.extended_thinking_budget
 
         # Initialize Anthropic SDK client
         self.anthropic_client = anthropic.Anthropic(
             api_key=self.api_key,
             timeout=self.timeout
         )
+
+        # Attach request logging hooks (req_id → content mapping)
+        from utils.logging_config import instrument_anthropic_client
+        instrument_anthropic_client(self.anthropic_client)
 
         # Initialize emergency fallback if enabled
         self.emergency_fallback_enabled = config.api.emergency_fallback_enabled
@@ -286,18 +340,68 @@ class LLMProvider:
         # Check for firehose mode (env var: MIRA_FIREHOSE=1)
         self.firehose_enabled = bool(os.environ.get('MIRA_FIREHOSE'))
 
-        self.logger.info(f"LLM Provider initialized with Anthropic SDK")
-        self.logger.info(f"Model: {self.model}")
-        if self.tool_repo:
-            self.logger.info("Tool execution enabled")
-        else:
-            self.logger.info("Tool execution disabled (no tool_repo provided)")
-        if self.enable_prompt_caching:
-            self.logger.info("Prompt caching enabled")
-        if self.emergency_fallback_enabled:
-            self.logger.info("Emergency fallback enabled")
-        if self.firehose_enabled:
-            self.logger.info("Firehose mode enabled - logging to firehose_output.json")
+        # Consolidated initialization log
+        features = []
+        if self.tool_repo: features.append("tools")
+        if self.enable_prompt_caching: features.append("cache")
+        if self.emergency_fallback_enabled: features.append("fallback")
+        if self.firehose_enabled: features.append("firehose")
+
+        self.logger.info(
+            f"LLMProvider: model={self.model}, features={','.join(features) if features else 'none'}"
+        )
+
+    def download_file_artifact(self, file_id: str, filename: str, mime_type: str, size_bytes: int) -> Path:
+        """Download file from Anthropic Files API to user's tmp directory.
+
+        Files are stored with opaque names ({uuid4_hex}.bin) to prevent filename-based
+        attacks. Original filename is preserved in a .meta sidecar for Content-Disposition
+        at download time.
+
+        Args:
+            file_id: Anthropic file ID
+            filename: Original filename from Anthropic metadata
+            mime_type: MIME type from Anthropic metadata
+            size_bytes: File size in bytes
+
+        Returns:
+            Path to the downloaded .bin file
+
+        Raises:
+            ValueError: If file exceeds MAX_FILE_ARTIFACT_SIZE
+        """
+        from utils.user_context import get_current_user_id
+        from tools.repo import FILES_API_BETA_FLAG
+        from uuid import uuid4
+
+        if size_bytes > MAX_FILE_ARTIFACT_SIZE:
+            raise ValueError(f"File too large: {size_bytes} bytes (max {MAX_FILE_ARTIFACT_SIZE})")
+
+        user_id = str(get_current_user_id())
+        tmp_dir = Path("data/users") / user_id / "tmp"
+        tmp_dir.mkdir(parents=True, exist_ok=True)
+
+        safe_filename = sanitize_filename(filename)
+
+        response = self.anthropic_client.beta.files.download(
+            file_id, betas=[FILES_API_BETA_FLAG]
+        )
+
+        # Store in file_id subdirectory with opaque name
+        file_dir = tmp_dir / file_id
+        file_dir.mkdir(exist_ok=True)
+        random_stem = uuid4().hex
+
+        content_path = file_dir / f"{random_stem}.bin"
+        content_path.resolve().relative_to(file_dir.resolve())  # Path traversal guard
+        content_path.write_bytes(response.read())
+
+        # Metadata sidecar for original filename at download time
+        meta_path = file_dir / f"{random_stem}.meta"
+        meta_path.write_text(json.dumps({"filename": safe_filename, "mime_type": mime_type}))
+
+        self.logger.info(f"Downloaded file artifact {file_id} ({safe_filename}, {size_bytes} bytes)")
+        return content_path
 
     def _emit_events_from_response(self, response: anthropic.types.Message) -> Generator[StreamEvent, None, None]:
         """
@@ -348,14 +452,14 @@ class LLMProvider:
         """Test if Anthropic is back online by clearing failover flag."""
         with cls._failover_lock:
             cls._failover_active = False
-            cls._logger.info("🔄 Testing Anthropic recovery - next request will try primary provider")
+            cls._logger.toast("🔄 Anthropic recovery initiated - testing primary provider")
 
     @classmethod
     def _is_failover_active(cls) -> bool:
         """Check if failover is currently active."""
         return cls._failover_active
 
-    def _prepare_messages(self, messages: List[Dict]) -> tuple[Union[str, List[Dict]], List[Dict]]:
+    def _prepare_messages(self, messages: List[Dict]) -> tuple[Optional[Union[str, List[Dict]]], List[Dict]]:
         """
         Extract system prompt and prepare messages for Anthropic API.
 
@@ -418,9 +522,9 @@ class LLMProvider:
 
     def _write_firehose(
         self,
-        system_prompt: str,
+        system_prompt: Optional[Union[str, List[Dict]]],
         messages: List[Dict],
-        tools: Optional[List[Dict]],
+        tools: Optional[List[Dict[str, Any]]],
         provider: str = "anthropic",
         endpoint: Optional[str] = None,
         model_override: Optional[str] = None
@@ -450,7 +554,7 @@ class LLMProvider:
                 json.dump(firehose_data, f, indent=2)
             self.logger.debug(f"Wrote {provider} request to firehose_output.json")
         except Exception as e:
-            self.logger.error(f"Failed to write firehose: {e}")
+            self.logger.error(f"Failed to write firehose: {e}", exc_info=True)
 
     def _prepare_tools_for_caching(self, tools: List[Dict]) -> List[Dict]:
         """
@@ -468,23 +572,67 @@ class LLMProvider:
         # Mark last tool for caching (caches all tools)
         tools_copy = tools.copy()
         tools_copy[-1] = tools_copy[-1].copy()
-        tools_copy[-1]["cache_control"] = {"type": "ephemeral"}
+        tools_copy[-1]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
         return tools_copy
+
+    def _anthropic_thinking_params(self, thinking: ThinkingConfig, model: str) -> Tuple[Dict, int]:
+        """Translate ThinkingConfig to Anthropic API params.
+
+        Returns:
+            (api_params_dict, max_tokens_adjustment) — for 4.6 models the adjustment
+            is 0 (adaptive thinking doesn't need budget headroom); for older models
+            the adjustment equals the budget so max_tokens accommodates thinking.
+        """
+        if not thinking.active:
+            return {}, 0
+
+        if "-4-6" in model:
+            # Claude 4.6: adaptive thinking with native effort level
+            effort = thinking.effort or "high"  # Default when only budget_tokens set
+            return {
+                "thinking": {"type": "adaptive"},
+                "output_config": {"effort": effort}
+            }, 0
+        else:
+            # Older Anthropic models: explicit token budget
+            budget = thinking.resolved_budget()
+            return {
+                "thinking": {"type": "enabled", "budget_tokens": budget}
+            }, budget
+
+    def _generic_thinking_params(self, thinking: ThinkingConfig) -> Tuple[Optional[str], int]:
+        """Translate ThinkingConfig to generic OpenAI-compatible provider params.
+
+        Returns:
+            (effort_string_or_None, max_tokens_adjustment) — effort string flows
+            to the reasoning payload. max_tokens adjustment is only non-zero when
+            the caller specified an explicit budget_tokens (provider may deduct
+            thinking from max_tokens). When using effort mode, the provider manages
+            thinking tokens via the reasoning payload — no inflation needed.
+        """
+        if not thinking.active:
+            return None, 0
+        effort = thinking.effort or "high"  # Default when only budget_tokens set
+        budget = thinking.budget_tokens or 0
+        return effort, budget
 
     def generate_response(
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]] = None,
         stream: bool = False,
-        callback: Optional[Any] = None,
+        callback: Optional[Callable[[dict[str, str]], None]] = None,
+        internal_llm: Optional[str] = None,
         endpoint_url: Optional[str] = None,
         model_override: Optional[str] = None,
         api_key_override: Optional[str] = None,
         system_override: Optional[str] = None,
-        thinking_enabled: Optional[bool] = None,
+        effort: Optional[Literal["low", "medium", "high", "max"]] = None,
         container_id: Optional[str] = None,
-        thinking_budget: Optional[int] = None,
-        **kwargs
+        thinking_tokens: Optional[int] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        allow_negative: bool = False,
     ) -> anthropic.types.Message:
         """
         Generate a response from the LLM using Anthropic SDK or generic provider.
@@ -497,13 +645,22 @@ class LLMProvider:
         1. Anthropic API (default):
            response = llm.generate_response(messages=[...])
 
-        2. Third-party provider (Groq, OpenRouter, etc):
+        2. Internal LLM config (resolves endpoint/model/key from database schema):
+           response = llm.generate_response(messages=[...], internal_llm="summary")
+
+        3. Third-party provider (Groq, OpenRouter, etc) — one-off overrides:
            response = llm.generate_response(
                messages=[...],
                endpoint_url="https://openrouter.ai/api/v1/chat/completions",
                model_override="anthropic/claude-3-5-sonnet",
                api_key_override=api_key
            )
+
+        4. With thinking (token budget):
+           response = llm.generate_response(messages=[...], thinking_tokens=4096)
+
+        5. With thinking (named effort level):
+           response = llm.generate_response(messages=[...], effort="high")
 
         - When stream=False (default): returns Anthropic Message object.
         - When stream=True: streams events to `callback` if provided, and
@@ -515,22 +672,47 @@ class LLMProvider:
             tools: Optional tool definitions
             stream: Enable streaming mode
             callback: Callback for streaming events
+            internal_llm: Config key resolving endpoint/model/key from internal_llm schema.
+                Mutually exclusive with endpoint_url/model_override/api_key_override.
             endpoint_url: Optional custom OpenAI-compatible endpoint URL (for third-party providers)
             model_override: Optional model identifier override
             api_key_override: Optional API key override (REQUIRED when using endpoint_url)
             system_override: Optional system prompt override
-            thinking_enabled: Override instance-level extended thinking setting
-            thinking_budget: Override instance-level thinking budget tokens
+            effort: Named thinking effort level — translated per-backend
+            thinking_tokens: Exact thinking token budget — always uses type: "enabled"
             container_id: Optional container ID to reuse (for multi-turn file access)
-            **kwargs: Additional parameters
+            temperature: Per-call temperature override (defaults to self.temperature)
+            max_tokens: Per-call max_tokens override (defaults to self.max_tokens)
+            allow_negative: Allow billing balance to go negative (for system tasks)
         """
-        # Pass thinking parameters through kwargs to internal methods
-        if thinking_enabled is not None:
-            kwargs['thinking_enabled'] = thinking_enabled
-        if thinking_budget is not None:
-            kwargs['thinking_budget'] = thinking_budget
-        if container_id is not None:
-            kwargs['container_id'] = container_id
+        # Resolve internal_llm config into endpoint/model/key + LLM-tuning params
+        _llm_cfg = None
+        if internal_llm is not None:
+            if endpoint_url is not None or model_override is not None or api_key_override is not None:
+                raise ValueError(
+                    "internal_llm= is mutually exclusive with endpoint_url/model_override/api_key_override"
+                )
+            from utils.user_context import get_internal_llm
+            from clients.vault_client import get_api_key
+            _llm_cfg = get_internal_llm(internal_llm)
+            endpoint_url = _llm_cfg.endpoint_url
+            model_override = _llm_cfg.model
+            if _llm_cfg.api_key_name:
+                api_key_override = get_api_key(_llm_cfg.api_key_name)
+            # Auto-resolve max_tokens (caller can still override)
+            # temperature: not stored in DB — instance default (1.0) or caller override
+            if max_tokens is None:
+                max_tokens = _llm_cfg.max_tokens
+
+        # Resolve thinking config — priority: thinking_tokens > effort > DB config > inactive
+        if thinking_tokens is not None:
+            thinking = ThinkingConfig(budget_tokens=thinking_tokens)
+        elif effort is not None:
+            thinking = ThinkingConfig(effort=effort)
+        elif _llm_cfg and _llm_cfg.effort:
+            thinking = ThinkingConfig(effort=_llm_cfg.effort)
+        else:
+            thinking = ThinkingConfig()
 
         # Non-streaming path for simple consumers
         if not stream:
@@ -540,12 +722,27 @@ class LLMProvider:
                 model_override=model_override,
                 api_key_override=api_key_override,
                 system_override=system_override,
-                **kwargs
+                thinking=thinking,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                container_id=container_id,
+                allow_negative=allow_negative,
             )
 
-        # Streaming path: iterate events and forward to callback
+        # Streaming path
         final_response: Optional[anthropic.types.Message] = None
-        for event in self.stream_events(messages, tools, **kwargs):
+        for event in self.stream_events(
+            messages, tools,
+            thinking=thinking,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            container_id=container_id,
+            endpoint_url=endpoint_url,
+            model_override=model_override,
+            api_key_override=api_key_override,
+            system_override=system_override,
+            allow_negative=allow_negative,
+        ):
             # Capture completion
             if isinstance(event, CompleteEvent):
                 final_response = event.response
@@ -594,16 +791,39 @@ class LLMProvider:
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]] = None,
-        **kwargs
+        *,
+        effort: Optional[Literal["low", "medium", "high", "max"]] = None,
+        thinking_tokens: Optional[int] = None,
+        thinking: Optional[ThinkingConfig] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        container_id: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
+        model_override: Optional[str] = None,
+        model_preference: Optional[str] = None,
+        api_key_override: Optional[str] = None,
+        system_override: Optional[str] = None,
+        allow_negative: bool = False,
     ) -> Generator[StreamEvent, None, None]:
-        """Stream LLM events as a generator for real-time UIs."""
+        """Stream LLM events as a generator for real-time UIs.
+
+        Self-sufficient entry point — resolves thinking config from
+        effort/thinking_tokens and accepts all LLM-tuning params as
+        explicit keyword arguments. Direct callers (e.g. orchestrator)
+        get the same resolution that generate_response() provides.
+        """
+        # Resolve thinking config — priority: pre-built > thinking_tokens > effort > inactive
+        if thinking is None:
+            if thinking_tokens is not None:
+                thinking = ThinkingConfig(budget_tokens=thinking_tokens)
+            elif effort is not None:
+                thinking = ThinkingConfig(effort=effort)
+            else:
+                thinking = ThinkingConfig()
+
         try:
             # Validate messages before processing
             self._validate_messages(messages)
-
-            # Route to generic provider (non-streaming) if endpoint_url specified
-            endpoint_url = kwargs.get('endpoint_url')
-            model_override = kwargs.get('model_override')
             if endpoint_url:
                 # Agentic loop for generic providers with real-time streaming
                 current_messages = list(messages)  # Copy to avoid mutating original
@@ -623,20 +843,19 @@ class LLMProvider:
                         filtered_tools = [t for t in tools if t.get("type") != "code_execution_20250825"]
                         generic_tools = [{k: v for k, v in t.items() if k != "cache_control"} for t in filtered_tools]
 
-                    # Create generic client for streaming
-                    temperature = kwargs.get('temperature', self.temperature)
-                    api_key = kwargs.get('api_key_override')
+                    # Create generic client for streaming (resolve per-call overrides)
+                    effective_temperature = temperature if temperature is not None else self.temperature
+                    effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
                     generic_client = GenericOpenAIClient(
                         endpoint=endpoint_url,
                         model=model_override,
-                        api_key=api_key,
+                        api_key=api_key_override,
                         timeout=self.timeout,
-                        max_tokens=self.max_tokens,
-                        temperature=temperature
+                        max_tokens=effective_max_tokens,
+                        temperature=effective_temperature
                     )
 
-                    use_thinking = kwargs.get('thinking_enabled', False)
-                    thinking_budget = kwargs.get('thinking_budget', self.extended_thinking_budget)
+                    thinking_effort, thinking_budget = self._generic_thinking_params(thinking)
 
                     # Write to firehose before streaming
                     self._write_firehose(
@@ -653,16 +872,29 @@ class LLMProvider:
                     accumulated_tool_calls = {}  # {index: {"id": ..., "name": ..., "arguments": ""}}
                     accumulated_reasoning_details = []  # Required for OpenRouter reasoning model tool calling
                     finish_reason = None
+                    stream_usage = None  # Captured from final chunk (stream_options.include_usage)
 
                     for chunk in generic_client.messages.create_streaming(
                         messages=prepared_messages,
                         system=system_prompt,
                         tools=generic_tools,
-                        max_tokens=self.max_tokens,
-                        temperature=temperature,
-                        thinking_enabled=use_thinking,
+                        max_tokens=effective_max_tokens,
+                        temperature=effective_temperature,
+                        thinking_effort=thinking_effort,
                         thinking_budget=thinking_budget
                     ):
+                        # Capture usage from final chunk (OpenRouter includes automatically;
+                        # other providers need stream_options.include_usage)
+                        if chunk.get("usage"):
+                            u = chunk["usage"]
+                            prompt_details = u.get("prompt_tokens_details") or {}
+                            stream_usage = {
+                                "input_tokens": u.get("prompt_tokens", 0),
+                                "output_tokens": u.get("completion_tokens", 0),
+                                "cache_creation_input_tokens": prompt_details.get("cache_write_tokens", 0) or 0,
+                                "cache_read_input_tokens": prompt_details.get("cached_tokens", 0) or 0
+                            }
+
                         if not chunk.get("choices"):
                             continue
 
@@ -724,7 +956,7 @@ class LLMProvider:
                         try:
                             arguments = json.loads(tc["arguments"]) if tc["arguments"] else {}
                         except json.JSONDecodeError:
-                            self.logger.warning(f"Failed to parse tool arguments: {tc['arguments'][:100]}")
+                            self.logger.warning(f"Failed to parse tool arguments: {tc['arguments'][:100]}", exc_info=True)
                             arguments = {}
                         content_blocks.append(SimpleNamespace(
                             type="tool_use",
@@ -740,9 +972,55 @@ class LLMProvider:
                     response = GenericOpenAIResponse(
                         content=content_blocks,
                         stop_reason=stop_reason,
-                        usage={"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
+                        usage=stream_usage or {"input_tokens": 0, "output_tokens": 0, "cache_creation_input_tokens": 0, "cache_read_input_tokens": 0},
                         reasoning_details=accumulated_reasoning_details or None
                     )
+
+                    if not stream_usage:
+                        self.logger.warning(
+                            f"No usage data in stream from {endpoint_url} / {model_override}. "
+                            f"Billing will be skipped for this request."
+                        )
+
+                    # Billing hook for generic provider streaming (mirrors Anthropic path)
+                    try:
+                        from billing import get_billing_backend, UsageRecord
+                        from billing.exceptions import BillingConfigurationError
+                        from billing.pricing import resolve_pricing_key
+                        from utils.user_context import get_current_user_id, has_user_context
+
+                        if has_user_context() and response.usage and response.usage.input_tokens:
+                            pricing_key = resolve_pricing_key(model_override, endpoint_url)
+                            if not pricing_key:
+                                raise BillingConfigurationError(
+                                    f"No pricing config found for model '{model_override}' "
+                                    f"(endpoint: {endpoint_url}). "
+                                    f"Add entry to usage_pricing table."
+                                )
+                            billing = get_billing_backend()
+                            billing_usage = UsageRecord(
+                                pricing_key=pricing_key,
+                                model=model_override,
+                                input_tokens=response.usage.input_tokens,
+                                output_tokens=response.usage.output_tokens,
+                                cache_read_tokens=getattr(response.usage, 'cache_read_input_tokens', 0) or 0,
+                                cache_write_tokens=getattr(response.usage, 'cache_creation_input_tokens', 0) or 0
+                            )
+                            billing.record_usage(
+                                str(get_current_user_id()),
+                                billing_usage,
+                                allow_negative=allow_negative,
+                            )
+                    except ImportError:
+                        pass  # OSS mode - billing module not present
+                    except Exception as e:
+                        try:
+                            from billing.exceptions import InsufficientBalanceError, BillingConfigurationError as BCE
+                            if isinstance(e, (InsufficientBalanceError, BCE)):
+                                raise
+                        except ImportError:
+                            pass  # OSS mode
+                        self.logger.error(f"Billing record_usage failed (generic streaming): {e}", exc_info=True)
 
                     # Check for tool_use blocks
                     tool_blocks = [b for b in response.content if b.type == "tool_use"]
@@ -789,7 +1067,7 @@ class LLMProvider:
                                     result=result_str
                                 )
                             except Exception as e:
-                                self.logger.error(f"Tool execution failed for {block.name}: {e}")
+                                self.logger.error(f"Tool execution failed for {block.name}: {e}", exc_info=True)
                                 # Include schema for parameter validation errors to help model correct itself
                                 schema_hint = ""
                                 error_str = str(e).lower()
@@ -841,7 +1119,7 @@ class LLMProvider:
                     # Check circuit breaker before continuing loop
                     should_continue, reason = circuit_breaker.should_continue()
                     if not should_continue:
-                        self.logger.info(f"Circuit breaker triggered: {reason}")
+                        self.logger.warning(f"Circuit breaker triggered: {reason}")
                         yield CircuitBreakerEvent(reason=reason)
 
                         # Add instruction to respond without more tools
@@ -851,46 +1129,86 @@ class LLMProvider:
                         })
 
                         # Force final response without tools
-                        response = self._generate_non_streaming(current_messages, None, **kwargs)
+                        response = self._generate_non_streaming(
+                            current_messages, None,
+                            thinking=thinking,
+                            temperature=temperature,
+                            max_tokens=max_tokens,
+                            container_id=container_id,
+                            endpoint_url=endpoint_url,
+                            model_override=model_override,
+                            api_key_override=api_key_override,
+                            system_override=system_override,
+                            allow_negative=allow_negative,
+                        )
                         yield CompleteEvent(response=response)
                         return
                     # Loop continues - call API again with tool results
 
             # Route to appropriate handler (Anthropic streaming)
             if tools and self.tool_repo:
-                yield from self._execute_with_tools(messages, tools, **kwargs)
+                yield from self._execute_with_tools(
+                    messages, tools,
+                    thinking=thinking,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    container_id=container_id,
+                    endpoint_url=endpoint_url,
+                    model_preference=model_preference,
+                    api_key_override=api_key_override,
+                    system_override=system_override,
+                    allow_negative=allow_negative,
+                )
             else:
-                yield from self._stream_response(messages, tools, **kwargs)
+                yield from self._stream_response(
+                    messages, tools,
+                    model_override=model_override,
+                    thinking=thinking,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    container_id=container_id,
+                    endpoint_url=endpoint_url,
+                    api_key_override=api_key_override,
+                    system_override=system_override,
+                    allow_negative=allow_negative,
+                )
 
         except Exception as e:
-            self.logger.error(f"LLM API request failed: {e}")
-            yield ErrorEvent(error=str(e), technical_details=repr(e))
+            self.logger.error(f"LLM API request failed: {e}", exc_info=True)
+            yield ErrorEvent(error=str(e))
             raise
 
     def _generate_non_streaming(
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]] = None,
+        *,
         model_override: Optional[str] = None,
         endpoint_url: Optional[str] = None,
         api_key_override: Optional[str] = None,
         system_override: Optional[str] = None,
-        **kwargs
+        thinking: ThinkingConfig = ThinkingConfig(),
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        container_id: Optional[str] = None,
+        allow_negative: bool = False,
     ) -> anthropic.types.Message:
         """Non-streaming generation with Anthropic SDK or generic provider - returns Message object."""
         try:
             # Check failover FIRST - route to emergency fallback if active
             if self._is_failover_active():
-                self.logger.warning("Using emergency fallback (failover active)")
+                self.logger.debug("Using emergency fallback (failover active)")
                 endpoint_url = config.api.emergency_fallback_endpoint
                 model_override = config.api.emergency_fallback_model
                 api_key_override = self.emergency_fallback_api_key
                 # Disable thinking for fallback providers (not supported)
-                kwargs['thinking_enabled'] = False
+                thinking = ThinkingConfig()
                 # Fall through to generic provider routing below
 
-            # Route to generic provider if endpoint_url is provided
-            if endpoint_url:
+            # Route to generic provider if endpoint_url is provided (but not for Anthropic)
+            # Anthropic endpoints should use native SDK to preserve features (batch API, prompt caching, etc.)
+            is_anthropic_endpoint = endpoint_url and "api.anthropic.com" in endpoint_url
+            if endpoint_url and not is_anthropic_endpoint:
                 # Require model_override; api_key_override is optional for local providers like Ollama
                 if not model_override:
                     raise ValueError(
@@ -905,16 +1223,17 @@ class LLMProvider:
                     GenericOpenAIClient, GenericOpenAIResponse, ToolNotLoadedError
                 )
 
-                # Extract temperature from kwargs if provided, otherwise use default
-                temperature = kwargs.get('temperature', self.temperature)
+                # Per-call overrides (fall back to instance defaults)
+                effective_temperature = temperature if temperature is not None else self.temperature
+                effective_max_tokens = max_tokens if max_tokens is not None else self.max_tokens
 
                 generic_client = GenericOpenAIClient(
                     endpoint=endpoint_url,
                     model=model_override,
                     api_key=api_key_override,  # Optional for local providers like Ollama
                     timeout=self.timeout,
-                    max_tokens=self.max_tokens,
-                    temperature=temperature
+                    max_tokens=effective_max_tokens,
+                    temperature=effective_temperature
                 )
 
                 # Prepare system prompt
@@ -938,8 +1257,7 @@ class LLMProvider:
                 messages = self._strip_container_uploads_from_messages(messages)
 
                 # Forward thinking params to generic client
-                use_thinking = kwargs.get('thinking_enabled', False)
-                thinking_budget = kwargs.get('thinking_budget', self.extended_thinking_budget)
+                thinking_effort, thinking_budget = self._generic_thinking_params(thinking)
 
                 # Write to firehose before generic provider call
                 self._write_firehose(
@@ -957,9 +1275,9 @@ class LLMProvider:
                         messages=messages,
                         system=system_prompt,
                         tools=generic_tools,
-                        max_tokens=self.max_tokens,
-                        temperature=temperature,
-                        thinking_enabled=use_thinking,
+                        max_tokens=effective_max_tokens,
+                        temperature=effective_temperature,
+                        thinking_effort=thinking_effort,
                         thinking_budget=thinking_budget
                     )
                 except ToolNotLoadedError as e:
@@ -994,7 +1312,18 @@ class LLMProvider:
             # If tools are enabled, reuse streaming pipeline and consume to completion
             if tools and self.tool_repo:
                 final: Optional[anthropic.types.Message] = None
-                for event in self.stream_events(messages, tools, **kwargs):
+                for event in self.stream_events(
+                    messages, tools,
+                    thinking=thinking,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    container_id=container_id,
+                    endpoint_url=endpoint_url,
+                    model_override=model_override,
+                    api_key_override=api_key_override,
+                    system_override=system_override,
+                    allow_negative=allow_negative,
+                ):
                     if isinstance(event, CompleteEvent):
                         final = event.response
                 if final is None:
@@ -1008,12 +1337,21 @@ class LLMProvider:
             # Select model (use override if provided, otherwise default to reasoning model)
             selected_model = model_override if model_override else self.model
 
+            # Per-call overrides (fall back to instance defaults)
+            max_tokens = max_tokens if max_tokens is not None else self.max_tokens
+            temperature = temperature if temperature is not None else self.temperature
+
             # Adjust max_tokens for model constraints (Haiku: 8192, Sonnet: 10000+)
-            max_tokens = self.max_tokens
             if "haiku" in selected_model.lower() and max_tokens > 8192:
                 max_tokens = 8192
 
-            system_prompt, anthropic_messages = self._prepare_messages(messages)
+            # Use system_override if provided, otherwise extract from messages
+            if system_override:
+                system_prompt = system_override
+                # Still need to prepare messages (convert to Anthropic format)
+                _, anthropic_messages = self._prepare_messages(messages)
+            else:
+                system_prompt, anthropic_messages = self._prepare_messages(messages)
             anthropic_tools = self._prepare_tools_for_caching(tools) if tools else None
 
             # Build system parameter based on content type
@@ -1026,20 +1364,16 @@ class LLMProvider:
                     system_param = [{
                         "type": "text",
                         "text": system_prompt,
-                        "cache_control": {"type": "ephemeral"}
+                        "cache_control": {"type": "ephemeral", "ttl": "1h"}
                     }]
                 else:
                     system_param = system_prompt
             else:
                 system_param = None
 
-            # Determine if thinking should be enabled (respect explicit override, otherwise use instance config)
-            use_thinking = kwargs.get('thinking_enabled', self.extended_thinking)
-            thinking_budget = kwargs.get('thinking_budget', self.extended_thinking_budget)
-
-            # Add thinking budget to max_tokens when thinking is enabled
-            if use_thinking:
-                max_tokens = max_tokens + thinking_budget
+            # Translate thinking config to Anthropic API params
+            thinking_params, thinking_budget_adj = self._anthropic_thinking_params(thinking, selected_model)
+            max_tokens += thinking_budget_adj
 
             # Filter thinking blocks:
             # - When thinking disabled: strip all thinking blocks
@@ -1048,7 +1382,7 @@ class LLMProvider:
             def keep_block(block: dict) -> bool:
                 if block.get("type") != "thinking":
                     return True  # Keep non-thinking blocks
-                if not use_thinking:
+                if not thinking.active:
                     return False  # Strip all thinking when disabled
                 # Keep only thinking blocks with valid signatures (from Anthropic)
                 return block.get("signature") is not None
@@ -1065,8 +1399,14 @@ class LLMProvider:
                 "model": selected_model,
                 "max_tokens": max_tokens,
                 "messages": messages_to_send,
-                "temperature": self.temperature
             }
+
+            # Thinking is incompatible with temperature (API rejects both together).
+            # When thinking is active, omit temperature entirely.
+            if thinking.active:
+                api_params.update(thinking_params)
+            else:
+                api_params["temperature"] = temperature
 
             # Only include system if provided (Anthropic API rejects system: None)
             if system_param is not None:
@@ -1075,28 +1415,40 @@ class LLMProvider:
             # Only include tools if provided (Anthropic API rejects tools: None)
             if anthropic_tools:
                 api_params["tools"] = anthropic_tools
-
-            # Add extended thinking if enabled
-            if use_thinking:
-                api_params["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget
-                }
+                # Per-tool parallel_safe is handled at execution time in _execute_with_tools
 
             # Add container ID for multi-turn file persistence
-            container_id = kwargs.get('container_id')
-            if container_id:
+            # ONLY when code_execution tool is in the tools list (Anthropic API requirement)
+            has_code_execution = anthropic_tools and any(
+                tool.get("type") == "code_execution_20250825"
+                for tool in anthropic_tools
+            )
+            if container_id and has_code_execution:
                 api_params["container"] = container_id
                 self.logger.debug(f"Reusing container: {container_id}")
+            elif container_id:
+                self.logger.debug("Skipping container (code_execution not in tools)")
 
             # Write to firehose before Anthropic API call
             self._write_firehose(system_prompt, anthropic_messages, anthropic_tools, provider="anthropic")
 
-            # Use beta API for code execution and Files API
-            message = self.anthropic_client.beta.messages.create(
-                **api_params,
-                betas=ANTHROPIC_BETA_FLAGS
-            )
+            # Retry loop for transient overloaded errors
+            for attempt in range(OVERLOAD_MAX_RETRIES):
+                try:
+                    # Use beta API for code execution and Files API
+                    message = self.anthropic_client.beta.messages.create(
+                        **api_params,
+                        betas=ANTHROPIC_BETA_FLAGS
+                    )
+                    break  # Success - exit retry loop
+                except anthropic.APIStatusError as e:
+                    if _is_overloaded_error(e) and attempt < OVERLOAD_MAX_RETRIES - 1:
+                        delay = min(OVERLOAD_BASE_DELAY * (2 ** attempt), OVERLOAD_MAX_DELAY)
+                        delay = delay * (0.5 + random.random())  # Add jitter
+                        self.logger.warning(f"API overloaded, retry {attempt + 1}/{OVERLOAD_MAX_RETRIES} after {delay:.1f}s")
+                        time.sleep(delay)
+                        continue
+                    raise  # Not overloaded or exhausted - re-raise for outer handler
 
             # Capture container ID from response for reuse
             if hasattr(message, 'container') and message.container:
@@ -1119,6 +1471,47 @@ class LLMProvider:
                     f"Cache read: {getattr(usage, 'cache_read_input_tokens', 0)}"
                 )
 
+            # Billing hook (silently skipped if billing module absent - OSS mode)
+            try:
+                from billing import get_billing_backend, UsageRecord
+                from billing.exceptions import BillingConfigurationError
+                from billing.pricing import resolve_pricing_key
+                from utils.user_context import get_current_user_id, has_user_context
+
+                if has_user_context() and hasattr(message, 'usage') and message.usage:
+                    pricing_key = resolve_pricing_key(selected_model, endpoint_url)
+                    if not pricing_key:
+                        raise BillingConfigurationError(
+                            f"No pricing config found for model '{selected_model}' "
+                            f"(endpoint: {endpoint_url}). "
+                            f"Add entry to usage_pricing table."
+                        )
+                    billing = get_billing_backend()
+                    billing_usage = UsageRecord(
+                        pricing_key=pricing_key,
+                        model=selected_model,
+                        input_tokens=message.usage.input_tokens,
+                        output_tokens=message.usage.output_tokens,
+                        cache_read_tokens=getattr(message.usage, 'cache_read_input_tokens', 0) or 0,
+                        cache_write_tokens=getattr(message.usage, 'cache_creation_input_tokens', 0) or 0
+                    )
+                    billing.record_usage(
+                        str(get_current_user_id()),
+                        billing_usage,
+                        allow_negative=allow_negative,
+                    )
+            except ImportError:
+                pass  # OSS mode - billing module not present
+            except Exception as e:
+                # InsufficientBalanceError and BillingConfigurationError MUST propagate
+                try:
+                    from billing.exceptions import InsufficientBalanceError, BillingConfigurationError as BCE
+                    if isinstance(e, (InsufficientBalanceError, BCE)):
+                        raise
+                except ImportError:
+                    pass  # OSS mode - no billing exceptions module
+                self.logger.error(f"Billing record_usage failed: {e}", exc_info=True)
+
             return message
 
         except anthropic.APITimeoutError:
@@ -1131,40 +1524,56 @@ class LLMProvider:
         except anthropic.APIError as e:
             # ACTIVATE FAILOVER on Anthropic errors
             if self.emergency_fallback_enabled:
-                self.logger.error(f"Anthropic error: {e} - activating emergency failover")
+                self.logger.error(f"Anthropic error: {e} - activating emergency failover", exc_info=True)
                 self._activate_failover()
                 # Disable thinking for fallback providers (not supported)
-                kwargs['thinking_enabled'] = False
                 return self._generate_non_streaming(
                     messages, tools,
                     endpoint_url=config.api.emergency_fallback_endpoint,
                     model_override=config.api.emergency_fallback_model,
                     api_key_override=self.emergency_fallback_api_key,
-                    **kwargs
+                    thinking=ThinkingConfig(),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    container_id=container_id,
+                    system_override=system_override,
+                    allow_negative=allow_negative,
                 )
             else:
-                self.logger.error(f"API error: {e}")
+                self.logger.error(f"API error: {e}", exc_info=True)
                 raise RuntimeError(f"API error: {e}")
 
     def _stream_response(
         self,
         messages: List[Dict[str, str]],
         tools: Optional[List[Dict[str, Any]]],
+        *,
         model_override: Optional[str] = None,
-        **kwargs
+        thinking: ThinkingConfig = ThinkingConfig(),
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        container_id: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
+        api_key_override: Optional[str] = None,
+        system_override: Optional[str] = None,
+        allow_negative: bool = False,
     ) -> Generator[StreamEvent, None, None]:
         """Execute streaming request with Anthropic SDK."""
         # Check failover FIRST - use non-streaming fallback if active
         if self._is_failover_active():
-            self.logger.warning("Using emergency fallback (failover active, non-streaming)")
+            self.logger.debug("Using emergency fallback (failover active, non-streaming)")
             # Disable thinking for fallback providers (not supported)
-            kwargs['thinking_enabled'] = False
             response = self._generate_non_streaming(
                 messages, tools,
                 endpoint_url=config.api.emergency_fallback_endpoint,
                 model_override=config.api.emergency_fallback_model,
                 api_key_override=self.emergency_fallback_api_key,
-                **kwargs
+                thinking=ThinkingConfig(),
+                temperature=temperature,
+                max_tokens=max_tokens,
+                container_id=container_id,
+                system_override=system_override,
+                allow_negative=allow_negative,
             )
             yield from self._emit_events_from_response(response)
             return
@@ -1172,8 +1581,11 @@ class LLMProvider:
         # Select model (use override if provided, otherwise default)
         selected_model = model_override if model_override else self.model
 
+        # Per-call overrides (fall back to instance defaults)
+        max_tokens = max_tokens if max_tokens is not None else self.max_tokens
+        temperature = temperature if temperature is not None else self.temperature
+
         # Adjust max_tokens for model constraints (Haiku: 8192, Sonnet: 10000+)
-        max_tokens = self.max_tokens
         if "haiku" in selected_model.lower() and max_tokens > 8192:
             max_tokens = 8192
 
@@ -1194,7 +1606,7 @@ class LLMProvider:
                 system_param = [{
                     "type": "text",
                     "text": system_prompt,
-                    "cache_control": {"type": "ephemeral"}
+                    "cache_control": {"type": "ephemeral", "ttl": "1h"}
                 }]
             else:
                 system_param = system_prompt
@@ -1205,13 +1617,9 @@ class LLMProvider:
         tool_uses_seen = set()
 
         try:
-            # Determine if thinking should be enabled (respect explicit override, otherwise use instance config)
-            use_thinking = kwargs.get('thinking_enabled', self.extended_thinking)
-            thinking_budget = kwargs.get('thinking_budget', self.extended_thinking_budget)
-
-            # Add thinking budget to max_tokens when thinking is enabled
-            if use_thinking:
-                max_tokens = max_tokens + thinking_budget
+            # Translate thinking config to Anthropic API params
+            thinking_params, thinking_budget_adj = self._anthropic_thinking_params(thinking, selected_model)
+            max_tokens += thinking_budget_adj
 
             # Filter thinking blocks:
             # - When thinking disabled: strip all thinking blocks
@@ -1220,7 +1628,7 @@ class LLMProvider:
             def keep_block(block: dict) -> bool:
                 if block.get("type") != "thinking":
                     return True  # Keep non-thinking blocks
-                if not use_thinking:
+                if not thinking.active:
                     return False  # Strip all thinking when disabled
                 # Keep only thinking blocks with valid signatures (from Anthropic)
                 return block.get("signature") is not None
@@ -1237,8 +1645,14 @@ class LLMProvider:
                 "model": selected_model,
                 "max_tokens": max_tokens,
                 "messages": messages_to_send,
-                "temperature": self.temperature
             }
+
+            # Thinking is incompatible with temperature (API rejects both together).
+            # When thinking is active, omit temperature entirely.
+            if thinking.active:
+                stream_params.update(thinking_params)
+            else:
+                stream_params["temperature"] = temperature
 
             # Only include system if provided (Anthropic API rejects system: None)
             if system_param is not None:
@@ -1247,73 +1661,157 @@ class LLMProvider:
             # Only include tools if provided (Anthropic API rejects tools: None)
             if anthropic_tools:
                 stream_params["tools"] = anthropic_tools
-
-            # Add extended thinking if enabled
-            if use_thinking:
-                stream_params["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": thinking_budget
-                }
+                # Per-tool parallel_safe is handled at execution time in _execute_with_tools
 
             # Add container ID for multi-turn file persistence
-            container_id = kwargs.get('container_id')
-            if container_id:
+            # ONLY when code_execution tool is in the tools list (Anthropic API requirement)
+            has_code_execution = anthropic_tools and any(
+                tool.get("type") == "code_execution_20250825"
+                for tool in anthropic_tools
+            )
+            if container_id and has_code_execution:
                 stream_params["container"] = container_id
                 self.logger.debug(f"Reusing container: {container_id}")
+            elif container_id:
+                self.logger.debug("Skipping container (code_execution not in tools)")
 
-            # Use beta API for code execution and Files API
-            with self.anthropic_client.beta.messages.stream(
-                **stream_params,
-                betas=ANTHROPIC_BETA_FLAGS
-            ) as stream:
-                # Stream events
-                for event in stream:
-                    if event.type == "text":
-                        yield TextEvent(content=event.text)
+            # Retry loop for transient overloaded errors
+            for attempt in range(OVERLOAD_MAX_RETRIES):
+                try:
+                    # Use beta API for code execution and Files API
+                    with self.anthropic_client.beta.messages.stream(
+                        **stream_params,
+                        betas=ANTHROPIC_BETA_FLAGS
+                    ) as stream:
+                        # Stream events
+                        for event in stream:
+                            if event.type == "text":
+                                yield TextEvent(content=event.text)
 
-                    elif event.type == "content_block_delta":
-                        # Handle thinking deltas from extended thinking
-                        if hasattr(event, 'delta') and hasattr(event.delta, 'type'):
-                            if event.delta.type == "thinking_delta":
-                                yield ThinkingEvent(content=event.delta.thinking)
+                            elif event.type == "content_block_delta":
+                                # Handle thinking deltas from extended thinking
+                                if hasattr(event, 'delta') and hasattr(event.delta, 'type'):
+                                    if event.delta.type == "thinking_delta":
+                                        yield ThinkingEvent(content=event.delta.thinking)
 
-                    elif event.type == "content_block_start":
-                        # Emit tool detected events
-                        if event.content_block.type == "tool_use":
-                            tool_id = event.content_block.id
-                            if tool_id not in tool_uses_seen:
-                                tool_uses_seen.add(tool_id)
-                                yield ToolDetectedEvent(
-                                    tool_name=event.content_block.name,
-                                    tool_id=tool_id
+                            elif event.type == "content_block_start":
+                                # Emit tool detected events
+                                if event.content_block.type == "tool_use":
+                                    tool_id = event.content_block.id
+                                    if tool_id not in tool_uses_seen:
+                                        tool_uses_seen.add(tool_id)
+                                        yield ToolDetectedEvent(
+                                            tool_name=event.content_block.name,
+                                            tool_id=tool_id
+                                        )
+                                elif event.content_block.type == "server_tool_use":
+                                    yield ToolDetectedEvent(
+                                        tool_name=event.content_block.name,
+                                        tool_id=event.content_block.id
+                                    )
+
+                        # Get final message (Anthropic Message object)
+                        final_message = stream.get_final_message()
+
+                        # Capture container ID from response for reuse
+                        if hasattr(final_message, 'container') and final_message.container:
+                            response_container_id = final_message.container.id
+                            self.logger.debug(f"📦 Container ID captured: {response_container_id}")
+                            # Store in message metadata for orchestrator to retrieve
+                            if not hasattr(final_message, '_container_id'):
+                                final_message._container_id = response_container_id
+                        elif container_id:
+                            # Container was reused, preserve the ID
+                            self.logger.debug(f"📦 Container reused (no new ID in response): {container_id}")
+                            if not hasattr(final_message, '_container_id'):
+                                final_message._container_id = container_id
+
+                        # Log cache usage if available
+                        if hasattr(final_message, 'usage') and final_message.usage:
+                            usage = final_message.usage
+                            self.logger.debug(
+                                f"Model: {selected_model} - Token usage - Input: {usage.input_tokens}, Output: {usage.output_tokens}, "
+                                f"Cache created: {getattr(usage, 'cache_creation_input_tokens', 0)}, "
+                                f"Cache read: {getattr(usage, 'cache_read_input_tokens', 0)}"
+                            )
+
+                        # Billing hook (silently skipped if billing module absent - OSS mode)
+                        try:
+                            from billing import get_billing_backend, UsageRecord
+                            from billing.exceptions import BillingConfigurationError
+                            from billing.pricing import resolve_pricing_key
+                            from utils.user_context import get_current_user_id, has_user_context
+
+                            if has_user_context() and hasattr(final_message, 'usage') and final_message.usage:
+                                pricing_key = resolve_pricing_key(selected_model, endpoint_url)
+                                if not pricing_key:
+                                    raise BillingConfigurationError(
+                                        f"No pricing config found for model '{selected_model}' "
+                                        f"(endpoint: {endpoint_url}). "
+                                        f"Add entry to usage_pricing table."
+                                    )
+                                billing = get_billing_backend()
+                                billing_usage = UsageRecord(
+                                    pricing_key=pricing_key,
+                                    model=selected_model,
+                                    input_tokens=final_message.usage.input_tokens,
+                                    output_tokens=final_message.usage.output_tokens,
+                                    cache_read_tokens=getattr(final_message.usage, 'cache_read_input_tokens', 0) or 0,
+                                    cache_write_tokens=getattr(final_message.usage, 'cache_creation_input_tokens', 0) or 0
                                 )
+                                billing.record_usage(
+                                    str(get_current_user_id()),
+                                    billing_usage,
+                                    allow_negative=allow_negative,
+                                )
+                        except ImportError:
+                            pass  # OSS mode - billing module not present
+                        except Exception as e:
+                            # InsufficientBalanceError and BillingConfigurationError MUST propagate
+                            try:
+                                from billing.exceptions import InsufficientBalanceError, BillingConfigurationError as BCE
+                                if isinstance(e, (InsufficientBalanceError, BCE)):
+                                    raise
+                            except ImportError:
+                                pass  # OSS mode - no billing exceptions module
+                            self.logger.error(f"Billing record_usage failed: {e}", exc_info=True)
 
-                # Get final message (Anthropic Message object)
-                final_message = stream.get_final_message()
+                        # Extract file artifacts from code_execution_result blocks
+                        from tools.repo import FILES_API_BETA_FLAG
+                        for block in final_message.content:
+                            if block.type == "code_execution_result":
+                                for output_block in block.content:
+                                    if output_block.type == "code_execution_output" and output_block.file_id:
+                                        try:
+                                            meta = self.anthropic_client.beta.files.retrieve_metadata(
+                                                output_block.file_id, betas=[FILES_API_BETA_FLAG]
+                                            )
+                                            self.download_file_artifact(
+                                                output_block.file_id, meta.filename,
+                                                meta.mime_type, meta.size_bytes
+                                            )
+                                            yield FileArtifactEvent(
+                                                file_id=output_block.file_id,
+                                                filename=meta.filename,
+                                                mime_type=meta.mime_type,
+                                                size_bytes=meta.size_bytes,
+                                            )
+                                        except Exception as e:
+                                            self.logger.warning(f"Failed to process file artifact {output_block.file_id}: {e}")
 
-                # Capture container ID from response for reuse
-                if hasattr(final_message, 'container') and final_message.container:
-                    response_container_id = final_message.container.id
-                    self.logger.info(f"📦 Container ID captured: {response_container_id}")
-                    # Store in message metadata for orchestrator to retrieve
-                    if not hasattr(final_message, '_container_id'):
-                        final_message._container_id = response_container_id
-                elif container_id:
-                    # Container was reused, preserve the ID
-                    self.logger.info(f"📦 Container reused (no new ID in response): {container_id}")
-                    if not hasattr(final_message, '_container_id'):
-                        final_message._container_id = container_id
+                        yield CompleteEvent(response=final_message)
+                        break  # Success - exit retry loop
 
-                # Log cache usage if available
-                if hasattr(final_message, 'usage') and final_message.usage:
-                    usage = final_message.usage
-                    self.logger.debug(
-                        f"Model: {selected_model} - Token usage - Input: {usage.input_tokens}, Output: {usage.output_tokens}, "
-                        f"Cache created: {getattr(usage, 'cache_creation_input_tokens', 0)}, "
-                        f"Cache read: {getattr(usage, 'cache_read_input_tokens', 0)}"
-                    )
-
-                yield CompleteEvent(response=final_message)
+                except anthropic.APIStatusError as e:
+                    if _is_overloaded_error(e) and attempt < OVERLOAD_MAX_RETRIES - 1:
+                        # Exponential backoff with jitter for overloaded errors
+                        delay = min(OVERLOAD_BASE_DELAY * (2 ** attempt), OVERLOAD_MAX_DELAY)
+                        delay = delay * (0.5 + random.random())  # Add jitter
+                        self.logger.warning(f"API overloaded, retry {attempt + 1}/{OVERLOAD_MAX_RETRIES} after {delay:.1f}s")
+                        time.sleep(delay)
+                        continue
+                    # Not overloaded or exhausted retries - re-raise for outer handler
+                    raise
 
         except anthropic.APITimeoutError:
             error_msg = f"Request timed out"
@@ -1325,21 +1823,25 @@ class LLMProvider:
         except anthropic.APIError as e:
             # ACTIVATE FAILOVER on Anthropic errors
             if self.emergency_fallback_enabled:
-                self.logger.error(f"Anthropic error: {e} - activating emergency failover")
+                self.logger.error(f"Anthropic error: {e} - activating emergency failover", exc_info=True)
                 self._activate_failover()
                 # Disable thinking for fallback providers (not supported)
-                kwargs['thinking_enabled'] = False
                 response = self._generate_non_streaming(
                     messages, tools,
                     endpoint_url=config.api.emergency_fallback_endpoint,
                     model_override=config.api.emergency_fallback_model,
                     api_key_override=self.emergency_fallback_api_key,
-                    **kwargs
+                    thinking=ThinkingConfig(),
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    container_id=container_id,
+                    system_override=system_override,
+                    allow_negative=allow_negative,
                 )
                 yield from self._emit_events_from_response(response)
             else:
                 error_msg = f"API error: {str(e)}"
-                self.logger.error(error_msg)
+                self.logger.error(error_msg, exc_info=True)
                 yield ErrorEvent(error=error_msg)
                 raise RuntimeError(error_msg)
 
@@ -1347,20 +1849,39 @@ class LLMProvider:
         self,
         messages: List[Dict[str, str]],
         tools: List[Dict[str, Any]],
-        **kwargs
+        *,
+        thinking: ThinkingConfig = ThinkingConfig(),
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        container_id: Optional[str] = None,
+        endpoint_url: Optional[str] = None,
+        model_preference: Optional[str] = None,
+        api_key_override: Optional[str] = None,
+        system_override: Optional[str] = None,
+        allow_negative: bool = False,
     ) -> Generator[StreamEvent, None, None]:
         """Execute with tool loop using Anthropic format."""
         circuit_breaker = CircuitBreaker()
         current_messages = messages.copy()
 
         # Check for user model preference
-        user_model_preference = kwargs.get('model_preference')
-        selected_model = user_model_preference if user_model_preference else self.model
+        selected_model = model_preference if model_preference else self.model
 
         while True:
             # Stream LLM response with selected model
             response = None
-            for event in self._stream_response(current_messages, tools, **{**kwargs, 'model_override': selected_model}):
+            for event in self._stream_response(
+                current_messages, tools,
+                model_override=selected_model,
+                thinking=thinking,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                container_id=container_id,
+                endpoint_url=endpoint_url,
+                api_key_override=api_key_override,
+                system_override=system_override,
+                allow_negative=allow_negative,
+            ):
                 if isinstance(event, CompleteEvent):
                     response = event.response
                 else:
@@ -1372,7 +1893,7 @@ class LLMProvider:
 
             # Extract tool calls from Anthropic Message
             tool_calls = self.extract_tool_calls(response)
-            self.logger.info(f"Extracted {len(tool_calls)} tool calls: {[tc['tool_name'] for tc in tool_calls]}")
+            self.logger.debug(f"Extracted {len(tool_calls)} tool calls: {[tc['tool_name'] for tc in tool_calls]}")
 
             # If no tool calls, we're done
             if not tool_calls:
@@ -1383,16 +1904,32 @@ class LLMProvider:
             assistant_message = self._build_assistant_message(response)
             current_messages.append(assistant_message)
 
-            # Execute all tools in parallel
-            # Emit executing events immediately
-            for tool_call in tool_calls:
+            # Separate tools into sequential (parallel_safe=False) and parallel groups
+            # Filter out server-side tools first (code_execution is executed by Anthropic)
+            local_tool_calls = [tc for tc in tool_calls if tc["tool_name"] != "code_execution"]
+
+            sequential_tools = []
+            parallel_tools = []
+            for tc in local_tool_calls:
+                tool_class = self.tool_repo.tool_classes.get(tc["tool_name"])
+                if tool_class and not tool_class.is_call_parallel_safe(tc["input"]):
+                    sequential_tools.append(tc)
+                else:
+                    parallel_tools.append(tc)
+
+            if sequential_tools:
+                self.logger.debug(f"Sequential tools: {[t['tool_name'] for t in sequential_tools]}")
+            if parallel_tools:
+                self.logger.debug(f"Parallel tools: {[t['tool_name'] for t in parallel_tools]}")
+
+            # Emit executing events for all tools
+            for tool_call in local_tool_calls:
                 yield ToolExecutingEvent(
                     tool_name=tool_call["tool_name"],
                     tool_id=tool_call["id"],
                     arguments=tool_call["input"]
                 )
 
-            # Execute tools concurrently
             tool_results = []
             # Capture context value to propagate to worker threads
             from utils.user_context import _user_context
@@ -1403,69 +1940,82 @@ class LLMProvider:
                 _user_context.set(user_context_value)
                 return self.tool_repo.invoke_tool(tool_name, tool_input)
 
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                # Submit all tool executions with manual context propagation
-                # Filter out server-side tools (code_execution is executed by Anthropic, not us)
-                local_tool_calls = [tc for tc in tool_calls if tc["tool_name"] != "code_execution"]
-                future_to_tool = {
-                    executor.submit(invoke_with_context, tc["tool_name"], tc["input"]): tc
-                    for tc in local_tool_calls
-                }
+            def execute_tool(tc: ToolCall) -> ToolExecutionResult:
+                """Execute a single tool and return structured result."""
+                tool_name = tc["tool_name"]
+                error = None
+                result = None
+                try:
+                    result = invoke_with_context(tool_name, tc["input"])
+                    result_content = json.dumps(result) if isinstance(result, dict) else str(result)
+                except Exception as e:
+                    self.logger.error(f"Tool execution failed for {tool_name}: {e}")
+                    schema_hint = ""
+                    error_str = str(e).lower()
+                    is_param_error = isinstance(e, ValueError) or any(
+                        kw in error_str for kw in ["unknown operation", "invalid", "required", "missing", "parameter"]
+                    )
+                    if is_param_error and self.tool_repo:
+                        schema = self.tool_repo.get_tool_definition(tool_name)
+                        if schema:
+                            props = schema.get("input_schema", {}).get("properties", {})
+                            schema_hint = f"\n\nCORRECT PARAMETERS:\n{json.dumps(props, indent=2)}"
+                    result_content = f"Error: {e}{schema_hint}"
+                    error = e
+                return ToolExecutionResult(
+                    tool_call=tc,
+                    result_content=result_content,
+                    raw_result=result,
+                    error=error
+                )
 
-                # Process results as they complete
-                for future in concurrent.futures.as_completed(future_to_tool):
-                    tool_call = future_to_tool[future]
-                    tool_name = tool_call["tool_name"]
-                    tool_id = tool_call["id"]
+            # Execute sequential tools first (in request order)
+            for tc in sequential_tools:
+                exec_result = execute_tool(tc)
+                tool_name = exec_result.tool_call["tool_name"]
+                tool_id = exec_result.tool_call["id"]
 
-                    error = None
-                    try:
-                        result = future.result()
-                        tool_result_content = str(result)
+                if exec_result.error:
+                    yield ToolErrorEvent(tool_name=tool_name, tool_id=tool_id, error=str(exec_result.error))
+                else:
+                    yield ToolCompletedEvent(tool_name=tool_name, tool_id=tool_id, result=exec_result.result_content)
 
-                        yield ToolCompletedEvent(
-                            tool_name=tool_name,
-                            tool_id=tool_id,
-                            result=tool_result_content
-                        )
+                circuit_breaker.record_execution(tool_name, exec_result.raw_result, exec_result.error)
+                tool_results.append({
+                    "tool_use_id": tool_id,
+                    "content": exec_result.result_content,
+                    **({"is_error": True} if exec_result.error else {})
+                })
 
-                    except Exception as e:
-                        self.logger.error(f"Tool execution failed for {tool_name}: {e}")
-                        # Include schema for parameter validation errors to help model correct itself
-                        schema_hint = ""
-                        error_str = str(e).lower()
-                        is_param_error = isinstance(e, ValueError) or any(
-                            kw in error_str for kw in ["unknown operation", "invalid", "required", "missing", "parameter"]
-                        )
-                        if is_param_error and self.tool_repo:
-                            schema = self.tool_repo.get_tool_definition(tool_name)
-                            if schema:
-                                props = schema.get("input_schema", {}).get("properties", {})
-                                schema_hint = f"\n\nCORRECT PARAMETERS:\n{json.dumps(props, indent=2)}"
-                        tool_result_content = f"Error: {e}{schema_hint}"
-                        error = e
-                        result = None
+            # Execute parallel tools concurrently
+            if parallel_tools:
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future_to_tool = {
+                        executor.submit(execute_tool, tc): tc
+                        for tc in parallel_tools
+                    }
 
-                        yield ToolErrorEvent(
-                            tool_name=tool_name,
-                            tool_id=tool_id,
-                            error=str(e)
-                        )
+                    for future in concurrent.futures.as_completed(future_to_tool):
+                        exec_result = future.result()
+                        tool_name = exec_result.tool_call["tool_name"]
+                        tool_id = exec_result.tool_call["id"]
 
-                    # Record in circuit breaker
-                    circuit_breaker.record_execution(tool_name, result, error)
+                        if exec_result.error:
+                            yield ToolErrorEvent(tool_name=tool_name, tool_id=tool_id, error=str(exec_result.error))
+                        else:
+                            yield ToolCompletedEvent(tool_name=tool_name, tool_id=tool_id, result=exec_result.result_content)
 
-                    # Store result for batching
-                    tool_results.append({
-                        "tool_use_id": tool_id,
-                        "content": tool_result_content,
-                        **({"is_error": True} if error else {})
-                    })
+                        circuit_breaker.record_execution(tool_name, exec_result.raw_result, exec_result.error)
+                        tool_results.append({
+                            "tool_use_id": tool_id,
+                            "content": exec_result.result_content,
+                            **({"is_error": True} if exec_result.error else {})
+                        })
 
             # Check circuit breaker after all tools complete
             should_continue, reason = circuit_breaker.should_continue()
             if not should_continue:
-                self.logger.info(f"Circuit breaker triggered: {reason}")
+                self.logger.warning(f"Circuit breaker triggered: {reason}")
                 yield CircuitBreakerEvent(reason=reason)
 
                 # Add tool results + instruction to respond without more tools
@@ -1480,7 +2030,18 @@ class LLMProvider:
                 })
 
                 # Get final response - pass tools=None to force text-only response
-                for event in self._stream_response(current_messages, None, model_override=self.model, **kwargs):
+                for event in self._stream_response(
+                    current_messages, None,
+                    model_override=selected_model,
+                    thinking=thinking,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    container_id=container_id,
+                    endpoint_url=endpoint_url,
+                    api_key_override=api_key_override,
+                    system_override=system_override,
+                    allow_negative=allow_negative,
+                ):
                     if isinstance(event, CompleteEvent):
                         yield event
                         return
@@ -1571,6 +2132,24 @@ class LLMProvider:
                     "name": block.name,
                     "input": block.input
                 })
+            elif block.type == "server_tool_use":
+                content_blocks.append({
+                    "type": "server_tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input
+                })
+            elif block.type == "code_execution_result":
+                content_blocks.append({
+                    "type": "code_execution_result",
+                    "content": [
+                        {"type": ob.type, "file_id": getattr(ob, 'file_id', None)}
+                        for ob in block.content
+                    ],
+                    "return_code": block.return_code,
+                    "stdout": block.stdout,
+                    "stderr": block.stderr,
+                })
 
         return {
             "role": "assistant",
@@ -1618,7 +2197,16 @@ class LLMProvider:
         text_blocks = [block.text for block in message.content if block.type == "text"]
         return "".join(text_blocks)
 
-    def extract_tool_calls(self, message: anthropic.types.Message) -> List[Dict[str, Any]]:
+    def extract_thinking_content(self, message: anthropic.types.Message) -> str:
+        """Extract concatenated thinking content from Anthropic Message.
+
+        Returns empty string if no thinking blocks present (extended thinking
+        was disabled or model produced no reasoning for this turn).
+        """
+        thinking_blocks = [block.thinking for block in message.content if block.type == "thinking"]
+        return "\n\n".join(thinking_blocks)
+
+    def extract_tool_calls(self, message: anthropic.types.Message) -> list[ToolCall]:
         """
         Extract tool calls from Anthropic Message in standardized format.
 

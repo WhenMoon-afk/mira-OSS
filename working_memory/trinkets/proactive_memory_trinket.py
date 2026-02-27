@@ -1,9 +1,13 @@
 """Proactive memory trinket for displaying relevant long-term memories."""
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, TYPE_CHECKING
 
 from utils.tag_parser import format_memory_id
 from .base import EventAwareTrinket
+
+if TYPE_CHECKING:
+    from cns.integration.event_bus import EventBus
+    from working_memory.core import WorkingMemory
 
 logger = logging.getLogger(__name__)
 
@@ -15,15 +19,13 @@ class ProactiveMemoryTrinket(EventAwareTrinket):
     This trinket formats memories passed via context into
     a structured section for the sliding notification center.
     """
-    
-    def __init__(self, event_bus, working_memory):
+
+    variable_name = "relevant_memories"
+
+    def __init__(self, event_bus: 'EventBus', working_memory: 'WorkingMemory'):
         """Initialize with memory cache."""
         super().__init__(event_bus, working_memory)
-        self._cached_memories = []  # Store memories between updates
-
-    def _get_variable_name(self) -> str:
-        """Proactive memory publishes to 'relevant_memories'."""
-        return "relevant_memories"
+        self._cached_memories: list[dict[str, Any]] = []
 
     def get_cached_memories(self) -> List[Dict[str, Any]]:
         """
@@ -85,7 +87,13 @@ class ProactiveMemoryTrinket(EventAwareTrinket):
         # Build attributes
         attrs = [f'id="{formatted_id}"']
 
-        confidence = memory.get('confidence') or memory.get('similarity_score')
+        # Mark global memories for clear identification
+        if memory.get('source') == 'global':
+            attrs.append('source="global"')
+
+        confidence = memory.get('confidence')
+        if confidence is None:
+            confidence = memory.get('similarity_score')
         if confidence is not None and confidence > 0.75:
             attrs.append(f'confidence="{int(confidence * 100)}"')
 
@@ -111,72 +119,56 @@ class ProactiveMemoryTrinket(EventAwareTrinket):
         if temporal_attrs:
             parts.append(f"<temporal {' '.join(temporal_attrs)}/>")
 
-        # Linked memories (nested)
+        # Annotations (contextual notes)
+        annotations = memory.get('annotations', [])
+        if annotations:
+            parts.append("<annotations>")
+            for ann in annotations:
+                text = ann.get('text', '')
+                created = ann.get('created_at', '')
+                if created:
+                    ann_dt = parse_time_string(created)
+                    relative = format_relative_time(ann_dt)
+                    parts.append(f'<note added="{relative}">{text}</note>')
+                else:
+                    parts.append(f'<note>{text}</note>')
+            parts.append("</annotations>")
+
+        # Linked memories as compact inline context
         linked_memories = memory.get('linked_memories', [])
         if linked_memories:
-            parts.append(self._format_linked_memories_xml(linked_memories, current_depth=1))
+            parts.append(self._format_linked_context(linked_memories))
 
         parts.append("</memory>")
         return "\n".join(parts)
 
-    def _format_linked_memories_xml(
-        self,
-        linked_memories: List[Dict[str, Any]],
-        current_depth: int = 1,
-        max_display_depth: int = 2
-    ) -> str:
+    def _format_linked_context(self, linked_memories: List[Dict[str, Any]]) -> str:
         """
-        Recursively format linked memories as nested XML elements.
+        Format linked memories as compact inline context annotations.
 
-        NOTE: max_display_depth is distinct from traversal depth:
-        - Traversal depth (config.max_link_traversal_depth): How deep to walk the graph
-        - Display depth (this parameter): How many levels to show in output
-
-        We may traverse 3-4 levels deep to discover important memories,
-        but only display Primary + 2 levels to avoid context window bloat.
-
-        Args:
-            linked_memories: List of linked memory dicts
-            current_depth: Current display depth (1-indexed)
-            max_display_depth: Maximum depth to display (default 2 = Primary + 2 levels)
+        Deduplicates by target ID (keeps highest-confidence link type per target).
+        Renders ~80 chars per line instead of ~200+ chars per full XML block.
         """
-        # Stop display if we've reached max depth
-        if current_depth > max_display_depth:
-            return ""
-
         if not linked_memories:
             return ""
 
-        parts = ["<linked_memories>"]
-
+        # Dedup by target ID — keep highest confidence link type per target
+        seen_ids: dict = {}
         for linked in linked_memories:
-            # Link metadata
+            target_id = linked.get('id', '')
             link_meta = linked.get('link_metadata', {})
-            link_type = link_meta.get('link_type', 'unknown')
-            confidence = link_meta.get('confidence')
+            confidence = link_meta.get('confidence', 0)
+            if target_id not in seen_ids or confidence > seen_ids[target_id][1]:
+                seen_ids[target_id] = (linked, confidence)
 
-            # Build attributes
+        lines = []
+        for linked, _ in seen_ids.values():
             raw_id = linked.get('id', '')
-            formatted_id = format_memory_id(raw_id) if raw_id else 'unknown'
-            attrs = [f'id="{formatted_id}"', f'link_type="{link_type}"']
-            if confidence is not None and confidence > 0.75:
-                attrs.append(f'confidence="{int(confidence * 100)}"')
+            formatted_id = format_memory_id(raw_id) if raw_id else ''
+            text = linked.get('text', '')
+            link_meta = linked.get('link_metadata', {})
+            link_type = link_meta.get('link_type', '')
+            id_suffix = f", {formatted_id}" if formatted_id else ""
+            lines.append(f"Also: {text} ({link_type}{id_suffix})")
 
-            parts.append(f"<linked_memory {' '.join(attrs)}>")
-            parts.append(f"<text>{linked.get('text', '')}</text>")
-
-            # Nested linked memories (recursive)
-            nested_linked = linked.get('linked_memories', [])
-            if nested_linked:
-                nested_xml = self._format_linked_memories_xml(
-                    nested_linked,
-                    current_depth=current_depth + 1,
-                    max_display_depth=max_display_depth
-                )
-                if nested_xml:
-                    parts.append(nested_xml)
-
-            parts.append("</linked_memory>")
-
-        parts.append("</linked_memories>")
-        return "\n".join(parts)
+        return "<context>\n" + "\n".join(lines) + "\n</context>"

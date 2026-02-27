@@ -7,7 +7,7 @@ API access and monitoring.
 """
 import json
 import logging
-from enum import Enum
+from abc import ABC, abstractmethod
 from typing import Dict, Any, TYPE_CHECKING
 
 from clients.valkey_client import get_valkey_client
@@ -15,6 +15,7 @@ from utils.user_context import get_current_user_id
 from utils.timezone_utils import utc_now, format_utc_iso
 
 if TYPE_CHECKING:
+    from cns.core.events import UpdateTrinketEvent, TurnCompletedEvent
     from cns.integration.event_bus import EventBus
     from working_memory.core import WorkingMemory
 
@@ -24,23 +25,7 @@ logger = logging.getLogger(__name__)
 TRINKET_KEY_PREFIX = "trinkets"
 
 
-class TrinketPlacement(Enum):
-    """Where trinket content appears in the context window."""
-    SYSTEM = "system"                    # Goes in system prompt (cached)
-    NOTIFICATION_CENTER = "notification" # Goes in notification center (slides forward)
-
-
-# Trinkets that go in the notification center (all others default to SYSTEM)
-_NOTIFICATION_CENTER_TRINKETS = frozenset({
-    'TimeManager',
-    'ManifestTrinket',
-    'ReminderManager',
-    'GetContextTrinket',
-    'ProactiveMemoryTrinket',
-})
-
-
-class EventAwareTrinket:
+class EventAwareTrinket(ABC):
     """
     Base class for event-driven trinkets.
 
@@ -48,19 +33,17 @@ class EventAwareTrinket:
     1. Receive update requests via UpdateTrinketEvent
     2. Generate content when requested
     3. Publish their content via TrinketContentEvent
+
+    Subclasses must define these class attributes:
+        variable_name: str  — section name in the composed prompt
+        cache_policy: bool  — whether to use prompt caching (default False)
     """
 
-    # Cache policy for this trinket's content
-    # True = content should be cached (static content like tool guidance)
-    # False = content changes frequently, don't cache (default)
-    cache_policy: bool = False
+    # REQUIRED — subclasses must define (validated at init)
+    variable_name: str
 
-    @property
-    def placement(self) -> TrinketPlacement:
-        """Placement is determined by _NOTIFICATION_CENTER_TRINKETS registry."""
-        if self.__class__.__name__ in _NOTIFICATION_CENTER_TRINKETS:
-            return TrinketPlacement.NOTIFICATION_CENTER
-        return TrinketPlacement.SYSTEM
+    # Optional — subclasses override as needed
+    cache_policy: bool = False
 
     def __init__(self, event_bus: 'EventBus', working_memory: 'WorkingMemory'):
         """
@@ -69,29 +52,24 @@ class EventAwareTrinket:
         Args:
             event_bus: CNS event bus for publishing content
             working_memory: Working memory instance for registration
+
+        Raises:
+            TypeError: If subclass doesn't define variable_name
         """
+        if not getattr(self, 'variable_name', None):
+            raise TypeError(
+                f"{self.__class__.__name__} must define 'variable_name' class attribute"
+            )
+
         self.event_bus = event_bus
         self.working_memory = working_memory
-        self._variable_name: str = self._get_variable_name()
 
         # Register with working memory
         self.working_memory.register_trinket(self)
 
         logger.info(f"{self.__class__.__name__} initialized and registered")
-    
-    def _get_variable_name(self) -> str:
-        """
-        Get the variable name this trinket publishes.
-        
-        Subclasses should override this to specify their section name.
-        
-        Returns:
-            Variable name for system prompt composition
-        """
-        # Default implementation - subclasses should override
-        return self.__class__.__name__.lower() + "_section"
-    
-    def handle_update_request(self, event) -> None:
+
+    def handle_update_request(self, event: 'UpdateTrinketEvent') -> None:
         """
         Handle an update request from working memory.
 
@@ -101,26 +79,26 @@ class EventAwareTrinket:
         Args:
             event: UpdateTrinketEvent with context
         """
-        from cns.core.events import UpdateTrinketEvent, TrinketContentEvent
-        event: UpdateTrinketEvent
+        from cns.core.events import TrinketContentEvent
 
         # Generate content - let infrastructure failures propagate
         content = self.generate_content(event.context)
 
-        # Publish and persist if we have content
         if content and content.strip():
             # Persist to Valkey for API access
             self._persist_to_valkey(content)
 
             self.event_bus.publish(TrinketContentEvent.create(
                 continuum_id=event.continuum_id,
-                variable_name=self._variable_name,
+                variable_name=self.variable_name,
                 content=content,
                 trinket_name=self.__class__.__name__,
                 cache_policy=self.cache_policy,
-                placement=self.placement.value
             ))
-            logger.debug(f"{self.__class__.__name__} published content ({len(content)} chars, placement={self.placement.value})")
+            logger.debug(f"{self.__class__.__name__} published content ({len(content)} chars)")
+        else:
+            # Content is empty - clear stale data from Valkey
+            self._clear_from_valkey()
 
     def _persist_to_valkey(self, content: str) -> None:
         """
@@ -142,19 +120,76 @@ class EventAwareTrinket:
         })
 
         valkey = get_valkey_client()
-        valkey.hset_with_retry(hash_key, self._variable_name, value)
+        valkey.hset_with_retry(hash_key, self.variable_name, value)
+
+    def _clear_from_valkey(self) -> None:
+        """
+        Remove this trinket's content from Valkey.
+
+        Called when trinket content becomes empty (e.g., segment collapse,
+        TTL expiry) to prevent stale data from being served via API.
+        """
+        user_id = get_current_user_id()
+        hash_key = f"{TRINKET_KEY_PREFIX}:{user_id}"
+
+        valkey = get_valkey_client()
+        valkey.hdel_with_retry(hash_key, self.variable_name)
     
+    @abstractmethod
     def generate_content(self, context: Dict[str, Any]) -> str:
         """
         Generate content for this trinket.
-        
+
         Subclasses must implement this method to generate their
         specific content based on the provided context.
-        
+
         Args:
             context: Context from UpdateTrinketEvent
-            
+
         Returns:
             Generated content string or empty string if no content
         """
-        raise NotImplementedError("Subclasses must implement generate_content()")
+        ...
+
+
+class StatefulTrinket(EventAwareTrinket):
+    """
+    Base for trinkets that maintain turn-scoped state with automatic expiry.
+
+    Handles per-turn concerns (turn tracking, item expiry). Segment collapse
+    is handled centrally by WorkingMemory._flush_stateful_trinkets() — trinkets
+    never subscribe to SegmentCollapsedEvent directly.
+
+    Subclasses implement:
+    - _expire_items(): Remove stale items each turn, return True if any removed
+    - _clear_all_state(): Reset all in-memory state (called by WorkingMemory on collapse)
+    """
+
+    def __init__(self, event_bus: 'EventBus', working_memory: 'WorkingMemory'):
+        super().__init__(event_bus, working_memory)
+        self.current_turn: int = 0
+
+        self.event_bus.subscribe('TurnCompletedEvent', self._on_turn_completed)
+
+    def _on_turn_completed(self, event: 'TurnCompletedEvent') -> None:
+        """Update turn counter and expire stale items."""
+        self.current_turn = event.turn_number
+        if self._expire_items():
+            self._refresh_content()
+
+    def _refresh_content(self) -> None:
+        """Trigger a content regeneration after state changes."""
+        self.working_memory.publish_trinket_update(
+            target_trinket=self.__class__.__name__,
+            context={"action": "lifecycle_refresh"}
+        )
+
+    @abstractmethod
+    def _expire_items(self) -> bool:
+        """Remove expired items. Return True if anything was removed."""
+        ...
+
+    @abstractmethod
+    def _clear_all_state(self) -> None:
+        """Clear all in-memory state for segment collapse."""
+        ...

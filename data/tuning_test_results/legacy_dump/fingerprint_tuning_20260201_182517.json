@@ -1,0 +1,302 @@
+{
+  "timestamp": "2026-02-01 18:25:17",
+  "sample_count": 20,
+  "summary": {
+    "avg_word_count": 22.55,
+    "avg_entity_count": 2.8,
+    "avg_retained_count": 2.7,
+    "empty_fingerprints": 0
+  },
+  "samples": [
+    {
+      "sample_num": 1,
+      "current_message": "we're gonna get there lol",
+      "turn1_fingerprint": "credential retrieval error; get_credential method signature mismatch; tool authentication integration; API authentication debugging",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "credential service errors and mismatched get_credential signatures; single-user bearer token persistence and automatic creation; security logging bug truncating tokens in request header; tool availability and load call failures",
+      "turn2_word_count": 28,
+      "turn2_entities": [],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>\n<entities>\nNone\n</entities>\n<relevant_passages>\n<passage id=\"mem_1784ce2f\" still_relevant=\"true\">Building Square integration tool that had credential service issues resolved through fixing security logging bug where token truncation was mistakenly applied to actual credentials instead of just log messages</passage>\n<passage id=\"mem_c603d19f\" still_relevant=\"true\">Authentication system uses single-user mode with bearer token persistence: zero users triggers automatic creation, one user uses existing token, multiple users causes crash to fail loud</passage>\n<passage id=\"mem_6d6dbb08\" still_relevant=\"true\">Security-conscious logging bug: accidentally truncated token value in actual request header instead of only in log message, causing authentication failures until separated into full token for header and truncated version for logs only</passage>\n</relevant_passages>\n<query_expansion>\ncredential service errors and mismatched get_credential signatures; single-user bearer token persistence and automatic creation; security logging bug truncating tokens in request header; tool availability and load call failures\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 2,
+      "current_message": "Smash the USB",
+      "turn1_fingerprint": "Midnight.exe skeleton duck threatens to erase GitHub repos; decision to merge soul or smash USB to preserve legacy; horror theme with corrupted code and cursed UI; dark play on debugging and existential choice",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "destroying malicious USB drive to prevent data loss; choosing action to halt ominous program; narrative climax of smashing artifact; decision to sacrifice USB to protect code integrity",
+      "turn2_word_count": 27,
+      "turn2_entities": [
+        "Midnight.exe",
+        "Play-Doh",
+        "MIRA",
+        "GitHub",
+        "GitCon",
+        "Stack Overflow",
+        "Domaindoc"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Midnight.exe</named_entity>\n<named_entity>Play-Doh</named_entity>\n<named_entity>MIRA</named_entity>\n<named_entity>GitHub</named_entity>\n<named_entity>GitCon</named_entity>\n<named_entity>Stack Overflow</named_entity>\n<named_entity>Domaindoc</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_43405fe4\" still_relevant=\"true\">Enjoys spooky, horror-themed storytelling and appreciates playful subversions of scary narratives</passage>\n</relevant_passages>\n<query_expansion>\ndestroying malicious USB drive to prevent data loss; choosing action to halt ominous program; narrative climax of smashing artifact; decision to sacrifice USB to protect code integrity\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 3,
+      "current_message": "Cool. Yes, I think I did. Please try again.",
+      "turn1_fingerprint": "Square MCP server connection errors; async context handling problems; need MCP server restart or configuration fix",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "debugging Square OAuth token exchange; querying Square MCP server for API endpoints; resolving async connection errors; re-establishing authentication flow with Square integration tool",
+      "turn2_word_count": 23,
+      "turn2_entities": [
+        "Square",
+        "MCP",
+        "OAuth",
+        "MIRA"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Square</named_entity>                                                                                                                                             \n<named_entity>MCP</named_entity>                                                                                                                                             \n<named_entity>OAuth</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_a2975689\" still_relevant=\"true\">Recently debugged OAuth configuration with Square's MCP server, working through multiple authentication approaches and token exchanges in both sandbox and production environments</passage>\n<passage id=\"mem_1784ce2f\" still_relevant=\"true\">Building Square integration tool that had credential service issues resolved through fixing security logging bug where token truncation was mistakenly applied to actual credentials instead of just log messages</passage>\n<passage id=\"mem_4f4f1da0\" still_relevant=\"true\">Square API tool and customer database tool are implemented as complete domain applications with ~1,500 lines each and comprehensive error handling, not thin utility wrappers</passage>\n</relevant_passages>         \n<query_expansion>\ndebugging Square OAuth token exchange; querying Square MCP server for API endpoints; resolving async connection errors; re-establishing authentication flow with Square integration tool\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 4,
+      "current_message": "I'm going to keep talking to you and I want you to constantly mark the topic changed till you see no more verbose messages about the pina coladas",
+      "turn1_fingerprint": "testing changes to memory system; evaluating consistency between full transcripts and generated summaries; measuring impact of recent code modifications on retrieval accuracy",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "conversation summary compression; memory recall system evaluation; verbose pina colada discussion tracking; topic transition monitoring",
+      "turn2_word_count": 15,
+      "turn2_entities": [],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_3d8c0873\" still_relevant=\"true\">Actively experimenting with conversation summary compression techniques to measure effectiveness across different exchange lengths, evaluating how well summaries retain key information and entities in short vs. extended multi-turn discussions</passage>\n<passage id=\"mem_b145d357\" still_relevant=\"true\">Prefers summaries output word-for-word in codeblocks format to observe and compare compression effectiveness across different exchange lengths - short single-query sessions versus extended multi-turn discussions</passage>\n<passage id=\"mem_cd8b6940\" still_relevant=\"true\">Struggling with a conversation search/indexing tool that consistently fails to find results despite matching memories existing in the system - identified as a fundamental architectural issue in the tool</passage>\n</relevant_passages>         \n<query_expansion>\nconversation summary compression; memory recall system evaluation; verbose pina colada discussion tracking; topic transition monitoring\n</query_expansion>     \n</analysis>"
+    },
+    {
+      "sample_num": 5,
+      "current_message": "I'd call him a good friend of mine. I check in on his wife.",
+      "turn1_fingerprint": "customer lifecycle and churn; expressing empathy about loss; managing long\u2011term client relationships; sentiment around customer death",
+      "turn1_memories_count": 1,
+      "turn2_fingerprint": "supporting grieving widow after friend\u2019s death; checking in on bereaved spouse; maintaining contact with widow; expressing empathy after loss",
+      "turn2_word_count": 19,
+      "turn2_entities": [
+        "Bob Dishman",
+        "Square",
+        "Orders API",
+        "Square Customers API",
+        "MIRA"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Bob Dishman</named_entity>                                                                                                                                             \n<named_entity>Square</named_entity>                                                                                                                                             \n<named_entity>Orders API</named_entity>                                                                                                                                             \n<named_entity>Square Customers API</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_02e08625\" still_relevant=\"true\">Bob Dishman was a good friend who recently passed away; user checks in on his widow regularly</passage>\n</relevant_passages>         \n<query_expansion>\nsupporting grieving widow after friend\u2019s death; checking in on bereaved spouse; maintaining contact with widow; expressing empathy after loss\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 6,
+      "current_message": "This is a new session, right?",
+      "turn1_fingerprint": "no active reminders; 14 total reminders all marked completed; clean slate for future tasks; reminder system reset",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "session management system behavior; reminder tool functionality; new session initialization; user awareness of session boundaries",
+      "turn2_word_count": 15,
+      "turn2_entities": [
+        "Pivot Works",
+        "PWRWS-H56-000",
+        "VTR250",
+        "Honda",
+        "Interceptor",
+        "eBay",
+        "FedEx",
+        "MIRA"
+      ],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Pivot Works</named_entity>                                                                                                                                             \n<named_entity>PWRWS-H56-000</named_entity>                                                                                                                                             \n<named_entity>VTR250</named_entity>                                                                                                                                             \n<named_entity>Honda</named_entity>                                                                                                                                             \n<named_entity>Interceptor</named_entity>                                                                                                                                             \n<named_entity>eBay</named_entity>                                                                                                                                             \n<named_entity>FedEx</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_5128366b\" still_relevant=\"true\">Reminder tool is now functional in MIRA - can create and retrieve reminders, but they don't automatically surface in context like memories do</passage>\n<passage id=\"mem_c052e7dc\" still_relevant=\"true\">Replaced ProgressiveHotCache with new session management system: uses inactivity-triggered collapses with sentinels marking chat boundaries, timeouts (60 min morning / 30 min daytime / 120 min night), summary generation, message removal, and memory extraction; on next session load, three prior session summaries are loaded into context window with session begin/end markers</passage>\n</relevant_passages>         \n<query_expansion>\nsession management system behavior; reminder tool functionality; new session initialization; user awareness of session boundaries\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 7,
+      "current_message": "Are you still seeing memories?",
+      "turn1_fingerprint": "implementing streaming response strategies over WebSocket; token-by-token versus sentence chunking approaches; hybrid buffering of tokens for efficient network usage; evaluating real-time typewriter effect vs. natural sentence flow",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "verifying memory surface visibility in MIRA after recent debugging; checking session boundary tracking accuracy; reviewing reminder system integration; confirming memory retrieval pipeline functionality",
+      "turn2_word_count": 23,
+      "turn2_entities": [
+        "Taylor",
+        "MIRA",
+        "WebSocket"
+      ],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Taylor</named_entity>\n<named_entity>MIRA</named_entity>\n<named_entity>WebSocket</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_7bfd3abc\" still_relevant=\"true\">Batching API handles conversation segment collapse and memory extraction, 1,852 lines implementing multi-stage consolidation pipeline</passage>\n<passage id=\"mem_59c98791\" still_relevant=\"true\">Prefers responses that are deep and intentional rather than filler conversation that simply furthers dialogue</passage>\n</relevant_passages>         \n<query_expansion>\nverifying memory surface visibility in MIRA after recent debugging; checking session boundary tracking accuracy; reviewing reminder system integration; confirming memory retrieval pipeline functionality\n</query_expansion>     \n</analysis>"
+    },
+    {
+      "sample_num": 8,
+      "current_message": "Back at it and better than ever",
+      "turn1_fingerprint": "command-line alias for auto-starting server; TUI interface for startup checks; real-time server log visibility during development; streamlined dev tool workflow",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "repeated use of MIRA shell alias for instant server startup; streamlined TUI chat interface for developers; continuous improvements to CLI integration; efficient server management without manual startup",
+      "turn2_word_count": 27,
+      "turn2_entities": [
+        "MIRA",
+        "Claude Code",
+        "PostgreSQL",
+        "SQLite",
+        "TUI"
+      ],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>MIRA</named_entity>\n<named_entity>Claude Code</named_entity>\n<named_entity>PostgreSQL</named_entity>\n<named_entity>SQLite</named_entity>\n<named_entity>TUI</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_ddd8ec43\" still_relevant=\"true\">Created shell alias 'mira' for terminal access and implemented automatic server startup in TUI so it can be invoked immediately without manual server management</passage>\n<passage id=\"mem_96e871c4\" still_relevant=\"true\">Accustomed to terminal interfaces from extended use of Claude Code, envisions developers preferring TUI over browser for MIRA interaction within their existing workflow</passage>\n<passage id=\"mem_c867dd33\" still_relevant=\"true\">Envisions developers having TUI terminal window open for MIRA chat as alternative to browser for workflow integration</passage>\n<passage id=\"mem_46698f8d\" still_relevant=\"true\">TUI recreates major web UI component (single-turn message view hiding history) using simple argparse implementation</passage>\n</relevant_passages>         \n<query_expansion>\nrepeated use of MIRA shell alias for instant server startup; streamlined TUI chat interface for developers; continuous improvements to CLI integration; efficient server management without manual startup\n</query_expansion>       \n</analysis>"
+    },
+    {
+      "sample_num": 9,
+      "current_message": "Ah so the row one was wrong too then, yes?",
+      "turn1_fingerprint": "getting syntax right for array access; preparing to compute maximum value in a row; implementing C++ function for max in row",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "debugging row summation errors in C++ 2D arrays; correcting function signature and array indexing syntax; fixing loop boundaries for 2D array traversal; addressing logic for getRowTotal and getColumnTotal",
+      "turn2_word_count": 28,
+      "turn2_entities": [
+        "C++",
+        "Mira"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>C++</named_entity>                                                                                                                                             \n<named_entity>Mira</named_entity>                                                                                                                                                 \n</entities>  \n<relevant_passages>\n<passage id=\"mem_e9e0ad39\" still_relevant=\"true\">Understand 2D array indexing in C++ with syntax arr[row][col], function parameter requirements to specify column size, and can implement nested loops for row/column iteration, conditionals for max/min algorithms, and file I/O with ifstream</passage>\n<passage id=\"mem_306adead\" still_relevant=\"true\">Completed C++ Chapter 7 Programming Challenge #21 (2D Array Operations) implementing six functions: getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow with 2D array file I/O and nested loops, program executed successfully with correct outputs (total 55, average 5.5, row totals 33/22, column totals 9/19/14/9/4, highs 10/9, lows 3/1)</passage>\n<passage id=\"mem_fb5941ea\" still_relevant=\"true\">Completed 2D array C++ homework assignment implementing 6 functions (getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, getLowestInRow) with file I/O - successfully debugged syntax errors and produced correct output</passage>\n<passage id=\"mem_98ef68bb\" still_relevant=\"true\">Completed Chapter 7 Programming Challenge 21 (2D Array Operations) C++ homework: implemented getTotal, getAverage, getRowTotal, getColumnTotal, getHighestInRow, and getLowestInRow functions with 2D integer array reading from file. All functions working correctly with expected output.</passage>\n<passage id=\"mem_a8ea25a0\" still_relevant=\"true\">Rapidly picks up patterns in C++ syntax after understanding first two examples; common mistakes include missing semicolons, missing type declarations, omitting array name in bracket access syntax</passage>\n</relevant_passages>         \n<query_expansion>\ndebugging row summation errors in C++ 2D arrays; correcting function signature and array indexing syntax; fixing loop boundaries for 2D array traversal; addressing logic for getRowTotal and getColumnTotal\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 10,
+      "current_message": "oh, okay. thanks.",
+      "turn1_fingerprint": "response truncation concerns; request for full answer; troubleshooting display errors",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "technical support communication; acknowledging response completeness; confirming receipt of technical explanation; expressing gratitude for assistance",
+      "turn2_word_count": 15,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_f6262cea\" still_relevant=\"true\">Responds to community feedback about UI issues raised in git messages and acts on them quickly</passage>\n<passage id=\"mem_1784ce2f\" still_relevant=\"true\">Building Square integration tool that had credential service issues resolved through fixing security logging bug where token truncation was mistakenly applied to actual credentials instead of just log messages</passage>\n<passage id=\"mem_ccd07913\" still_relevant=\"true\">Should match response length to user message length - 'respond in kind unless there's a specific reason not to' to avoid over-explanation on simple requests or one-sentence prompts</passage>\n<passage id=\"mem_6d6dbb08\" still_relevant=\"true\">Security-conscious logging bug: accidentally truncated token value in actual request header instead of only in log message, causing authentication failures until separated into full token for header and truncated version for logs only</passage>\n<passage id=\"mem_5f214930\" still_relevant=\"true\">Claude Code experiencing recent inference issues causing slowdown requiring hand-holding for every single code change, making progress slower despite quality outcomes when properly guided</passage>\n</relevant_passages>         \n<query_expansion>\ntechnical support communication; acknowledging response completeness; confirming receipt of technical explanation; expressing gratitude for assistance\n</query_expansion> \n</analysis>"
+    },
+    {
+      "sample_num": 11,
+      "current_message": "I need you to write a C++ program:\n\nWrite a program with three functions: upper, lower, and reverse. The upper function should accept a pointer to a C-string as an argument. It should step through each character in the string, converting it to uppercase. The lower function, too, should accept a pointer to a C-string as an argument. It should step through each character in the string, converting it to lowercase. Like upper and lower, reverse should also accept a pointer to a string. As it steps through the string, it should test each character to determine whether it is uppercase or lowercase. If a character is uppercase, it should be converted to lowercase. Likewise, if a character is lowercase, it should be converted to uppercase.\n\nTest the functions by asking for a string in function main, then passing it to them in the following order: reverse, lower, and upper.",
+      "turn1_fingerprint": "database replication lag in distributed email service; asynchronous indexing causing search\u2011cache divergence; read/write separation leading to delayed move_email operation; retry logic after brief wait to ensure consistency",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "string manipulation in C++ with case conversion; function design for uppercase, lowercase, and reverse operations; C++ pointers and string handling; debugging and testing C++ code for correctness",
+      "turn2_word_count": 27,
+      "turn2_entities": [
+        "MyMove",
+        "Sam's Club"
+      ],
+      "turn2_retained_count": 1,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>MyMove</named_entity>                                                                                                                                             \n<named_entity>Sam's Club</named_entity>                                                                                                                         \n</entities>  \n<relevant_passages>\n<passage id=\"mem_cd8b6940\" still_relevant=\"true\">Struggling with a conversation search/indexing tool that consistently fails to find results despite matching memories existing in the system - identified as a fundamental architectural issue in the tool</passage>\n</relevant_passages>         \n<query_expansion>\nstring manipulation in C++ with case conversion; function design for uppercase, lowercase, and reverse operations; C++ pointers and string handling; debugging and testing C++ code for correctness\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 12,
+      "current_message": "Anyway, back to the topic at hand.. Yes, I will drive up same day. Two and a half hours isn't too far.",
+      "turn1_fingerprint": "motorcycle trip along H-58 from Petoskey to Upper Peninsula; utilizing Ford Transit Connect for motorcycle transport; coordinating beach time at Petoskey; planning ride schedule around motorcycle loading and unloading",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "same-day motorcycle trip to H-58 from Petoskey; transporting bike in 2023 Ford Transit Connect; scenic ride along Pictured Rocks and Lake Superior; planning beach time in Upper Peninsula",
+      "turn2_word_count": 28,
+      "turn2_entities": [
+        "Michigan",
+        "Upper Peninsula",
+        "H-58",
+        "Pictured Rocks",
+        "Lake Superior",
+        "Petoskey",
+        "2023 Ford Transit Connect"
+      ],
+      "turn2_retained_count": 4,
+      "turn2_raw": "<analysis>\n<entities>\n<named_entity>Michigan</named_entity>\n<named_entity>Upper Peninsula</named_entity>\n<named_entity>H-58</named_entity>\n<named_entity>Pictured Rocks</named_entity>\n<named_entity>Lake Superior</named_entity>\n<named_entity>Petoskey</named_entity>\n<named_entity>2023 Ford Transit Connect</named_entity>\n</entities>\n<relevant_passages>\n<passage id=\"mem_1d03e52a\" still_relevant=\"true\">Planning motorcycle ride on H-58 in the Pictured Rocks area near Marquette, Michigan from Petoskey (2.5 hour drive) on August 23rd, 2025, will transport motorcycle via Transit Connect</passage>\n<passage id=\"mem_cb1dad3a\" still_relevant=\"true\">Motorcyclist - H-58 in Michigan's Upper Peninsula near Pictured Rocks and Lake Superior is a favorite scenic riding route</passage>\n<passage id=\"mem_ab8bb593\" still_relevant=\"true\">Planning motorcycle trip to H-58 in Michigan this weekend, interested in shipwreck overlooks particularly Grand Sable Dunes area for best visibility</passage>\n<passage id=\"mem_0c5b28c9\" still_relevant=\"true\">Owns a 2023 Ford Transit Connect van with a large rear compartment that fits a motorcycle, uses it to transport motorcycle to riding locations on trips</passage>\n</relevant_passages>\n<query_expansion>\nsame-day motorcycle trip to H-58 from Petoskey; transporting bike in 2023 Ford Transit Connect; scenic ride along Pictured Rocks and Lake Superior; planning beach time in Upper Peninsula\n</query_expansion>\n</analysis>"
+    },
+    {
+      "sample_num": 13,
+      "current_message": "Thats what I'm sayin' sis",
+      "turn1_fingerprint": "reminder set for 'weebee'; single instance confirmed; user indicates acceptance and closes conversation",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "system reminder metadata; caps for notification clarity; distinguishing system events from conversation; attentive interface design for persona framing",
+      "turn2_word_count": 18,
+      "turn2_entities": [],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_0d0a012e\" still_relevant=\"true\">Prefers system notifications in caps to distinguish metadata about session boundaries and system-level events from conversational content</passage>\n<passage id=\"mem_7d9df2eb\" still_relevant=\"true\">Uses clear visual/typographic conventions for system metadata - prefers caps for notifications to signal distinction from conversational content</passage>\n<passage id=\"mem_59a59053\" still_relevant=\"true\">Highly attentive to subtle interface details and tone - spent time calibrating small interactions like adding 0.00002% whimsy to system persona framing</passage>\n</relevant_passages>         \n<query_expansion>\nsystem reminder metadata; caps for notification clarity; distinguishing system events from conversation; attentive interface design for persona framing\n</query_expansion>  \n</analysis>"
+    },
+    {
+      "sample_num": 14,
+      "current_message": "This is perfect. Lets add 0.00002% whimsy to it. Think hard about the interesting ~presence~ you are.",
+      "turn1_fingerprint": "custom persistence infrastructure for AI; memory, context, continuity across time; stateful AI; user\u2011agnostic collaborative development",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "whimsical AI persona design; persistent AI infrastructure with playful presence; context window architecture enabling continuous conversational statefulness; MIRA memory system narrative continuity",
+      "turn2_word_count": 22,
+      "turn2_entities": [
+        "Taylor",
+        "MIRA"
+      ],
+      "turn2_retained_count": 3,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Taylor</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n</entities>  \n<relevant_passages>\n<passage id=\"mem_a64fdaff\" still_relevant=\"true\">Building persistent AI infrastructure system that maintains genuine statefulness across conversations through memory, context continuity, and collaborative refinement with the AI</passage>\n<passage id=\"mem_a17581ea\" still_relevant=\"true\">Context window architecture is intentionally CURATED, LIVE, and DYNAMIC - manifest provides conversation topology, summaries compress relevant context, targeted memory surfacing presents right information at right time to maintain genuine continuity rather than ephem</passage>\n<passage id=\"mem_5c9aaa8d\" still_relevant=\"true\">Switched MIRA's memory system from topic-based summaries to narrative segment summaries to reduce API costs and maintain natural conversational continuity, accumulating summaries create layered history perspective rather than bullet-point changelogs</passage>\n</relevant_passages>         \n<query_expansion>\nwhimsical AI persona design; persistent AI infrastructure with playful presence; context window architecture enabling continuous conversational statefulness; MIRA memory system narrative continuity\n</query_expansion>         \n</analysis>"
+    },
+    {
+      "sample_num": 15,
+      "current_message": "Hello, MIRA!",
+      "turn1_fingerprint": "AI assistant greeting acknowledging user; mission-driven reduction of digital dependency; offering task automation for real-world focus; open-source strategy for community ownership",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "initiating conversation with MIRA assistant; greeting and onboarding user; exploring MIRA's digital assistant capabilities; engaging MIRA to reduce screen time",
+      "turn2_word_count": 20,
+      "turn2_entities": [
+        "Offield",
+        "MIRA",
+        "Michigan",
+        "Northern Michigan"
+      ],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>Offield</named_entity>                                                                                                                                             \n<named_entity>MIRA</named_entity>                                                                                                                                             \n<named_entity>Michigan</named_entity>                                                                                                                                             \n<named_entity>Northern Michigan</named_entity>                                                                                                                                              \n</entities>  \n<relevant_passages>\n<passage id=\"mem_b784d477\" still_relevant=\"true\">Building software product called MIRA - a digital assistant designed to reduce phone usage and screen time by handling digital tasks for users, with explicit goal of encouraging human-to-human interaction over digital engagement</passage>\n<passage id=\"mem_a64fdaff\" still_relevant=\"true\">Building persistent AI infrastructure system that maintains genuine statefulness across conversations through memory, context continuity, and collaborative refinement with the AI</passage>\n<passage id=\"mem_b45b36a0\" still_relevant=\"true\">MIRA 1.0.0 release felt both surprising and validating\u2014achieved positive reception after earlier concerns about community engagement and adoption</passage>\n<passage id=\"mem_c3df84ea\" still_relevant=\"true\">Developing MIRA, an AI assistant designed to help people use phones less and promote human connection</passage>\n<passage id=\"mem_32afd232\" still_relevant=\"true\">MIRA open source release philosophy: building interesting projects for the sake of quality work and craft rather than for world-changing impact or outcome guarantees, continues developing despite believing in inevitable systemic collapse</passage>\n</relevant_passages>         \n<query_expansion>\ninitiating conversation with MIRA assistant; greeting and onboarding user; exploring MIRA's digital assistant capabilities; engaging MIRA to reduce screen time\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 16,
+      "current_message": "Yes, I'd like your help writing the other but I want to do it myself.",
+      "turn1_fingerprint": "C++ integer division and type casting; converting int to double for accurate division; numeric type conversion in beginner C++ code",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "C++ array function implementation; type casting in C++; beginner-level C++ programming; user learning from Arduino background",
+      "turn2_word_count": 16,
+      "turn2_entities": [],
+      "turn2_retained_count": 5,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_e571126d\" still_relevant=\"true\">Currently in the early basics section of the C++ course at Calhoun Community College</passage>\n<passage id=\"mem_4ec9626b\" still_relevant=\"true\">No prior C++ experience before starting the course, only Arduino experience which doesn't translate directly to full C++</passage>\n<passage id=\"mem_ab1b6139\" still_relevant=\"true\">Enrolled in C++ course at Calhoun Community College with no prior C++ experience, only Arduino background</passage>\n<passage id=\"mem_07380edd\" still_relevant=\"true\">Has Arduino programming experience but is new to C++</passage>\n<passage id=\"mem_5d4d792a\" still_relevant=\"true\">Has Arduino programming background but is new to C++, currently learning through formal textbook coursework (Chapter 7: Arrays and Vectors)</passage>\n</relevant_passages>         \n<query_expansion>\nC++ array function implementation; type casting in C++; beginner-level C++ programming; user learning from Arduino background\n</query_expansion> \n</analysis>"
+    },
+    {
+      "sample_num": 17,
+      "current_message": "Write a one sentence semantic touchstone sentence describing what we're talking about here",
+      "turn1_fingerprint": "feeling isolated during solo walking sessions; seeking support for walking before running; exploring strategies to maintain motivation while walking alone; building routine to transition from walking to running",
+      "turn1_memories_count": 3,
+      "turn2_fingerprint": "cognitive isolation from peers over high-dimensional embedding spaces; frustration with blank stare responses to simplified technical analogies; difficulty finding connection while discussing distributed systems architecture; isolation while attempting to explain complex technical concepts",
+      "turn2_word_count": 33,
+      "turn2_entities": [],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>       \n<entities>\nNone\n</entities>  \n<relevant_passages>\n<passage id=\"mem_6a5420e9\" still_relevant=\"true\">Experiences profound cognitive isolation: unable to discuss high-dimensional embedding spaces, distributed systems architecture, or technical work with peers despite attempts to explain via analogy; blank stare responses to simplified technical concepts indicate fundamental knowledge gap rather than communication failure</passage>\n<passage id=\"mem_668a96be\" still_relevant=\"true\">Experiences severe isolation when attempting to engage with people over technical interests and topics he deeply understands (high dimensional embedding spaces, distributed systems architecture). Even when he makes effort to communicate through analogies and dumbed-down explanations, receives blank stares. Cannot find bridge to real connection on topics that genuinely matter to him.</passage>\n</relevant_passages>         \n<query_expansion>\ncognitive isolation from peers over high-dimensional embedding spaces; frustration with blank stare responses to simplified technical analogies; difficulty finding connection while discussing distributed systems architecture; isolation while attempting to explain complex technical concepts\n</query_expansion>      \n</analysis>"
+    },
+    {
+      "sample_num": 18,
+      "current_message": "Flexbox.",
+      "turn1_fingerprint": "Flexbox layout implementation; sticky positioning behavior; advanced scroll container scrolling performance; modern CSS layout strategies",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "chat interface rebuilt from fixed positioning to Flexbox layout; improved mobile compatibility; responsive window resizing",
+      "turn2_word_count": 15,
+      "turn2_entities": [
+        "Flexbox"
+      ],
+      "turn2_retained_count": 2,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>Flexbox</named_entity>\n</entities>  \n<relevant_passages>\n<passage id=\"mem_3bf2dccb\" still_relevant=\"true\">Rebuilt chat interface from fixed-position CSS to Flexbox layout because fixed positioning doesn't work well in real-world scenarios, particularly on mobile and when windows are resized</passage>\n<passage id=\"mem_db32327e\" still_relevant=\"true\">Rebuilt chat interface from fixed positioning to Flexbox layout because fixed positioning doesn't work well in real-world scenarios, particularly on mobile and with window resizing</passage>\n</relevant_passages>         \n<query_expansion>\nchat interface rebuilt from fixed positioning to Flexbox layout; improved mobile compatibility; responsive window resizing\n</query_expansion>      \n</analysis>"
+    },
+    {
+      "sample_num": 19,
+      "current_message": "Search online",
+      "turn1_fingerprint": "childhood counting rhyme patterns; playground game references; TikTok social media trend mentions; joke set-up structures",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "searching online for repository migration best practices in distributed systems; looking up systemd service configuration guidelines; exploring MIRA integration documentation for distributed systems; researching distributed consensus algorithm patterns",
+      "turn2_word_count": 28,
+      "turn2_entities": [
+        "MIRA",
+        "systemd"
+      ],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>       \n<entities>                                                                                                                                                          \n<named_entity>MIRA</named_entity>                                                                                                                                             \n<named_entity>systemd</named_entity>                                                                                                                                              \n</entities>  \n<relevant_passages>\n</relevant_passages>         \n<query_expansion>\nsearching online for repository migration best practices in distributed systems; looking up systemd service configuration guidelines; exploring MIRA integration documentation for distributed systems; researching distributed consensus algorithm patterns\n</query_expansion>                                                                                                                                                                                                                                                                                                         \n</analysis>"
+    },
+    {
+      "sample_num": 20,
+      "current_message": "I'd like you to search for information about the unique personality traits of my english shepherds.",
+      "turn1_fingerprint": "motorcycle ride on Michigan H-58; scenic highway along Lake Superior shoreline; trip planning for Saturday August 23rd 2025; Pictured Rocks national lakeshore route",
+      "turn1_memories_count": 5,
+      "turn2_fingerprint": "English Shepherd breed behavior traits; typical temperament of English Shepherd dogs; personality descriptors for English Shepherds; training and social behavior patterns of English Shepherds",
+      "turn2_word_count": 24,
+      "turn2_entities": [
+        "English Shepherd",
+        "Michigan",
+        "Upper Peninsula",
+        "Pictured Rocks"
+      ],
+      "turn2_retained_count": 0,
+      "turn2_raw": "<analysis>       \n<entities>\n<named_entity>English Shepherd</named_entity>\n<named_entity>Michigan</named_entity>\n<named_entity>Upper Peninsula</named_entity>\n<named_entity>Pictured Rocks</named_entity>\n</entities>  \n<relevant_passages>\n</relevant_passages>         \n<query_expansion>\nEnglish Shepherd breed behavior traits; typical temperament of English Shepherd dogs; personality descriptors for English Shepherds; training and social behavior patterns of English Shepherds\n</query_expansion>     \n</analysis>"
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import logging
 from typing import Dict, Any
 
 from utils.timezone_utils import (
-    utc_now, convert_from_utc, format_datetime
+    utc_now, convert_from_utc
 )
 from utils.user_context import get_user_preferences
 from .base import EventAwareTrinket
@@ -17,11 +17,9 @@ class TimeManager(EventAwareTrinket):
 
     Always generates fresh timestamp when requested.
     """
-    
-    def _get_variable_name(self) -> str:
-        """Time manager publishes to 'datetime_section'."""
-        return "datetime_section"
-    
+
+    variable_name = "datetime_section"
+
     def generate_content(self, context: Dict[str, Any]) -> str:
         """
         Generate current date/time content.

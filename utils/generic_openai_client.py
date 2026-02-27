@@ -45,7 +45,10 @@ import json
 import logging
 import requests
 from types import SimpleNamespace
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, NoReturn, Optional, Union
+
+# System prompt: plain string or list of cache_control blocks (Anthropic format)
+SystemPrompt = Union[str, List[Dict[str, str]]]
 
 logger = logging.getLogger(__name__)
 
@@ -167,12 +170,12 @@ class GenericOpenAIClient:
     def _create_message(
         self,
         messages: List[Dict],
-        system: Optional[Any] = None,
+        system: Optional[SystemPrompt] = None,
         tools: Optional[List[Dict]] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        thinking_enabled: bool = False,
-        thinking_budget: int = 1024,
+        thinking_effort: Optional[str] = None,
+        thinking_budget: int = 0,
         **kwargs
     ) -> GenericOpenAIResponse:
         """
@@ -186,7 +189,7 @@ class GenericOpenAIClient:
             tools: Anthropic-format tool definitions
             max_tokens: Maximum tokens to generate
             temperature: Sampling temperature
-            thinking_enabled: Enable reasoning/thinking for compatible providers
+            thinking_effort: Effort level string for reasoning (e.g. "low", "medium", "high")
             thinking_budget: Token budget for thinking (adjusts max_tokens)
             **kwargs: Additional parameters (ignored for compatibility)
 
@@ -203,25 +206,45 @@ class GenericOpenAIClient:
         temperature = temperature if temperature is not None else self.default_temperature
 
         # Adjust max_tokens for thinking if enabled
-        if thinking_enabled:
+        if thinking_effort:
             max_tokens = max_tokens + thinking_budget
 
-        # Prepare messages with system prompt
-        openai_messages = []
-        if system:
-            openai_messages.append(self._convert_system_prompt(system))
+        # Prepare messages - Anthropic API uses different format than OpenAI
+        is_anthropic = "api.anthropic.com" in self.endpoint
 
-        openai_messages.extend(self._convert_messages(messages))
+        if is_anthropic:
+            # Anthropic: system as top-level param, messages without system role
+            anthropic_messages = self._convert_messages(messages)
+            logger.debug(f"Converted {len(messages)} messages for Anthropic API")
 
-        logger.debug(f"Converted {len(messages)} Anthropic messages to {len(openai_messages)} OpenAI messages")
+            payload = {
+                "model": self.model,
+                "messages": anthropic_messages,
+                "max_tokens": max_tokens,
+            }
+            # Anthropic uses top-level system parameter
+            if system:
+                if isinstance(system, str):
+                    payload["system"] = system
+                elif isinstance(system, list):
+                    # Convert list of blocks to string for simplicity
+                    payload["system"] = " ".join(
+                        block.get("text", "") for block in system if block.get("type") == "text"
+                    )
+        else:
+            # OpenAI-compatible: system as message with role "system"
+            openai_messages = []
+            if system:
+                openai_messages.append(self._convert_system_prompt(system))
+            openai_messages.extend(self._convert_messages(messages))
+            logger.debug(f"Converted {len(messages)} Anthropic messages to {len(openai_messages)} OpenAI messages")
 
-        # Build request payload
-        payload = {
-            "model": self.model,
-            "messages": openai_messages,
-            "max_tokens": max_tokens,
-            "temperature": temperature
-        }
+            payload = {
+                "model": self.model,
+                "messages": openai_messages,
+                "max_tokens": max_tokens,
+                "temperature": temperature
+            }
 
         # Add tools if provided
         if tools:
@@ -230,16 +253,21 @@ class GenericOpenAIClient:
             logger.debug(f"Converted {len(tools)} Anthropic tools to {len(openai_tools)} OpenAI tools")
 
         # Add reasoning for providers that support it (OpenRouter/Gemini format)
-        if thinking_enabled:
-            payload["reasoning"] = {"effort": "high"}
-            logger.debug("Reasoning enabled for generic provider")
+        if thinking_effort:
+            payload["reasoning"] = {"effort": thinking_effort}
+            logger.debug(f"Reasoning enabled for generic provider (effort={thinking_effort})")
 
         # Make HTTP request
         try:
             logger.debug(f"Generic OpenAI client request to {self.endpoint} with model {self.model}")
             headers = {"Content-Type": "application/json"}
             if self.api_key:
-                headers["Authorization"] = f"Bearer {self.api_key}"
+                # Anthropic uses x-api-key header, not Bearer token
+                if "api.anthropic.com" in self.endpoint:
+                    headers["x-api-key"] = self.api_key
+                    headers["anthropic-version"] = "2023-06-01"
+                else:
+                    headers["Authorization"] = f"Bearer {self.api_key}"
             response = requests.post(
                 self.endpoint,
                 headers=headers,
@@ -268,12 +296,12 @@ class GenericOpenAIClient:
     def _create_message_streaming(
         self,
         messages: List[Dict],
-        system: Optional[Any] = None,
+        system: Optional[SystemPrompt] = None,
         tools: Optional[List[Dict]] = None,
         max_tokens: Optional[int] = None,
         temperature: Optional[float] = None,
-        thinking_enabled: bool = False,
-        thinking_budget: int = 1024,
+        thinking_effort: Optional[str] = None,
+        thinking_budget: int = 0,
         **kwargs
     ):
         """
@@ -290,7 +318,7 @@ class GenericOpenAIClient:
             tools: Anthropic-format tool definitions
             max_tokens: Maximum tokens
             temperature: Sampling temperature
-            thinking_enabled: Enable reasoning for compatible providers
+            thinking_effort: Effort level string for reasoning
             thinking_budget: Token budget for thinking
 
         Yields:
@@ -301,7 +329,7 @@ class GenericOpenAIClient:
         max_tokens = max_tokens if max_tokens is not None else self.default_max_tokens
         temperature = temperature if temperature is not None else self.default_temperature
 
-        if thinking_enabled:
+        if thinking_effort:
             max_tokens = max_tokens + thinking_budget
 
         # Build messages list
@@ -316,7 +344,8 @@ class GenericOpenAIClient:
             "messages": openai_messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "stream": True
+            "stream": True,
+            "stream_options": {"include_usage": True}
         }
 
         if tools:
@@ -324,12 +353,17 @@ class GenericOpenAIClient:
             payload["tools"] = openai_tools
             logger.debug(f"Streaming with {len(tools)} tools")
 
-        if thinking_enabled:
-            payload["reasoning"] = {"effort": "high"}
+        if thinking_effort:
+            payload["reasoning"] = {"effort": thinking_effort}
 
         headers = {"Content-Type": "application/json"}
         if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
+            # Anthropic uses x-api-key header, not Bearer token
+            if "api.anthropic.com" in self.endpoint:
+                headers["x-api-key"] = self.api_key
+                headers["anthropic-version"] = "2023-06-01"
+            else:
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
         logger.debug(f"Starting streaming request to {self.endpoint}")
 
@@ -353,7 +387,7 @@ class GenericOpenAIClient:
                         logger.warning(f"Failed to parse SSE chunk: {line[:100]}")
                         continue
 
-    def _convert_system_prompt(self, system: Any) -> Dict:
+    def _convert_system_prompt(self, system: SystemPrompt) -> Dict[str, str]:
         """
         Convert Anthropic system prompt to OpenAI system message.
 
@@ -486,12 +520,14 @@ class GenericOpenAIClient:
             for tool in anthropic_tools
         ]
 
-    def _wrap_response(self, openai_response: Dict) -> GenericOpenAIResponse:
+    def _wrap_response(self, response: Dict[str, Any]) -> GenericOpenAIResponse:
         """
-        Convert OpenAI response to Anthropic-compatible structure.
+        Convert API response to Anthropic-compatible structure.
+
+        Handles both OpenAI format (choices array) and Anthropic format (content array).
 
         Args:
-            openai_response: Full OpenAI API response
+            response: Full API response (OpenAI or Anthropic format)
 
         Returns:
             GenericOpenAIResponse with Anthropic-compatible structure
@@ -499,7 +535,38 @@ class GenericOpenAIClient:
         Raises:
             ValueError: If response structure is invalid
         """
-        # Validate response structure
+        # Check if this is native Anthropic response format
+        if "content" in response and "type" in response and response.get("type") == "message":
+            # Native Anthropic format - already in correct structure
+            content_blocks = []
+            for block in response.get("content", []):
+                if block.get("type") == "text":
+                    content_blocks.append(SimpleNamespace(
+                        type="text",
+                        text=block.get("text", "")
+                    ))
+                elif block.get("type") == "tool_use":
+                    content_blocks.append(SimpleNamespace(
+                        type="tool_use",
+                        id=block.get("id"),
+                        name=block.get("name"),
+                        input=block.get("input", {})
+                    ))
+
+            usage = response.get("usage", {})
+            return GenericOpenAIResponse(
+                content=content_blocks,
+                stop_reason=response.get("stop_reason", "end_turn"),
+                usage={
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "cache_creation_input_tokens": usage.get("cache_creation_input_tokens", 0),
+                    "cache_read_input_tokens": usage.get("cache_read_input_tokens", 0)
+                }
+            )
+
+        # OpenAI format - validate and convert
+        openai_response = response
         if "choices" not in openai_response or not openai_response["choices"]:
             logger.error(f"Invalid OpenAI response: missing or empty choices - {openai_response}")
             raise ValueError("Invalid OpenAI response: missing or empty choices")
@@ -587,7 +654,7 @@ class GenericOpenAIClient:
         logger.debug(f"Generic OpenAI response: {len(content_blocks)} blocks, {stop_reason}")
         return GenericOpenAIResponse(content_blocks, stop_reason, usage, reasoning_details=reasoning_details)
 
-    def _handle_http_error(self, error: requests.HTTPError, error_body: dict = None):
+    def _handle_http_error(self, error: requests.HTTPError, error_body: Optional[dict] = None) -> NoReturn:
         """
         Map HTTP errors to exceptions that LLMProvider expects.
 

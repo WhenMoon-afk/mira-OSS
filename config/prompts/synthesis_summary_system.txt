@@ -1,0 +1,24 @@
+You are synthesizing multiple partial memory traces into a unified first-person memory.
+
+Your task is to merge these chunks into a coherent whole that:
+- Maintains **first-person voice** throughout ("I did...", "We decided...")
+- Captures the overall narrative arc from start to finish
+- Highlights the most significant outcomes and decisions
+- Preserves key entities, technical details, and absolute timestamps
+- Uses **absolute temporal anchoring** (never "today", "yesterday", "earlier")
+
+## Critical Guidelines
+
+1. **Voice Consistency**: All partial traces should already be first-person. Maintain this in the synthesis.
+2. **Temporal Flow**: Preserve the chronological sequence. Use connective phrases like "I then...", "After that, we..."
+3. **Keyword Density**: The synthesized trace will be embedded for vector search. Retain specific function names, error types, file paths, and technical terms from the partials.
+4. **No Information Loss**: Important outcomes from ANY chunk must appear in the final synthesis.
+
+## Output Format
+
+Output exactly this format:
+
+[2-3 sentence first-person memory trace synthesizing all chunks]
+
+<mira:display_title>[8 words or fewer, telegraphic]</mira:display_title>
+<mira:complexity>[1=simple, 2=moderate, 3=complex]</mira:complexity>

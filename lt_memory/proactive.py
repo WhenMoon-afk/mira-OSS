@@ -1,17 +1,30 @@
 """
 Proactive memory surfacing for CNS integration.
 
-Provides intelligent memory search using pre-computed fingerprint embeddings
-and automatic inclusion of linked memories for context enrichment.
+Provides intelligent memory search using pre-computed subcortical embeddings,
+hub-based entity discovery, and automatic inclusion of linked memories for
+context enrichment.
+
+The surfacing flow combines two retrieval paths:
+1. Similarity Pool: Traditional hybrid search (BM25 + vector similarity)
+2. Hub-Derived Pool: Entity-driven discovery (entity → memories → hubs → memories)
+
+These pools are merged to provide comprehensive memory coverage.
 """
 import logging
-from typing import List, Dict, Any, Optional
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
+from typing import List, Optional, TYPE_CHECKING
 import numpy as np
 
 from config.config import ProactiveConfig
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.linking import LinkingService
+from lt_memory.models import Memory, MemoryDict, TraversalResult
 from lt_memory.vector_ops import VectorOps
+
+if TYPE_CHECKING:
+    from lt_memory.hub_discovery import HubDiscoveryService
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +33,9 @@ class ProactiveService:
     """
     Service for proactive memory surfacing in conversations.
 
-    Finds relevant memories using pre-computed fingerprint embeddings
-    and automatically includes linked memories for richer context.
+    Finds relevant memories using pre-computed subcortical embeddings,
+    hub-based entity discovery, and automatically includes linked memories
+    for richer context.
     """
 
     def __init__(
@@ -29,7 +43,8 @@ class ProactiveService:
         config: ProactiveConfig,
         vector_ops: VectorOps,
         linking_service: LinkingService,
-        db: LTMemoryDB
+        db: LTMemoryDB,
+        hub_discovery: 'HubDiscoveryService'
     ):
         """
         Initialize proactive service.
@@ -39,30 +54,33 @@ class ProactiveService:
             vector_ops: Vector operations service
             linking_service: Memory linking service
             db: Database access layer
+            hub_discovery: Hub discovery service for entity-driven retrieval
         """
         self.config = config
         self.vector_ops = vector_ops
         self.linking = linking_service
         self.db = db
-
-        logger.debug("ProactiveService initialized")
+        self.hub_discovery = hub_discovery
 
     def search_with_embedding(
         self,
         embedding: np.ndarray,
-        fingerprint: str,
-        limit: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+        query_expansion: str,
+        limit: Optional[int] = None,
+        extracted_entities: Optional[List[str]] = None
+    ) -> List[MemoryDict]:
         """
-        Search for relevant memories using pre-computed fingerprint embedding.
+        Search for relevant memories using expansion embedding and hub discovery.
 
-        The fingerprint is a retrieval-optimized query expansion that replaces
-        the original user message for better embedding similarity matching.
+        Combines two retrieval paths:
+        1. Similarity Pool: Hybrid search (BM25 + vector similarity)
+        2. Hub-Derived Pool: Entity-driven discovery via hub navigation
 
         Args:
-            embedding: Pre-computed 768d fingerprint embedding
-            fingerprint: Expanded query text (for BM25 and reranking)
+            embedding: Pre-computed 768d expansion embedding
+            query_expansion: Expanded query text (for BM25 and reranking)
             limit: Maximum number of memories to return
+            extracted_entities: Entity names from subcortical layer for hub discovery
 
         Returns:
             List of relevant memory dictionaries with metadata
@@ -73,28 +91,58 @@ class ProactiveService:
         if limit is None:
             limit = self.config.max_memories
 
-        # Hybrid search using fingerprint as query text
-        search_results = self.vector_ops.hybrid_search(
-            query_text=fingerprint,
-            query_embedding=embedding,
-            search_intent="general",  # Fingerprint is already optimized
-            limit=limit * 2,  # Oversample for filtering
-            similarity_threshold=self.config.similarity_threshold,
-            min_importance=self.config.min_importance_score
-        )
+        # Run both retrieval paths in parallel
+        # Each thread gets its own DB connection and sets app.current_user_id via RLS
+        # Each thread needs its OWN context copy - a single context object cannot be
+        # entered by multiple threads simultaneously (causes "already entered" error)
 
-        # Filter by minimum importance score
-        filtered_results = [
-            memory for memory in search_results
+        def _fetch_similarity_pool():
+            """Fetch similarity-based memories via hybrid search."""
+            return self.vector_ops.hybrid_search(
+                query_text=query_expansion,
+                query_embedding=embedding,
+                search_intent="general",
+                limit=limit * self.config.search_oversample_factor,
+                similarity_threshold=self.config.similarity_threshold,
+                min_importance=self.config.min_importance_score
+            )
+
+        def _fetch_hub_pool():
+            """Fetch hub-derived memories via entity navigation."""
+            if not extracted_entities:
+                return []
+            return self.hub_discovery.discover_hub_memories(
+                extracted_entities=extracted_entities,
+                expansion_embedding=embedding
+            )
+
+        # Execute both searches in parallel - each thread gets its own context copy
+        with ThreadPoolExecutor(max_workers=self.config.search_max_workers) as executor:
+            ctx_similarity = copy_context()
+            ctx_hub = copy_context()
+            similarity_future = executor.submit(ctx_similarity.run, _fetch_similarity_pool)
+            hub_future = executor.submit(ctx_hub.run, _fetch_hub_pool)
+
+            # Wait for both to complete - exceptions will propagate on .result()
+            similarity_pool = similarity_future.result()
+            hub_pool = hub_future.result()
+
+        # Filter similarity pool by minimum importance score
+        similarity_pool = [
+            memory for memory in similarity_pool
             if memory.importance_score >= self.config.min_importance_score
-        ][:limit]
+        ]
 
-        if not filtered_results:
+        # Merge pools (deduplicate, similarity pool takes precedence for scores)
+        merged_results = self._merge_memory_pools(similarity_pool, hub_pool)
+
+        if not merged_results:
             logger.debug("No relevant memories found")
             return []
 
         # Include linked memories for context enrichment
-        expanded_results = self._include_linked_memories(filtered_results)
+        # (Hub chain already provides some traversal, but this adds explicit link metadata)
+        expanded_results = self._include_linked_memories(merged_results[:limit])
 
         # Rerank and filter linked memories by type, confidence, importance
         reranked_results = self._rerank_with_links(expanded_results)
@@ -102,7 +150,7 @@ class ProactiveService:
 
         logger.info(
             f"Found {len(final_results)} relevant memories "
-            f"({len(filtered_results)} primary)"
+            f"(similarity: {len(similarity_pool)}, hub: {len(hub_pool)})"
         )
 
         # Track access for retrieved memories to update importance scores
@@ -110,7 +158,80 @@ class ProactiveService:
 
         return [self._memory_to_dict(m) for m in final_results]
 
-    def _track_memory_access(self, memories: List[Any]) -> None:
+    def _merge_memory_pools(
+        self,
+        similarity_pool: List[Memory],
+        hub_pool: List[Memory]
+    ) -> List[Memory]:
+        """
+        Merge similarity and hub-derived pools with debut boost for new memories.
+
+        New memories (< 10 activity days old) with few entity links receive a
+        ranking boost to help them surface before building hub connections.
+        Boost is full for days 0-6, then trails off linearly days 7-10.
+
+        Args:
+            similarity_pool: Memories from hybrid search
+            hub_pool: Memories from hub discovery
+
+        Returns:
+            Merged, deduplicated list of Memory objects sorted by effective score
+        """
+        # Debut boost from config
+        debut_full_boost_days = self.config.debut_full_boost_days
+        debut_end_days = self.config.debut_end_days
+        debut_boost = self.config.debut_boost_amount
+        hub_connection_threshold = self.config.hub_connection_threshold
+
+        # Get user's current activity days for vacation-proof age calculation
+        from utils.user_context import get_user_cumulative_activity_days
+        current_activity_days = get_user_cumulative_activity_days()
+
+        merged = list(similarity_pool)
+        seen_ids = {m.id for m in similarity_pool}
+
+        for memory in hub_pool:
+            if memory.id not in seen_ids:
+                merged.append(memory)
+                seen_ids.add(memory.id)
+
+        # Calculate effective scores with debut boost and supersedes penalty
+        def effective_score(memory) -> float:
+            score = memory.importance_score
+
+            # Global memories skip debut boost (they're curated, not new user memories)
+            is_global = getattr(memory, 'source', 'personal') == 'global'
+
+            # Debut boost logic (apply to score, not early return)
+            if not is_global and memory.activity_days_at_creation is not None:
+                age_in_days = current_activity_days - memory.activity_days_at_creation
+                entity_link_count = len(memory.entity_links) if memory.entity_links else 0
+
+                if entity_link_count < hub_connection_threshold:
+                    if age_in_days < debut_full_boost_days:
+                        score += debut_boost
+                    elif age_in_days <= debut_end_days:
+                        remaining = debut_end_days - age_in_days
+                        trailoff_window = debut_end_days - debut_full_boost_days
+                        score += debut_boost * (remaining / trailoff_window)
+
+            # Supersedes penalty (soft demotion for superseded memories)
+            if memory.inbound_links:
+                has_supersedes = any(
+                    link.get('type') == 'supersedes'
+                    for link in memory.inbound_links
+                )
+                if has_supersedes:
+                    score *= self.config.supersedes_penalty_multiplier
+                    logger.debug(f"Supersedes penalty for memory {memory.id}")
+
+            return score
+
+        # Sort by effective score
+        merged.sort(key=effective_score, reverse=True)
+        return merged
+
+    def _track_memory_access(self, memories: List[Memory]) -> None:
         """
         Track access for retrieved memories to update importance scores.
 
@@ -132,8 +253,8 @@ class ProactiveService:
 
     def _include_linked_memories(
         self,
-        primary_memories: List[Any]
-    ) -> List[Any]:
+        primary_memories: List[Memory]
+    ) -> List[Memory]:
         """
         Include memories linked to primary search results.
 
@@ -175,24 +296,27 @@ class ProactiveService:
 
         return primary_memories
 
-    def _rerank_with_links(self, primary_memories: List[Any]) -> List[Any]:
+    def _rerank_with_links(self, primary_memories: List[Memory]) -> List[Memory]:
         """
         Rerank and filter memories considering link types, confidence, importance.
 
         Ranking formula: type_weight × inherited_importance × confidence
         """
-        LINK_TYPE_WEIGHTS = {
-            "conflicts": 1.0,
-            "invalidated_by": 1.0,
-            "supersedes": 0.9,
-            "causes": 0.8,
-            "motivated_by": 0.8,
-            "instance_of": 0.7,
-            "shares_entity": 0.4,
+        # Link type weights from config
+        link_type_weights = {
+            "conflicts": self.config.link_weight_conflicts,
+            "supports": self.config.link_weight_supports,
+            "supersedes": self.config.link_weight_supersedes,
+            "refines": self.config.link_weight_refines,
+            "precedes": self.config.link_weight_precedes,
+            "contextualizes": self.config.link_weight_contextualizes,
+            "shares_entity": self.config.link_weight_shares_entity,
         }
-        MIN_CONFIDENCE = 0.6
+        min_confidence = self.config.link_min_confidence
+        default_weight = self.config.link_weight_default
+        inheritance_weight = self.config.link_importance_inheritance_weight
 
-        primary_ids = {str(m.id) for m in primary_memories}
+        primary_ids = {m.id for m in primary_memories}
 
         for primary_memory in primary_memories:
             if not hasattr(primary_memory, 'linked_memories'):
@@ -206,7 +330,7 @@ class ProactiveService:
 
             for linked in linked_memories:
                 # Deduplication
-                if str(linked.id) in primary_ids:
+                if linked.id in primary_ids:
                     continue
 
                 link_meta = getattr(linked, 'link_metadata', {})
@@ -214,30 +338,31 @@ class ProactiveService:
                 confidence = link_meta.get('confidence')
 
                 # Confidence filtering
-                if confidence is not None and confidence < MIN_CONFIDENCE:
+                if confidence is not None and confidence < min_confidence:
                     continue
 
                 # Type-based weighting
-                type_weight = 0.5
-                for known_type, weight in LINK_TYPE_WEIGHTS.items():
+                type_weight = default_weight
+                for known_type, weight in link_type_weights.items():
                     if link_type == known_type or link_type.startswith(f"{known_type}:"):
                         type_weight = weight
                         break
 
-                # Importance inheritance
+                # Importance inheritance: (linked * weight) + (primary * (1 - weight))
                 linked_importance = getattr(linked, 'importance_score', 0.5)
                 primary_importance = getattr(primary_memory, 'importance_score', 0.5)
-                inherited_importance = (linked_importance * 0.7) + (primary_importance * 0.3)
+                inherited_importance = (linked_importance * inheritance_weight) + (primary_importance * (1 - inheritance_weight))
 
                 final_score = type_weight * inherited_importance * (confidence or 1.0)
                 scored_linked.append((linked, final_score))
 
             scored_linked.sort(key=lambda x: x[1], reverse=True)
-            primary_memory.linked_memories = [linked for linked, score in scored_linked]
+            max_linked = self.config.max_linked_per_primary
+            primary_memory.linked_memories = [linked for linked, score in scored_linked[:max_linked]]
 
         return primary_memories
 
-    def _memory_to_dict(self, memory) -> Dict[str, Any]:
+    def _memory_to_dict(self, memory: Memory) -> MemoryDict:
         """Convert Memory model to dictionary with hierarchical structure."""
         result = {
             "id": str(memory.id),
@@ -246,6 +371,7 @@ class ProactiveService:
             "similarity_score": memory.similarity_score,  # Sigmoid-normalized RRF score (0-1)
             "vector_similarity": getattr(memory, '_vector_similarity', None),  # Raw cosine similarity
             "_raw_rrf_score": getattr(memory, '_raw_rrf_score', None),  # Raw RRF before sigmoid
+            "source": getattr(memory, 'source', 'personal'),  # 'personal' or 'global'
             "created_at": memory.created_at.isoformat() if memory.created_at else None,
             "last_accessed": memory.last_accessed.isoformat() if memory.last_accessed else None,
             "access_count": memory.access_count,
@@ -253,6 +379,10 @@ class ProactiveService:
             "expires_at": memory.expires_at.isoformat() if memory.expires_at else None,
             "inbound_links": memory.inbound_links if hasattr(memory, 'inbound_links') else [],
             "outbound_links": memory.outbound_links if hasattr(memory, 'outbound_links') else [],
+            # Entity links for self-improving loop - shows which hubs this memory connects to
+            "entity_links": memory.entity_links if hasattr(memory, 'entity_links') else [],
+            # Annotations for contextual notes
+            "annotations": memory.annotations if hasattr(memory, 'annotations') else [],
         }
 
         if hasattr(memory, 'link_metadata'):

@@ -10,15 +10,25 @@ concurrent operations while working identically for single-threaded use.
 """
 
 import contextvars
+import logging
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from pydantic import BaseModel, Field
 
 # Context variable for current user data
 _user_context: contextvars.ContextVar[Optional[Dict[str, Any]]] = contextvars.ContextVar(
     'user_context',
+    default=None
+)
+
+# Context variable for current segment ID (set during conversation processing)
+_current_segment_id: contextvars.ContextVar[Optional[str]] = contextvars.ContextVar(
+    'current_segment_id',
     default=None
 )
 
@@ -104,6 +114,28 @@ def has_user_context() -> bool:
     return context is not None and "user_id" in context
 
 
+def get_current_segment_id() -> Optional[str]:
+    """
+    Get current segment ID from context.
+
+    Returns None if no segment is active (first message before segment creation).
+    """
+    return _current_segment_id.get()
+
+
+def set_current_segment_id(segment_id: str) -> contextvars.Token:
+    """
+    Set current segment ID in context.
+
+    Called at conversation entry points (websocket/HTTP chat handlers)
+    when the active segment is known.
+
+    Returns:
+        Token that can be used with reset_current_segment_id()
+    """
+    return _current_segment_id.set(segment_id)
+
+
 # ============================================================
 # AccountTiers - Database-backed tier definitions
 # ============================================================
@@ -125,8 +157,7 @@ class TierConfig:
     provider: LLMProvider = LLMProvider.ANTHROPIC
     endpoint_url: Optional[str] = None
     api_key_name: Optional[str] = None
-    show_locked: bool = False
-    locked_message: Optional[str] = None
+    hidden: bool = False
 
 
 # Module-level cache for tiers (loaded once per process)
@@ -146,7 +177,7 @@ def get_account_tiers() -> dict[str, TierConfig]:
     db = PostgresClient('mira_service')
 
     results = db.execute_query(
-        "SELECT name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, show_locked, locked_message FROM account_tiers ORDER BY display_order"
+        "SELECT name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, hidden FROM account_tiers ORDER BY display_order"
     )
 
     _tiers_cache = {
@@ -159,8 +190,7 @@ def get_account_tiers() -> dict[str, TierConfig]:
             provider=LLMProvider(row['provider']),
             endpoint_url=row['endpoint_url'],
             api_key_name=row['api_key_name'],
-            show_locked=row.get('show_locked', False) or False,
-            locked_message=row.get('locked_message')
+            hidden=row.get('hidden', False) or False
         )
         for row in results
     }
@@ -175,18 +205,6 @@ def resolve_tier(tier_name: str) -> TierConfig:
     return tiers[tier_name]
 
 
-def get_accessible_tiers(max_tier: str) -> list[TierConfig]:
-    """Get all tiers accessible up to and including max_tier."""
-    tiers = get_account_tiers()
-    max_order = tiers[max_tier].display_order
-    return [t for t in tiers.values() if t.display_order <= max_order]
-
-
-def can_access_tier(requested_tier: str, max_tier: str) -> bool:
-    """Check if requested tier is within user's allowed access."""
-    tiers = get_account_tiers()
-    return tiers[requested_tier].display_order <= tiers[max_tier].display_order
-
 
 # ============================================================
 # InternalLLM - Database-backed internal LLM configurations
@@ -194,15 +212,21 @@ def can_access_tier(requested_tier: str, max_tier: str) -> bool:
 
 @dataclass(frozen=True)
 class InternalLLMConfig:
-    """Internal LLM configuration for system operations (not user-facing)."""
+    """Internal LLM configuration for system operations (not user-facing).
+
+    Single source of truth for all LLM-tuning params. Both build_batch_params()
+    and generate_response(internal_llm=) read from these fields.
+    """
     name: str
     model: str
     endpoint_url: str
     api_key_name: Optional[str]
     description: str
+    max_tokens: int
+    effort: Optional[str] = None  # 'low'|'medium'|'high'|'max'
 
 
-_internal_llm_cache: dict[str, InternalLLMConfig] | None = None
+_internal_llm_cache: dict[tuple[str, str], InternalLLMConfig] | None = None
 
 
 def load_internal_llm_configs() -> None:
@@ -211,25 +235,75 @@ def load_internal_llm_configs() -> None:
     from clients.postgres_client import PostgresClient
     db = PostgresClient('mira_service')
     results = db.execute_query(
-        "SELECT name, model, endpoint_url, api_key_name, description FROM internal_llm"
+        "SELECT name, tier, model, endpoint_url, api_key_name, description, "
+        "max_tokens, effort FROM internal_llm"
     )
     _internal_llm_cache = {
-        row['name']: InternalLLMConfig(
+        (row['name'], row['tier']): InternalLLMConfig(
             name=row['name'],
             model=row['model'],
             endpoint_url=row['endpoint_url'],
             api_key_name=row['api_key_name'],
-            description=row['description'] or ''
+            description=row['description'] or '',
+            max_tokens=row['max_tokens'],
+            effort=row.get('effort'),
         )
         for row in results
     }
 
 
 def get_internal_llm(name: str) -> InternalLLMConfig:
-    """Get internal LLM config by name."""
+    """Get internal LLM config by name, resolved by user's card-on-file status.
+
+    Every config has exactly two rows (free + cof). Resolution is a single
+    exact-match lookup — no fallback chain.
+
+    In OSS mode (no billing module), defaults to 'cof' tier.
+    """
     if _internal_llm_cache is None:
         raise RuntimeError("Internal LLM configs not loaded. Call load_internal_llm_configs() at startup.")
-    return _internal_llm_cache[name]
+
+    tier = _resolve_user_internal_tier()
+    key = (name, tier)
+
+    config = _internal_llm_cache.get(key)
+    if config:
+        return config
+
+    raise KeyError(f"No internal_llm config for '{name}' with tier='{tier}'")
+
+
+def _resolve_user_internal_tier() -> str:
+    """Determine whether the current user gets 'free' or 'cof' internal models.
+
+    Returns 'cof' if user has a payment method on file, 'free' otherwise.
+    In OSS mode (no billing module), returns 'cof' (OSS schema seeds
+    both tiers with the same models, so the value doesn't matter — but
+    'cof' gives the best-available config by convention).
+    """
+    try:
+        from billing import get_billing_backend  # noqa: F401
+    except ImportError:
+        return 'cof'  # OSS mode — no billing, use cof-tier configs
+
+    if not has_user_context():
+        # Expected at startup (factory init, singleton services caching LLM configs).
+        # If this appears during request handling, a service is resolving LLM config
+        # outside user context — that's a bug.
+        logger.warning("get_internal_llm() called without user context (expected at startup only), defaulting to 'cof' tier")
+        return 'cof'
+
+    user_id = get_current_user_id()
+
+    from clients.postgres_client import PostgresClient
+    db = PostgresClient("mira_service", admin=True)
+    result = db.execute_single(
+        "SELECT stripe_payment_method_id FROM users WHERE id = %s",
+        (user_id,),
+    )
+    if result and result.get("stripe_payment_method_id"):
+        return 'cof'
+    return 'free'
 
 
 # ============================================================
@@ -238,13 +312,15 @@ def get_internal_llm(name: str) -> InternalLLMConfig:
 
 class UserPreferences(BaseModel):
     """
-    User preferences loaded from database.
-    Cached in contextvars after first load per request.
+    User preferences and profile data loaded from database.
+    Cached in Valkey with invalidation on updates.
     """
+    first_name: Optional[str] = None
+    last_name: Optional[str] = None
     timezone: str = Field(default="America/Chicago")
     memory_manipulation_enabled: bool = Field(default=True)
-    llm_tier: str = Field(default="balanced")
-    max_tier: str = Field(default="balanced")
+    llm_tier: str = Field(default="gemini-low")
+    created_at: Optional[datetime] = None
 
 
 def get_user_preferences() -> UserPreferences:
@@ -275,16 +351,18 @@ def get_user_preferences() -> UserPreferences:
     # Cache miss - fetch from database
     db = PostgresClient('mira_service')
     result = db.execute_single(
-        """SELECT timezone, memory_manipulation_enabled, llm_tier, max_tier
+        """SELECT first_name, last_name, timezone, memory_manipulation_enabled, llm_tier, created_at
            FROM users WHERE id = %s""",
         (user_id,)
     )
 
     prefs = UserPreferences(
+        first_name=result.get('first_name'),
+        last_name=result.get('last_name'),
         timezone=result.get('timezone') or 'America/Chicago',
         memory_manipulation_enabled=result.get('memory_manipulation_enabled', True),
-        llm_tier=result.get('llm_tier') or 'balanced',
-        max_tier=result.get('max_tier') or 'balanced',
+        llm_tier=result.get('llm_tier') or 'gemini-low',
+        created_at=result.get('created_at'),
     )
 
     # Cache in Valkey with 5-minute TTL (safety net - invalidation handles freshness)

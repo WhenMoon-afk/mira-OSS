@@ -9,10 +9,10 @@ Usage:
     from config import config
     
     # Access using attribute notation
-    model_name = config.api.model
-    
+    max_tokens = config.api.max_tokens
+
     # Or using get() method with dot notation
-    model_name = config.get("api.model")
+    max_tokens = config.get("api.max_tokens")
     
     # For required values (raises exception if missing)
     api_key = config.require("api.key")

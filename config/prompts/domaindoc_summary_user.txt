@@ -1,0 +1,5 @@
+Section: {section_header}
+Content:
+{content}
+
+Generate a one-sentence summary (max 100 chars) for the table of contents.

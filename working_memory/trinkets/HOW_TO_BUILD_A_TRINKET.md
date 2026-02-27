@@ -67,7 +67,7 @@ class MyTrinket(EventAwareTrinket):
 
 ### Pattern 2: Event Subscription
 
-**See:** `tool_loader_trinket.py:59-60` for turn completion subscription
+**See:** `peanutgallery_trinket.py` for event subscription patterns
 
 Trinkets can subscribe to events to update state or trigger refreshes:
 
@@ -97,7 +97,7 @@ def _handle_turn_completed(self, event):
 
 ### Pattern 3: Custom Update Handling
 
-**See:** `tool_loader_trinket.py:66-90` for action-based updates
+**See:** `reminder_manager.py` for action-based updates
 
 For trinkets that respond to specific actions:
 
@@ -119,7 +119,7 @@ def handle_update_request(self, event) -> None:
 
 ### Pattern 4: State Management
 
-**See:** `tool_loader_trinket.py:48-52` for state tracking
+**See:** `punchclock_trinket.py` for state tracking patterns
 
 Trinkets maintain ephemeral state between updates:
 
@@ -590,7 +590,6 @@ def generate_content(self, context: Dict[str, Any]) -> str:
 |---------|---------|--------------|
 | `user_info_trinket.py` | Display user metadata | Caching, database query, simple structure |
 | `punchclock_trinket.py` | Show active sessions | Formatting, timezone conversion, partitioning |
-| `tool_loader_trinket.py` | List available/loaded tools | Event subscription, state management, cleanup |
 | `manifest_trinket.py` | Show conversation metadata | Simple static content |
 
 ## Summary

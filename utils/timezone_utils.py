@@ -14,7 +14,7 @@ Core principles:
 
 import logging
 from datetime import datetime, timezone, timedelta, UTC
-from typing import Optional, Union, Any, Dict
+from typing import Optional
 
 import pytz
 from zoneinfo import ZoneInfo, available_timezones
@@ -119,27 +119,11 @@ def get_timezone_instance(tz_name: Optional[str] = None) -> ZoneInfo:
     """
     normalized_tz = validate_timezone(tz_name or get_default_timezone())
     
-    # Handle 'UTC' specially for performance
+    # Handle 'UTC' specially — return ZoneInfo to match declared return type
     if normalized_tz == "UTC":
-        return UTC_TIMEZONE
+        return ZoneInfo("UTC")
     
     return ZoneInfo(normalized_tz)
-
-
-def get_pytz_timezone_instance(tz_name: Optional[str] = None) -> pytz.BaseTzInfo:
-    """
-    Get a pytz timezone instance from a timezone name.
-    
-    This function exists for compatibility with pytz which is used by some libraries.
-
-    Args:
-        tz_name: Timezone name or abbreviation (defaults to system timezone)
-
-    Returns:
-        pytz timezone instance
-    """
-    normalized_tz = validate_timezone(tz_name or get_default_timezone())
-    return pytz.timezone(normalized_tz)
 
 
 def ensure_utc(dt: datetime) -> datetime:
@@ -287,23 +271,6 @@ def format_datetime(
     return formatted
 
 
-def format_utc_for_storage(dt: datetime) -> str:
-    """
-    Format a datetime for database storage.
-    
-    Always stores as UTC without timezone info (timezone awareness
-    is handled at the application level).
-
-    Args:
-        dt: The datetime object to format
-
-    Returns:
-        UTC datetime string in database format
-    """
-    utc_dt = ensure_utc(dt)
-    return utc_dt.strftime(TIME_FORMATS["database"])
-
-
 def format_utc_iso(dt: datetime, include_ms: bool = True) -> str:
     """
     Format a datetime as ISO 8601 in UTC.
@@ -396,6 +363,75 @@ def format_relative_time(dt: datetime, reference_time: Optional[datetime] = None
         return f"in {time_str}"
     else:
         return f"{time_str} ago"
+
+
+_SMALL_NUMBERS = {
+    1: "one", 2: "two", 3: "three", 4: "four", 5: "five",
+    6: "six", 7: "seven", 8: "eight", 9: "nine", 10: "ten",
+    11: "eleven", 12: "twelve",
+}
+
+
+def _number_word(n: int) -> str:
+    """Word form for 1-12, digits for larger."""
+    return _SMALL_NUMBERS.get(n, str(n))
+
+
+def _fractional_duration(whole: int, frac: float, unit: str) -> str:
+    """
+    Format whole + fractional count as natural language.
+
+    Thresholds:
+      frac < 0.2  → "about {n} {unit}"
+      0.2 ≤ frac < 0.4 → "{n} and change {unit}s"
+      0.4 ≤ frac < 0.7 → "{n} and a half {unit}s"
+      frac ≥ 0.7  → "about {n+1} {unit}"  (round up)
+    """
+    if frac >= 0.7:
+        whole += 1
+        frac = 0.0
+
+    # Singular only for "about one/a {unit}", plural otherwise
+    plural = whole != 1 or frac >= 0.2
+    unit_str = unit + "s" if plural else unit
+
+    if frac < 0.2:
+        word = "a" if whole == 1 else _number_word(whole)
+        return f"about {word} {unit_str}"
+    elif frac < 0.4:
+        return f"{_number_word(whole)} and change {unit_str}"
+    else:
+        return f"{_number_word(whole)} and a half {unit_str}"
+
+
+def format_relationship_duration(created_at: datetime) -> str:
+    """
+    Format account age as conversational duration with creation date.
+
+    Examples:
+      "about three days (12-06-2025)"
+      "two and a half months (12-06-2025)"
+      "three and change years (12-06-2025)"
+    """
+    delta = utc_now() - ensure_utc(created_at)
+    total_days = max(delta.days, 0)
+    date_str = f"({created_at.strftime('%m-%d-%Y')})"
+
+    if total_days < 1:
+        return f"a short time {date_str}"
+    elif total_days < 7:
+        if total_days == 1:
+            return f"about a day {date_str}"
+        return f"about {_number_word(total_days)} days {date_str}"
+    elif total_days < 30:
+        weeks = total_days / 7.0
+        return f"{_fractional_duration(int(weeks), weeks - int(weeks), 'week')} {date_str}"
+    elif total_days < 365:
+        months = total_days / 30.44
+        return f"{_fractional_duration(int(months), months - int(months), 'month')} {date_str}"
+    else:
+        years = total_days / 365.25
+        return f"{_fractional_duration(int(years), years - int(years), 'year')} {date_str}"
 
 
 def parse_time_string(
@@ -500,60 +536,3 @@ def parse_utc_time_string(time_str: str) -> datetime:
     """
     dt = parse_time_string(time_str, "UTC")
     return ensure_utc(dt)
-
-
-def localize_datetime(dt: datetime, tz_name: Optional[str] = None) -> datetime:
-    """
-    Localize a naive datetime to a specific timezone without conversion.
-    
-    Unlike convert_to_timezone, this doesn't adjust the time value,
-    it just attaches the timezone info. Use this when you know the 
-    datetime is already in the target timezone but lacks tzinfo.
-
-    Args:
-        dt: The naive datetime object to localize
-        tz_name: Timezone name (defaults to system timezone)
-        
-    Returns:
-        Timezone-aware datetime in the specified timezone
-    
-    Raises:
-        ValueError: If dt is already timezone-aware
-    """
-    if dt.tzinfo is not None:
-        raise ValueError("Expected naive datetime, got timezone-aware datetime")
-    
-    tz = get_timezone_instance(tz_name or get_default_timezone())
-    return dt.replace(tzinfo=tz)
-
-
-def datetime_to_dict(dt: datetime, include_timezone: bool = True) -> Dict[str, Any]:
-    """
-    Convert a datetime object to a dictionary representation.
-    
-    Useful for JSON serialization and API responses.
-
-    Args:
-        dt: The datetime object to convert
-        include_timezone: Whether to include timezone info
-        
-    Returns:
-        Dictionary with datetime components
-    """
-    dt = ensure_utc(dt)
-    
-    result = {
-        "year": dt.year,
-        "month": dt.month,
-        "day": dt.day,
-        "hour": dt.hour,
-        "minute": dt.minute,
-        "second": dt.second,
-        "microsecond": dt.microsecond,
-        "iso": format_utc_iso(dt),
-    }
-    
-    if include_timezone:
-        result["timezone"] = "UTC"
-    
-    return result

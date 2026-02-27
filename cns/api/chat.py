@@ -7,20 +7,30 @@ Bearer token (header) or session cookie.
 """
 import base64
 import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Any
+
+from cns.core.message import ContentBlock
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from auth.api import get_current_user
+from auth.types import SessionData, APITokenContext
 from clients.files_manager import FilesManager
 from utils.distributed_lock import UserRequestLock
+
+# Import billing exception for proper type checking (None if OSS mode)
+try:
+    from billing.exceptions import InsufficientBalanceError
+except ImportError:
+    InsufficientBalanceError = None  # type: ignore[misc, assignment]
 from utils.document_processing import process_document, ProcessedDocument, SUPPORTED_DOCUMENT_FORMATS, MAX_DOCUMENT_SIZE_MB
 from utils.image_compression import compress_image, CompressedImage
 from utils.text_sanitizer import sanitize_message_content
 from utils.timezone_utils import utc_now, format_utc_iso
-from .base import BaseHandler, APIResponse, ValidationError, create_success_response
+from utils.user_context import set_current_segment_id
+from .base import BaseHandler, SuccessResponse, ErrorResponse, ValidationError, create_success_response
 from cns.services.orchestrator import get_orchestrator
 from cns.infrastructure.continuum_pool import get_continuum_pool
 
@@ -34,6 +44,9 @@ router = APIRouter()
 SUPPORTED_IMAGE_FORMATS = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_SIZE_MB = 5
 
+# Text message size limit - prevents context overflow in summarization
+MAX_TEXT_MESSAGE_LENGTH = 20000
+
 # Distributed per-user request lock (coordinates across workers)
 _user_request_lock = UserRequestLock(ttl=60)
 
@@ -41,10 +54,11 @@ _user_request_lock = UserRequestLock(ttl=60)
 class ChatRequest(BaseModel):
     """Chat request payload."""
     message: str = Field(..., description="User message text")
-    image: Optional[str] = Field(None, description="Optional image as base64 string (no data: prefix)")
-    image_type: Optional[str] = Field(None, description="MIME type for image (e.g., image/jpeg)")
-    document: Optional[str] = Field(None, description="Optional document as base64 string")
-    document_type: Optional[str] = Field(None, description="MIME type for document (e.g., application/pdf)")
+    image: str | None = Field(None, description="Optional image as base64 string (no data: prefix)")
+    image_type: str | None = Field(None, description="MIME type for image (e.g., image/jpeg)")
+    document: str | None = Field(None, description="Optional document as base64 string")
+    document_type: str | None = Field(None, description="MIME type for document (e.g., application/pdf)")
+    include_thinking: bool = Field(False, description="Include thinking trace in response")
 
 
 class ChatEndpoint(BaseHandler):
@@ -55,11 +69,12 @@ class ChatEndpoint(BaseHandler):
         *,
         user_id: str,
         message: str,
-        image: Optional[str],
-        image_type: Optional[str],
-        document: Optional[str],
-        document_type: Optional[str],
-    ) -> APIResponse:
+        image: str | None,
+        image_type: str | None,
+        document: str | None,
+        document_type: str | None,
+        include_thinking: bool = False,
+    ) -> SuccessResponse:
         start_time = utc_now()
 
         # Set user context for RLS and utility functions
@@ -74,8 +89,29 @@ class ChatEndpoint(BaseHandler):
         # Sanitize text
         msg = sanitize_message_content(msg)
 
+        # Check message length - reject oversized messages with friendly assistant response
+        if len(msg) > MAX_TEXT_MESSAGE_LENGTH:
+            rejection_msg = (
+                f"I can't process messages longer than {MAX_TEXT_MESSAGE_LENGTH:,} characters. "
+                f"Your message was {len(msg):,} characters. "
+                f"Please break it into smaller chunks or summarize the key points you'd like to discuss."
+            )
+
+            continuum_pool = get_continuum_pool()
+            continuum = continuum_pool.get_or_create()
+
+            # Add rejection as assistant message so frontend renders it natively
+            continuum.add_assistant_message(rejection_msg, {"type": "size_limit_rejection"})
+            unit_of_work = continuum_pool.begin_work(continuum)
+            unit_of_work.commit()
+
+            return create_success_response(
+                data={"response": rejection_msg, "rejected": True},
+                meta={"timestamp": utc_now().isoformat()}
+            )
+
         # Validate and compress image if provided
-        compressed: Optional[CompressedImage] = None
+        compressed: CompressedImage | None = None
         if image:
             if not image_type:
                 raise ValidationError("image_type is required when image is provided")
@@ -100,7 +136,7 @@ class ChatEndpoint(BaseHandler):
                 raise ValidationError(f"Invalid base64 image: {str(e)}")
 
         # Validate document if provided (decode and process after getting orchestrator)
-        document_bytes: Optional[bytes] = None
+        document_bytes: bytes | None = None
         if document:
             if not document_type:
                 raise ValidationError("document_type is required when document is provided")
@@ -122,7 +158,7 @@ class ChatEndpoint(BaseHandler):
             # Use a validation error to preserve consistent error envelope
             raise ValidationError("Another chat request is already in progress for this user")
 
-        files_manager: Optional[FilesManager] = None
+        files_manager: FilesManager | None = None
         try:
             # Resolve dependencies
             orchestrator = get_orchestrator()
@@ -145,8 +181,11 @@ class ChatEndpoint(BaseHandler):
             if not segment_id:
                 raise ValidationError("Active segment missing segment_id")
 
+            # Set segment_id in context for tools (e.g., memory_tool.create_memory)
+            set_current_segment_id(segment_id)
+
             # Process document with Files API support
-            processed_doc: Optional[ProcessedDocument] = None
+            processed_doc: ProcessedDocument | None = None
             if document_bytes:
                 # Initialize FilesManager with Anthropic client
                 files_manager = FilesManager(orchestrator.llm_provider.anthropic_client)
@@ -165,8 +204,8 @@ class ChatEndpoint(BaseHandler):
                     raise ValidationError(f"Document upload failed: {e}")
 
             # Build content arrays (inference tier for LLM, storage tier for persistence)
-            inference_content: Union[str, List[Dict[str, Any]]]
-            storage_content: Optional[Union[str, List[Dict[str, Any]]]] = None
+            inference_content: str | list[ContentBlock]
+            storage_content: str | list[ContentBlock] | None = None
 
             if compressed:
                 # Image: Inference tier (1200px) for current LLM call
@@ -197,7 +236,7 @@ class ChatEndpoint(BaseHandler):
                 # Document handling based on content_type
                 if processed_doc.content_type == "container_upload":
                     # Structured data: Files API with file_id (CSV, XLSX, JSON for code execution)
-                    doc_block: Dict[str, Any] = {
+                    doc_block: ContentBlock = {
                         "type": "container_upload",
                         "file_id": processed_doc.data  # file_id from Files API (no source wrapper!)
                     }
@@ -248,7 +287,7 @@ class ChatEndpoint(BaseHandler):
             processing_time_ms = int((utc_now() - start_time).total_seconds() * 1000)
 
             # Build response
-            data: Dict[str, Any] = {
+            data: dict[str, Any] = {
                 "continuum_id": str(continuum.id),
                 "response": response_text,
                 "metadata": {
@@ -258,6 +297,8 @@ class ChatEndpoint(BaseHandler):
                     "processing_time_ms": processing_time_ms,
                 },
             }
+            if include_thinking and metadata.get("thinking"):
+                data["thinking"] = metadata["thinking"]
 
             return create_success_response(
                 data=data,
@@ -272,17 +313,21 @@ class ChatEndpoint(BaseHandler):
 
 
 @router.post("/chat")
-async def chat_endpoint(request: ChatRequest, current_user=Depends(get_current_user)):
+async def chat_endpoint(
+    request: ChatRequest,
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
+):
     """Send a message and receive assistant response as JSON."""
     try:
         handler = ChatEndpoint()
         response = handler.handle_request(
-            user_id=current_user["user_id"],
+            user_id=current_user.user_id,
             message=request.message,
             image=request.image,
             image_type=request.image_type,
             document=request.document,
             document_type=request.document_type,
+            include_thinking=request.include_thinking,
         )
         return response.to_dict()
 
@@ -298,6 +343,21 @@ async def chat_endpoint(request: ChatRequest, current_user=Depends(get_current_u
             }
         )
     except Exception as e:
+        # Check for InsufficientBalanceError (billing module may not exist in OSS)
+        if InsufficientBalanceError is not None and isinstance(e, InsufficientBalanceError):
+            return JSONResponse(
+                status_code=402,  # Payment Required
+                content={
+                    "success": False,
+                    "error": {
+                        "code": "INSUFFICIENT_BALANCE",
+                        "message": str(e),
+                        "balance": str(e.balance),
+                        "next_drip_at": e.next_drip_at.isoformat(),
+                        "seconds_until_drip": int(e.time_until_drip.total_seconds())
+                    }
+                }
+            )
         logger.error(f"Chat endpoint error: {e}", exc_info=True)
         return JSONResponse(
             status_code=500,

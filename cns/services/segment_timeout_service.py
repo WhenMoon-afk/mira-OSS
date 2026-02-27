@@ -5,18 +5,23 @@ APScheduler job that runs every 5 minutes to find active segments
 that have exceeded their inactivity threshold and publishes SegmentTimeoutEvent.
 """
 import logging
-from datetime import datetime, timedelta
-from typing import List, Dict, Any, Optional
+from datetime import datetime
+from typing import Optional, TypedDict
 
 from cns.core.events import SegmentTimeoutEvent
-from cns.services.segment_helpers import is_segment_boundary, is_active_segment, get_segment_id
 from cns.integration.event_bus import EventBus
-from cns.infrastructure.continuum_repository import get_continuum_repository
+from cns.infrastructure.continuum_repository import ActiveSegmentRow, get_continuum_repository
 from utils.database_session_manager import get_shared_session_manager
 from utils.timezone_utils import utc_now, convert_from_utc
 from config import config
 
 logger = logging.getLogger(__name__)
+
+
+class TimeoutCheckResult(TypedDict):
+    """Statistics from a timeout check cycle."""
+    segments_checked: int
+    timeouts_published: int
 
 
 class SegmentTimeoutService:
@@ -41,12 +46,12 @@ class SegmentTimeoutService:
         self.session_manager = session_manager or get_shared_session_manager()
         self._user_timezone_cache = {}  # Cache timezones during check cycle
 
-    def check_timeouts(self) -> Dict[str, Any]:
+    def check_timeouts(self) -> TimeoutCheckResult:
         """
         Check all active segments for timeout and publish events.
 
         Returns:
-            Dict with check statistics (segments_checked, timeouts_published)
+            TimeoutCheckResult with segments_checked and timeouts_published
 
         Raises:
             Exception: If timeout detection fails (database errors, infrastructure failures).
@@ -96,7 +101,7 @@ class SegmentTimeoutService:
             )
             raise
 
-    def _get_active_segments(self) -> List[Dict[str, Any]]:
+    def _get_active_segments(self) -> list[ActiveSegmentRow]:
         """
         Query all active segment sentinels from database.
 
@@ -145,7 +150,7 @@ class SegmentTimeoutService:
         logger.debug(f"User {user_id} has no timezone configured, using system default: {default_tz}")
         return default_tz
 
-    def _is_timed_out(self, segment: Dict[str, Any], current_time: datetime) -> bool:
+    def _is_timed_out(self, segment: ActiveSegmentRow, current_time: datetime) -> bool:
         """
         Check if segment has exceeded timeout threshold.
 
@@ -258,7 +263,7 @@ class SegmentTimeoutService:
                 return row['created_at']
             return None
 
-    def _publish_timeout_event(self, segment: Dict[str, Any], current_time: datetime) -> None:
+    def _publish_timeout_event(self, segment: ActiveSegmentRow, current_time: datetime) -> None:
         """
         Publish SegmentTimeoutEvent for timed-out segment.
 
@@ -327,16 +332,13 @@ def get_timeout_service(event_bus: EventBus) -> SegmentTimeoutService:
     return _timeout_service
 
 
-def register_timeout_job(scheduler_service, event_bus: EventBus) -> bool:
+def register_timeout_job(scheduler_service, event_bus: EventBus) -> None:
     """
     Register segment timeout detection job with scheduler.
 
     Args:
         scheduler_service: System scheduler service
         event_bus: Event bus for publishing timeout events
-
-    Returns:
-        True if registered successfully, False otherwise
 
     Raises:
         ImportError: If apscheduler is not installed
@@ -355,7 +357,7 @@ def register_timeout_job(scheduler_service, event_bus: EventBus) -> bool:
         kill_on_timeout=True
     )
 
-    success = scheduler_service.register_job(
+    scheduler_service.register_job(
         job_id="segment_timeout_detection",
         func=monitored_check_timeouts,
         trigger=IntervalTrigger(minutes=5),
@@ -363,15 +365,4 @@ def register_timeout_job(scheduler_service, event_bus: EventBus) -> bool:
         description="Check for timed-out active segments every 5 minutes"
     )
 
-    if success:
-        logger.info("Successfully registered segment timeout detection job (5-minute interval)")
-    else:
-        # Job registration returned False - this indicates scheduler rejected the job
-        # This is different from infrastructure failure (which would raise)
-        raise RuntimeError(
-            "Scheduler service rejected segment timeout detection job registration. "
-            "System cannot start without automatic segment collapse. "
-            "Check scheduler service logs for details."
-        )
-
-    return success
+    logger.info("Successfully registered segment timeout detection job (5-minute interval)")

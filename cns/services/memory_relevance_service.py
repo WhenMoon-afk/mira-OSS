@@ -5,14 +5,16 @@ Provides the primary interface for the CNS orchestrator to interact with
 the long-term memory system. Wraps ProactiveService from lt_memory.
 
 CNS Integration Points:
-- get_relevant_memories(fingerprint, fingerprint_embedding) -> List[Dict]
+- get_relevant_memories(query_expansion, expansion_embedding, extracted_entities) -> List[Dict]
 - Uses pre-computed 768d embeddings (no redundant embedding generation)
+- Supports hub-based discovery via extracted entities
 - Returns hierarchical memory structures with link metadata
 """
 import logging
-from typing import List, Dict, Any
+from typing import Optional
 import numpy as np
 
+from lt_memory.models import MemoryDict
 from lt_memory.proactive import ProactiveService
 
 logger = logging.getLogger(__name__)
@@ -23,7 +25,7 @@ class MemoryRelevanceService:
     CNS service for memory relevance scoring.
 
     Wraps the lt_memory ProactiveService to provide memory surfacing for continuums.
-    Uses pre-computed 768d fingerprint embeddings from CNS.
+    Uses pre-computed 768d expansion embeddings from CNS.
     """
 
     def __init__(self, proactive_service: ProactiveService):
@@ -38,17 +40,23 @@ class MemoryRelevanceService:
 
     def get_relevant_memories(
         self,
-        fingerprint: str,
-        fingerprint_embedding: np.ndarray,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
+        query_expansion: str,
+        expansion_embedding: np.ndarray,
+        limit: int = 10,
+        extracted_entities: Optional[list[str]] = None
+    ) -> list[MemoryDict]:
         """
-        Get memories relevant to the fingerprint.
+        Get memories relevant to the query expansion using hybrid retrieval.
+
+        Combines two retrieval paths:
+        1. Similarity Pool: Hybrid search (BM25 + vector similarity)
+        2. Hub-Derived Pool: Entity-driven discovery via hub navigation
 
         Args:
-            fingerprint: Expanded memory fingerprint (retrieval-optimized query)
-            fingerprint_embedding: Pre-computed 768d embedding of fingerprint
+            query_expansion: Expanded retrieval-optimized query
+            expansion_embedding: Pre-computed 768d embedding of query expansion
             limit: Maximum memories to return (default: 10)
+            extracted_entities: Entity names for hub-based discovery (optional)
 
         Returns:
             List of memory dicts with hierarchical structure:
@@ -59,36 +67,34 @@ class MemoryRelevanceService:
                     "importance_score": 0.85,
                     "similarity_score": 0.82,
                     "created_at": "iso-timestamp",
+                    "entity_links": [...],
                     "linked_memories": [...]
                 }
             ]
 
         Raises:
-            ValueError: If fingerprint embedding validation fails
+            ValueError: If expansion embedding validation fails
             RuntimeError: If memory service infrastructure fails
         """
         # Validate embedding
-        if fingerprint_embedding is None:
-            raise ValueError("fingerprint_embedding is required")
+        if expansion_embedding is None:
+            raise ValueError("expansion_embedding is required")
 
-        if len(fingerprint_embedding) != 768:
-            raise ValueError(f"Expected 768d embedding, got {len(fingerprint_embedding)}d")
+        if len(expansion_embedding) != 768:
+            raise ValueError(f"Expected 768d embedding, got {len(expansion_embedding)}d")
 
-        # Delegate to ProactiveService
+        # Delegate to ProactiveService with extracted entities for hub discovery
         memories = self.proactive.search_with_embedding(
-            embedding=fingerprint_embedding,
-            fingerprint=fingerprint,
-            limit=limit
+            embedding=expansion_embedding,
+            query_expansion=query_expansion,
+            limit=limit,
+            extracted_entities=extracted_entities
         )
 
         if memories:
-            logger.info(f"Surfaced {len(memories)} relevant memories")
+            entity_info = f" (entities: {len(extracted_entities)})" if extracted_entities else ""
+            logger.info(f"Surfaced {len(memories)} relevant memories{entity_info}")
         else:
             logger.debug("No relevant memories found")
 
         return memories
-
-    def cleanup(self):
-        """Clean up resources."""
-        self.proactive = None
-        logger.debug("MemoryRelevanceService cleanup completed")

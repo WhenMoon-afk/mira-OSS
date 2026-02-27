@@ -14,11 +14,17 @@ Future events should fit into these categories. Only create new categories if th
 a fundamentally different type of system interaction that doesn't fit the above.
 Resist the urge to create one-off events - adapt existing categories instead.
 """
+from __future__ import annotations
+
 from uuid import uuid4
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
-from typing import Dict, Any, List, Optional
+from datetime import datetime
+from typing import TYPE_CHECKING
+
 from utils.timezone_utils import utc_now
+
+if TYPE_CHECKING:
+    from cns.core.continuum import Continuum
 
 @dataclass(frozen=True, kw_only=True)
 class ContinuumEvent:
@@ -56,12 +62,6 @@ class ContinuumCheckpointEvent(ContinuumEvent):
 # Concrete implementations we need immediately
 
 @dataclass(frozen=True)
-class WorkingMemoryUpdatedEvent(WorkingMemoryEvent):
-    """Working memory managers updated."""
-    updated_categories: List[str]
-
-
-@dataclass(frozen=True)
 class TurnCompletedEvent(ContinuumCheckpointEvent):
     """
     Continuum turn completed (user message + assistant response).
@@ -82,11 +82,11 @@ class TurnCompletedEvent(ContinuumCheckpointEvent):
     """
     turn_number: int
     segment_turn_number: int  # Turn count within current segment (1-indexed)
-    continuum: Any  # Continuum object - using Any to avoid circular import
+    continuum: Continuum
 
     @classmethod
     def create(cls, continuum_id: str, turn_number: int,
-               segment_turn_number: int, continuum: Any) -> 'TurnCompletedEvent':
+               segment_turn_number: int, continuum: Continuum) -> TurnCompletedEvent:
         """
         Create turn completed event with auto-generated metadata.
 
@@ -110,43 +110,12 @@ class TurnCompletedEvent(ContinuumCheckpointEvent):
 
 
 @dataclass(frozen=True)
-class PointerSummariesCollapsingEvent(ContinuumCheckpointEvent):
-    """Topic summaries are about to be coalesced and removed from the cache."""
-    summary_message_ids: List[str]
-    window_topics: List[str]
-    overlap_count: int
-    previous_coalesced_id: Optional[str] = None
-
-    @classmethod
-    def create(
-        cls,
-        continuum_id: str,
-        summary_message_ids: List[str],
-        window_topics: List[str],
-        overlap_count: int,
-        previous_coalesced_id: Optional[str] = None,
-    ) -> "PointerSummariesCollapsingEvent":
-        from utils.user_context import get_current_user_id
-        user_id = get_current_user_id()
-        return cls(
-            continuum_id=continuum_id,
-            user_id=user_id,
-            event_id=str(uuid4()),
-            occurred_at=utc_now(),
-            summary_message_ids=summary_message_ids,
-            window_topics=window_topics,
-            overlap_count=overlap_count,
-            previous_coalesced_id=previous_coalesced_id,
-        )
-
-
-@dataclass(frozen=True)
 class ComposeSystemPromptEvent(WorkingMemoryEvent):
     """Request to compose the system prompt with current working memory state."""
     base_prompt: str
 
     @classmethod
-    def create(cls, continuum_id: str, base_prompt: str) -> 'ComposeSystemPromptEvent':
+    def create(cls, continuum_id: str, base_prompt: str) -> ComposeSystemPromptEvent:
         """Create compose system prompt event with auto-generated metadata."""
         from utils.user_context import get_current_user_id
         user_id = get_current_user_id()
@@ -164,6 +133,8 @@ class SystemPromptComposedEvent(WorkingMemoryEvent):
     """System prompt has been composed and is ready for use."""
     cached_content: str
     non_cached_content: str
+    conversation_prefix_items: tuple[str, ...]  # Each becomes assistant message before history
+    post_history_items: tuple[str, ...]  # Each becomes assistant message after history (BP4)
     notification_center: str  # Dynamic content for sliding assistant message
 
     @classmethod
@@ -172,8 +143,10 @@ class SystemPromptComposedEvent(WorkingMemoryEvent):
         continuum_id: str,
         cached_content: str,
         non_cached_content: str,
+        conversation_prefix_items: tuple[str, ...] = (),
+        post_history_items: tuple[str, ...] = (),
         notification_center: str = ""
-    ) -> 'SystemPromptComposedEvent':
+    ) -> SystemPromptComposedEvent:
         """Create system prompt composed event with auto-generated metadata."""
         from utils.user_context import get_current_user_id
         user_id = get_current_user_id()
@@ -184,6 +157,8 @@ class SystemPromptComposedEvent(WorkingMemoryEvent):
             occurred_at=utc_now(),
             cached_content=cached_content,
             non_cached_content=non_cached_content,
+            conversation_prefix_items=conversation_prefix_items,
+            post_history_items=post_history_items,
             notification_center=notification_center
         )
 
@@ -192,10 +167,10 @@ class SystemPromptComposedEvent(WorkingMemoryEvent):
 class UpdateTrinketEvent(WorkingMemoryEvent):
     """Request a specific trinket to update its content."""
     target_trinket: str
-    context: Dict[str, Any]
+    context: dict[str, object]
 
     @classmethod
-    def create(cls, continuum_id: str, target_trinket: str, context: Optional[Dict[str, Any]] = None) -> 'UpdateTrinketEvent':
+    def create(cls, continuum_id: str, target_trinket: str, context: dict[str, object] | None = None) -> UpdateTrinketEvent:
         """Create update trinket event with auto-generated metadata."""
         from utils.user_context import get_current_user_id
         user_id = get_current_user_id()
@@ -215,8 +190,7 @@ class TrinketContentEvent(WorkingMemoryEvent):
     variable_name: str
     content: str
     trinket_name: str
-    cache_policy: bool = False  # Default to no caching
-    placement: str = "system"   # "system" or "notification" - where content appears
+    cache_policy: bool = False
 
     @classmethod
     def create(
@@ -226,8 +200,7 @@ class TrinketContentEvent(WorkingMemoryEvent):
         content: str,
         trinket_name: str,
         cache_policy: bool = False,
-        placement: str = "system"
-    ) -> 'TrinketContentEvent':
+    ) -> TrinketContentEvent:
         """Create trinket content event with auto-generated metadata."""
         from utils.user_context import get_current_user_id
         user_id = get_current_user_id()
@@ -240,7 +213,6 @@ class TrinketContentEvent(WorkingMemoryEvent):
             content=content,
             trinket_name=trinket_name,
             cache_policy=cache_policy,
-            placement=placement
         )
 
 
@@ -253,7 +225,7 @@ class SegmentTimeoutEvent(ContinuumCheckpointEvent):
 
     @classmethod
     def create(cls, continuum_id: str, user_id: str, segment_id: str,
-               inactive_duration_minutes: int, local_hour: int) -> 'SegmentTimeoutEvent':
+               inactive_duration_minutes: int, local_hour: int) -> SegmentTimeoutEvent:
         """
         Create segment timeout event with auto-generated metadata.
 
@@ -286,11 +258,11 @@ class SegmentCollapsedEvent(ContinuumCheckpointEvent):
     """
     segment_id: str
     summary: str
-    tools_used: List[str]
+    tools_used: list[str]
 
     @classmethod
     def create(cls, continuum_id: str, segment_id: str,
-               summary: str, tools_used: List[str]) -> 'SegmentCollapsedEvent':
+               summary: str, tools_used: list[str]) -> SegmentCollapsedEvent:
         """Create segment collapsed event with auto-generated metadata."""
         from utils.user_context import get_current_user_id
         user_id = get_current_user_id()
@@ -311,7 +283,7 @@ class ManifestUpdatedEvent(ContinuumCheckpointEvent):
     segment_count: int
 
     @classmethod
-    def create(cls, continuum_id: str, segment_count: int) -> 'ManifestUpdatedEvent':
+    def create(cls, continuum_id: str, segment_count: int) -> ManifestUpdatedEvent:
         """Create manifest updated event with auto-generated metadata."""
         from utils.user_context import get_current_user_id
         user_id = get_current_user_id()

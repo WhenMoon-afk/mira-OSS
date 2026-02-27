@@ -31,6 +31,8 @@ CONFIG_PROVIDER_ENDPOINT=""
 CONFIG_PROVIDER_KEY_PREFIX=""
 CONFIG_PROVIDER_MODEL=""
 STATUS_PROVIDER=""
+CONFIG_UPDATE_CHECK=""
+STATUS_UPDATE_CHECK=""
 
 clear
 echo -e "${BOLD}${CYAN}"
@@ -554,6 +556,23 @@ elif [ "$OS" = "macos" ]; then
     STATUS_SYSTEMD="${DIM}N/A (macOS)${RESET}"
 fi
 
+# Update check option
+echo -e "${BOLD}${BLUE}7. Update Notifications${RESET} ${DIM}(OPTIONAL - check for new versions on startup)${RESET}"
+echo -e "${DIM}   Privacy: Only the installed version number is sent to check for updates.${RESET}"
+echo -e "${DIM}   No other information about your installation is transmitted.${RESET}"
+read -p "$(echo -e ${CYAN}Enable update check?${RESET}) (y/n, default=y): " UPDATE_CHECK_INPUT
+# Default to yes if user just presses Enter
+if [ -z "$UPDATE_CHECK_INPUT" ]; then
+    UPDATE_CHECK_INPUT="y"
+fi
+if [[ "$UPDATE_CHECK_INPUT" =~ ^[Yy](es)?$ ]]; then
+    CONFIG_UPDATE_CHECK="yes"
+    STATUS_UPDATE_CHECK="${CHECKMARK} Enabled"
+else
+    CONFIG_UPDATE_CHECK="no"
+    STATUS_UPDATE_CHECK="${DIM}Disabled${RESET}"
+fi
+
 echo ""
 echo -e "${BOLD}Configuration Summary:${RESET}"
 if [ "$CONFIG_OFFLINE_MODE" = "yes" ]; then
@@ -571,4 +590,5 @@ fi
 echo -e "  DB Password:     ${STATUS_DB_PASSWORD}"
 echo -e "  Playwright:      ${STATUS_PLAYWRIGHT}"
 echo -e "  Systemd Service: ${STATUS_SYSTEMD}"
+echo -e "  Update Check:    ${STATUS_UPDATE_CHECK}"
 echo ""

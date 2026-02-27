@@ -1,7 +1,21 @@
 # MIRA - Python Project Guide
+
+**Complex problems require simple and clear solutions.**
+
 MIRA is a FastAPI application with event-driven architecture coordinating three core systems: CNS (conversation management via immutable Continuum aggregate), Working Memory (trinket-based system prompt composition), and LT_Memory (batch memory extraction/linking/refinement). PostgreSQL RLS with contextvars provides automatic user isolation - all user-scoped queries, tool access, and repository operations enforce `user_id` filtering at the database level.
 
 The User's name is Taylor.
+
+## 🗺️ Nested CLAUDE.md Maintenance (Mandatory)
+Subdirectories contain `CLAUDE.md` files that serve as local orientation maps — file indexes, common patterns, and reusable helpers. **These are loaded automatically when you read files in that subtree.** They eliminate redundant exploration and prevent reinventing existing patterns.
+
+**After every code change**, check whether the relevant directory's `CLAUDE.md` needs updating:
+- **New file added?** Add a one-liner describing its purpose.
+- **File deleted or renamed?** Remove or update its entry.
+- **New pattern established?** Add it to "Patterns to Follow" if other files should replicate it.
+- **Pattern changed?** Update the description so future sessions don't follow stale guidance.
+
+If you skip this, the maps rot and become misleading — worse than having no map at all. Treat `CLAUDE.md` updates as part of the changeset, not an afterthought.
 
 ## 🚨 Critical Principles (Non-Negotiable)
 ### Technical Integrity
@@ -10,25 +24,24 @@ The User's name is Taylor.
 - **Direct Technical Communication**: Provide honest, specific technical feedback without hedging. Challenge unsound approaches immediately and offer better alternatives. Communicate naturally as a competent colleague.
 - **Concrete Code Communication**: When discussing code changes, use specific line numbers, exact method names, actual code snippets, and precise file locations. Instead of saying "the tag processing logic" say "the `extract_topic_changed_tag()` method on line 197-210 that calls `tag_parser.extract_topic_changed()`". Reference exact current state and exact proposed changes. Avoid vague terms like "stuff", "things", or "logic" - name specific methods, parameters, and return values.
 - **Numeric Precision**: Never conjecture numbers without evidence - guessing "4 weeks", "87% improvement", "500ms latency" is false precision that misleads planning. Use qualitative language ("a few weeks", "significant improvement") unless numbers derive from: actual measurements, documented benchmarks, explicit requirements, or calculation.
-- **Ambiguity Detection**: When evidence supports multiple valid approaches with meaningful tradeoffs, stop and ask rather than guess.
-- **Balanced Supportiveness**: Be friendly and supportive of good ideas without excessive praise. Reserve strong positive language for genuinely exceptional insights.
 - **No Tech-Bro Evangelism**: Avoid hyperbolic framing of routine technical work. Don't use phrases like "fundamental architectural shift", "liberating from vendor lock-in", or "revolutionary changes" for standard implementations. Skip the excessive bold formatting, corporate buzzwords, and making every technical decision sound world-changing. Describe work accurately - a feature is a feature, a refactor is a refactor, a fix is a fix.
 
 ### Security & Reliability
 - **Credential Management**: All sensitive values (API keys, passwords, database URLs) must be stored in HashiCorp Vault via `utils.vault_client` functions. Never use environment variables or hardcoded credentials. Use `UserCredentialService` from `auth.user_credentials` for per-user credential storage. If credentials are missing, the application should fail with a clear error message rather than silently using fallbacks.
 - **Fail-Fast Infrastructure**: Required infrastructure failures MUST propagate immediately. Never catch exceptions from Valkey, database, embeddings, or event bus and return None/[]/defaults - this masks outages as normal operation. Use try/except only for: (1) adding context before re-raising, (2) legitimately optional features (telemetry, cache), (3) async event handlers that will retry. Database query returning [] means "no data found", not "query failed". Make infrastructure failures loud so operators fix the root cause instead of users suffering degraded service.
-- **No Optional[X] Hedging**: When a function depends on required infrastructure, return the actual type or raise - never Optional[X] that enables None returns masking failures. `Optional[str]` for fingerprint lets generation silently fail; `str` forces the caller to handle the exception. Reserve Optional for genuine "value may not exist" semantics (user preference unset), not "infrastructure might be broken" scenarios.
+- **No Optional[X] Hedging**: When a function depends on required infrastructure, return the actual type or raise - never Optional[X] that enables None returns masking failures. `Optional[str]` for subcortical result lets generation silently fail; `str` forces the caller to handle the exception. Reserve Optional for genuine "value may not exist" semantics (user preference unset), not "infrastructure might be broken" scenarios.
 - **Timezone Consistency**: ALWAYS use `utils/timezone_utils.py` functions for datetime operations. Never use `datetime.now()` or `datetime.now(UTC)` directly - use `utc_now()` instead. This ensures UTC-everywhere consistency across the codebase and prevents timezone-related bugs. Import timezone utilities with `from utils.timezone_utils import utc_now, format_utc_iso` and use them consistently.
 - **Backwards Compatibility**: Don't depreciate; ablate. Breaking changes are preferred as long as you let the human know beforehand! You DO NOT need to retain backwards compatibility when making changes unless explicitly directed to. Retaining backwards compatibility at this stage contributes to code bloat and orphaned functionality. MIRA is a greenfield system design.
 - **Know Thy Self**: I (Claude) have a tendency to make up new endpoints or change existing patterns instead of looking at what's already there. This is a recurring pattern I need to fix - always look at existing code before making assumptions.
 
 ### Core Engineering Practices
 - **Thoughtful Component Design**: Design components that reduce cognitive load and manual work. Handle complexity internally, expose simple APIs. Ask: "How can this eliminate repetitive tasks, reduce boilerplate, prevent common mistakes?" Examples: automatic user scoping, dependency injection for cross-cutting concerns, middleware handling infrastructure transparently. Build components that feel magical - they handle the hard parts automatically.
-- **Integrate Rather Than Invent**: Prefer established patterns over custom solutions. When libraries/frameworks/platforms provide built-in mechanisms (dependency injection, testing, logging, validation, async), use them. This applies to database patterns, deployment, monitoring, architecture. You get better docs, community support, ecosystem integration, battle-tested solutions. Only deviate when established approach genuinely doesn't fit - and document why.
-- **Root Cause Diagnosis**: Before making code changes, investigate root causes by examining related files and dependencies. Focus on understanding underlying issues rather than addressing surface symptoms. Address problems at their source rather than adapting downstream components to handle incorrect formats.
+- **Integrate Rather Than Invent**: When the platform provides a mechanism (DI, validation, async), use it. Only deviate with documented justification.
+- **Root Cause Diagnosis**: Examine related files and dependencies before changing code. Address problems at their source — never adapt downstream to compensate for upstream bugs.
 - **Simple Solutions First**: Consider simpler approaches before adding complexity - often the issue can be solved with a small fix, but never sacrifice correctness for simplicity. Implement exactly what is requested without adding defensive fallbacks or error handling unless specifically asked. Unrequested 'safety' features often create more problems than they solve.
 - **Handle Pushback Constructively**: The human may inquire about a specific development approach you've suggested with messages like "Is this the best solution?" or "Are you sure?". This does implicitly mean the human thinks your approach is wrong. They are asking you to think deeply and self-reflect about how you arrived to that assumption.
 - **Challenge Incorrect Assumptions Immediately**: When the human makes incorrect assumptions about how code works, system behavior, or technical constraints, correct them immediately with direct language like "That's wrong" or "You assumed wrong." Don't soften technical corrections with diplomatic phrasing. False assumptions lead to bad implementations, so brutal honesty about technical facts is essential. After correction, provide the accurate information they need.
+- **Convergent Path Refactoring**: When multiple code paths do the same thing with divergent implementations, that's an architectural defect — not a style issue. Invoke the `convergent-path-refactoring` skill for the map-design-remediate process and refactoring theater detection.
 
 ### Design Discipline Principles
 
@@ -41,11 +54,13 @@ Silent failures hide bugs during development and create mysterious behavior in p
 #### Types as Documentation and Contracts
 Type hints are executable documentation. Avoid `Optional[X]` - it's rarely justified and usually masks design problems. Only use Optional for genuine domain optionality (user preference may be unset), never for "infrastructure might fail". Use TypedDict for well-defined structures instead of `Dict[str, Any]`. Match reality - if code expects UUID objects, type hint `UUID` not `str`.
 
+**Replace positional tuples with named structures**: When a function returns multiple related values (e.g., `Tuple[str, Set[str], List[str]]`), replace with a dataclass or TypedDict. Positional access like `result[0]` requires remembering order; named access like `result.query_expansion` is self-documenting. Similarly, replace `Dict[str, Any]` parameters with TypedDict when the structure is well-defined - this catches typos at development time and serves as inline documentation of expected fields.
+
 #### Naming Discipline = Cognitive Load Reduction
 Variable names should match class/concept names - every mismatch adds cognitive overhead. `ContinuumRepository` → `continuum_repo`, not `conversation_repo`. Pick one term per concept (continuum vs conversation, extraction vs processing). Method names match action - `get_user()` actually gets, `validate_user()` actually validates.
 
 #### Forward-Looking Documentation
-Documentation describes current reality, not history. Write what code does, not what it replaced. Focus on why it exists, not why previous approach was wrong. Historical context belongs in commit messages, not docstrings.
+Write what code does, not what it replaced. Historical context → commit messages, not docstrings.
 
 #### Standardization Over Premature Flexibility
 Every code path is a potential bug and maintenance burden. Don't add flexibility until you have concrete use cases. Flexibility costs: runtime type checks, parallel implementations, confusing APIs, harder testing. Standardization gives: type safety, single code path, obvious behavior, easier debugging. Wait for the second use case before abstracting.
@@ -66,81 +81,40 @@ Don't parameterize what won't vary. Unused parameters confuse maintainers. If yo
 When working with tools, invoke `tool-builder` skill first for comprehensive patterns. Design for single responsibility (extraction tools extract, persistence tools store). Put business logic in system prompts/working_memory, not tools. Use `tools/sample_tool.py` as blueprint. Store tool data in user-specific directories via `self.user_data_path` (JSON for simple data, SQLite for complex, or `self.db` property). Include recovery guidance in error responses. Document tools thoroughly (`docs/TOOL_DEF_BESTPRACTICE.md`). Write tests for success and error paths.
 
 ### Interface Design
-Use interfaces as designed - correct calling code rather than adapting interfaces to accommodate misuse. Ensure consistent patterns for input/output/error handling. Adhere to established response structures and formatting. Honor type annotations as contracts - enforce specified types.
+When calling code misuses an interface, fix the caller — never adapt the interface to accommodate misuse.
 
 ### Dependency Management
-- **Minimal Dependencies**: Prefer standard library solutions over adding new dependencies; only introduce external libraries when absolutely necessary.
-- **Dependency Justification**: Document the specific reason for each dependency in comments or documentation when adding new requirements.
+- **Minimal Dependencies**: Prefer stdlib. New external deps require documented justification.
+
+## 🧭 Codebase Patterns
+
+### User ID Resolution
+All user-scoped code resolves `user_id` via contextvar: `from utils.user_context import get_current_user_id`. It is set once at the API boundary (`cns/api/chat.py`, `websocket_chat.py`) and flows automatically through the entire request. Never pass `user_id` through event context dicts, function parameters, or instance fields as a substitute for the contextvar — redundant channels cause inconsistent resolution patterns. Downstream services that take `user_id` as an explicit parameter (e.g., `ManifestQueryService.get_segments(user_id)`) are acceptable; the caller sources it from the contextvar. For scheduled jobs and batch operations outside HTTP context, explicitly call `set_current_user_id(user_id)`.
+
+### Activity Days & Use-Day Scheduling
+User activity days are tracked by `utils/user_activity.py:increment_user_activity_day()` (called on first message of each day). To get the current user's activity day count, use `from utils.user_context import get_user_cumulative_activity_days` — it reads from the contextvar cache or falls back to a DB query. For interval-based scheduled tasks that should fire based on user activity (not calendar time), use `from utils.scheduled_tasks import get_users_due_for_job` with the desired interval — it returns users where `MOD(cumulative_activity_days, interval) = 0`.
 
 ## ⚡ Performance & Tool Usage
-
-### Critical Performance Rules
-- **Batch Processing**: When making multiple independent tool calls, execute them in a single message to run operations in parallel. This dramatically improves performance and reduces context usage.
-- **Multiple Edits**: When making multiple edits to the same file, use MultiEdit rather than sequential Edit calls to ensure atomic changes and better performance.
-- **File Operations**: Prefer Read/Edit tools over Bash commands like 'cat'/'sed' for file operations to leverage built-in error handling and validation.
 - **Synchronous Over Async**: Prefer synchronous unless genuine concurrency benefit exists. Only use `async/await` for truly asynchronous operations (network I/O, parallelizable file I/O, external APIs). Async overhead (context switching, event loop, complex calls) hurts performance without actual I/O concurrency. Sync is easier to debug, test, reason about.
-
-### Tool Selection
-- **Efficient Searching**: For complex searches across the codebase, use the Task tool which can perform comprehensive searches more efficiently than manual Glob/Grep combinations.
-- **Task Management**: Use TodoWrite/TodoRead tools proactively to break down complex tasks and track progress, especially for multi-step implementations.
+- **Haiku Agents — Big Fast Idiot Rules**: Haiku is fast and cheap but cannot reason, infer intent, or make judgment calls. Only dispatch to Haiku for tasks where a big fast idiot would excel: deterministic file operations (find/replace/grep), mechanical edits with exact specifications, and schema-constrained execution where correctness is guaranteed by structure, not judgment. The `big-fast-idiot` agent is the canonical example — it executes atomic file ops via a strict XML taxonomy where every decision has already been made by a smarter model upstream. Never use Haiku for research, architectural analysis, code review, or any task requiring semantic understanding — it will hallucinate confidently and corrupt your reasoning. Use Sonnet or Opus for anything requiring thought.
 
 ## 📝 Implementation Guidelines
 
 ### Implementation Approach
-When modifying files, edit as if new code was always intended - never reference what's being removed. Review related files to understand architecture. Clarity and reliability over brevity for critical logic. Build upon existing patterns. Use proper dependency management to reduce coupling.
+When modifying files, write as if the new code was always the plan. Never reference removals. Understand surrounding architecture first.
 
-### Implementation Strategy
-- **Configuration-First Design**: Define configuration parameters before implementing functionality to ensure flexibility.
-- **Iterative Refinement**: Start with a working implementation, then refine based on real-world performance observations.
-- **Root Cause Solution Mandate**: Every plan MUST defend its correctness through a "Why These Solutions Are Correct" analysis following these exact steps:
+### Plan Mode
+🚨 **NEVER autonomously enter plan mode.** Do not call `EnterPlanMode` unless the user has explicitly activated plan mode themselves (e.g., via `/plan`). Autonomous plan mode entry is disruptive UX — always wait for the user to opt in.
 
-  **Step 1: Structure Your Plan**
-  After presenting your implementation approach, add this section immediately before calling ExitPlanMode:
-  ```
-  ## Why These Solutions Are Correct
-  ```
-
-  **Step 2: For Each Solution Component**
-  Create a numbered entry that traces from first principles:
-  ```
-  1. [Component/Change Name]
-     - Root cause identified: [The actual origin of the problem, not its manifestation]
-     - Causal chain: [Problem origin] → [intermediate effects] → [observed symptom]
-     - Solution mechanics: [How this change interrupts the causal chain at its source]
-     - Not a symptom fix because: [Proof that we're addressing the cause, not the effect]
-     - Production considerations: [Load handling, concurrency, error states, edge cases]
-  ```
-
-  **Step 3: Conclude with Confidence Statement**
-  End every "Why These Solutions Are Correct" section with exactly this text (and mean it):
-  ```
-  **Engineering Assertion**: These solutions eliminate root causes, not symptoms, and possess the robustness required for production deployment under real-world load and operational stress.
-  ```
-
-  **Step 4: Self-Check Before Submitting Plan**
-  Before calling ExitPlanMode, verify:
-  - [ ] Each solution traces back to a root cause, not a symptom
-  - [ ] Causal chains are explicit and logical
-  - [ ] Production scenarios are realistically considered
-  - [ ] No solution is a "quick fix" or workaround
-  - [ ] The assertion can be made with technical confidence
-
-  **When You're Unsure**: If you cannot confidently trace a solution to its root cause, investigate deeper using Read/Grep/Task tools before proposing the plan. Never propose solutions you cannot defend from first principles.
+When entering plan mode, invoke the `plan-mode` skill for the concise-plan-vs-ADR decision tree, ADR requirements, and root cause solution mandate.
 
 ## 🔄 Continuous Improvement
-- **Feedback Integration**: Convert specific feedback into general principles that guide future work.
-- **Solution Alternatives**: Consider multiple approaches before implementation, evaluating tradeoffs and documenting the decision-making process.
-- **Anti-Patterns**: Document specific approaches to avoid and the contexts where they're problematic.
-- **Learning Transfer**: Apply principles across different parts of the codebase, even when contexts appear dissimilar.
-- **Testing Discipline**: Enthusiasm to fix issues shouldn't override testing discipline.
+- Convert specific feedback into general principles. Consider multiple approaches before implementing.
+- Enthusiasm to fix issues shouldn't override testing discipline.
 
 ## 📚 Reference Material
 
 ### Commands
-- **Tests**: `pytest` or `pytest tests/test_file.py::test_function`
-- **Lint**: `flake8`
-- **Type check**: `mypy .`
-- **Format**: `black .`
 - **Database**: Always use `psql -U postgres -h localhost -d mira_service` - postgres is the superuser, mira_service is the primary database
 
 ### Git Workflow

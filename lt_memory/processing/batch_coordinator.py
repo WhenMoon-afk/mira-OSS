@@ -8,7 +8,7 @@ Provides generic polling infrastructure with pluggable result processors.
 """
 import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Any, Callable, Optional
+from typing import Dict, List, Any, Callable
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
@@ -85,7 +85,6 @@ class BatchCoordinator:
         requests: List[Dict[str, Any]],
         batch_type: str,
         user_id: str,
-        input_data: Optional[Dict[str, Any]] = None
     ) -> str:
         """
         Submit batch to Anthropic API.
@@ -97,7 +96,6 @@ class BatchCoordinator:
             requests: List of Anthropic batch request dicts
             batch_type: Type of batch ("extraction", "relationship_classification", etc.)
             user_id: User ID
-            input_data: Optional input data to store with batch
 
         Returns:
             Batch ID from Anthropic
@@ -110,8 +108,6 @@ class BatchCoordinator:
 
         # Submit to Anthropic
         batch = self.anthropic_client.beta.messages.batches.create(requests=requests)
-        # Always 24 hours (Anthropic API limit)
-        expires_at = utc_now() + timedelta(hours=24)
 
         logger.info(
             f"Submitted {batch_type} batch {batch.id} for user {user_id}: "
@@ -231,19 +227,23 @@ class BatchCoordinator:
                 for b in batches:
                     try:
                         # Process with timeout to prevent infinite hangs
-                        # ThreadPoolExecutor provides thread-safe timeout (works in APScheduler background threads)
-                        with ThreadPoolExecutor(max_workers=1) as executor:
-                            future = executor.submit(result_processor.process_result, batch_id, b)
-                            try:
-                                if future.result(timeout=self.config.batch_processing_timeout_seconds):
-                                    stats["completed"] += 1
-                                    delete_batch_fn(b.id, b.user_id)
-                                else:
-                                    raise RuntimeError("Processing returned False")
-                            except FuturesTimeoutError:
-                                raise TimeoutError(
-                                    f"Batch processing exceeded {self.config.batch_processing_timeout_seconds}s timeout"
-                                )
+                        # CRITICAL: Don't use 'with' context manager - it calls
+                        # shutdown(wait=True) which blocks forever if thread is stuck
+                        executor = ThreadPoolExecutor(max_workers=1)
+                        future = executor.submit(result_processor.process_result, batch_id, b)
+                        try:
+                            if future.result(timeout=self.config.batch_processing_timeout_seconds):
+                                stats["completed"] += 1
+                                delete_batch_fn(b.id, b.user_id)
+                            else:
+                                raise RuntimeError("Processing returned False")
+                        except FuturesTimeoutError:
+                            raise TimeoutError(
+                                f"Batch processing exceeded {self.config.batch_processing_timeout_seconds}s timeout"
+                            )
+                        finally:
+                            # Shutdown WITHOUT waiting - don't block if thread is stuck
+                            executor.shutdown(wait=False, cancel_futures=True)
 
                     except TimeoutError as e:
                         logger.error(f"Batch {b.id} processing timeout: {e}", exc_info=True)
@@ -299,56 +299,52 @@ class BatchCoordinator:
         Returns:
             Polling statistics
         """
-        # Get users with pending extraction batches
-        users_with_pending = self.db.get_users_with_pending_extraction_batches()
+        users_with_pending = self.db.get_users_with_pending_batches("extraction")
 
         all_stats = {"checked": 0, "completed": 0, "failed": 0, "expired": 0}
 
         for user_id in users_with_pending:
             stats = self.poll_batches(
                 batch_type="extraction",
-                get_pending_batches_fn=lambda: self.db.get_pending_extraction_batches_for_user(user_id),
+                get_pending_batches_fn=lambda uid=user_id: self.db.get_pending_batches_for_user("extraction", uid),
                 result_processor=result_processor,
-                update_status_fn=self.db.update_extraction_batch_status,
-                increment_retry_fn=self.db.increment_extraction_batch_retry,
-                delete_batch_fn=self.db.delete_extraction_batch
+                update_status_fn=lambda bid, status, **kw: self.db.update_batch_status("extraction", bid, status, **kw),
+                increment_retry_fn=lambda bid, uid: self.db.increment_batch_retry("extraction", bid, uid),
+                delete_batch_fn=lambda bid, uid: self.db.delete_batch("extraction", bid, uid)
             )
 
-            # Aggregate stats
             for key in all_stats:
                 all_stats[key] += stats[key]
 
         return all_stats
 
-    def poll_relationship_batches(
+    def poll_post_processing_batches(
         self,
         result_processor: BatchResultProcessor
     ) -> Dict[str, int]:
         """
-        Poll relationship batches (convenience wrapper).
+        Poll post-processing batches (convenience wrapper).
 
         Args:
-            result_processor: Processor for relationship results
+            result_processor: Processor for post-processing results
 
         Returns:
             Polling statistics
         """
-        # Get users with pending relationship batches
-        users_with_pending = self.db.get_users_with_pending_relationship_batches()
+        users_with_pending = self.db.get_users_with_pending_batches("post_processing")
 
         all_stats = {"checked": 0, "completed": 0, "failed": 0, "expired": 0}
 
         for user_id in users_with_pending:
             stats = self.poll_batches(
-                batch_type="relationship",
-                get_pending_batches_fn=lambda: self.db.get_pending_relationship_batches_for_user(user_id),
+                batch_type="post_processing",
+                get_pending_batches_fn=lambda uid=user_id: self.db.get_pending_batches_for_user("post_processing", uid),
                 result_processor=result_processor,
-                update_status_fn=self.db.update_relationship_batch_status,
-                increment_retry_fn=self.db.increment_relationship_batch_retry,
-                delete_batch_fn=self.db.delete_relationship_batch
+                update_status_fn=lambda bid, status, **kw: self.db.update_batch_status("post_processing", bid, status, **kw),
+                increment_retry_fn=lambda bid, uid: self.db.increment_batch_retry("post_processing", bid, uid),
+                delete_batch_fn=lambda bid, uid: self.db.delete_batch("post_processing", bid, uid)
             )
 
-            # Aggregate stats
             for key in all_stats:
                 all_stats[key] += stats[key]
 

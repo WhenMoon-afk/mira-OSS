@@ -1,13 +1,10 @@
 
-import asyncio
 import logging
-from datetime import datetime
-import concurrent.futures
-import inspect
-from typing import Dict, List, Callable, Optional, Any
+from typing import Dict, Callable
 from dataclasses import dataclass
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.base import BaseTrigger
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from utils.timezone_utils import utc_now
@@ -19,7 +16,7 @@ logger = logging.getLogger(__name__)
 class JobRegistration:
     job_id: str
     func: Callable
-    trigger: Any
+    trigger: BaseTrigger
     component: str
     description: str
     replace_existing: bool = True
@@ -37,11 +34,11 @@ class SchedulerService:
         self,
         job_id: str,
         func: Callable,
-        trigger: Any,
+        trigger: BaseTrigger,
         component: str,
         description: str,
         replace_existing: bool = True
-    ) -> bool:
+    ) -> None:
         """
         Register a scheduled job.
 
@@ -71,34 +68,11 @@ class SchedulerService:
             else:
                 logger.info(f"Job {job_id} registered for component {component} (will start when scheduler starts)")
 
-            return True
-
         except Exception as e:
             logger.error(f"Error registering job {job_id} for component {component}: {e}")
             raise RuntimeError(f"Failed to register job {job_id} for component {component}: {e}") from e
     
-    def unregister_job(self, job_id: str) -> bool:
-        """
-        Unregister a scheduled job.
-
-        Raises:
-            RuntimeError: If job unregistration fails
-        """
-        try:
-            if job_id in self._registered_jobs:
-                del self._registered_jobs[job_id]
-
-            if self._running:
-                self.scheduler.remove_job(job_id)
-                logger.info(f"Job {job_id} removed from scheduler")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Error unregistering job {job_id}: {e}")
-            raise RuntimeError(f"Failed to unregister job {job_id}: {e}") from e
-    
-    def start(self):
+    def start(self) -> None:
         """
         Start the scheduler service.
 
@@ -131,7 +105,7 @@ class SchedulerService:
             self._running = False
             raise RuntimeError(f"Failed to start scheduler service: {e}") from e
     
-    def stop(self):
+    def stop(self) -> None:
         if not self._running:
             return
 
@@ -147,44 +121,6 @@ class SchedulerService:
             logger.error(f"Error stopping scheduler service: {e}")
             self._running = False
     
-    def get_service_stats(self) -> Dict[str, Any]:
-        return {
-            "running": self._running,
-            "total_jobs": len(self._registered_jobs),
-            "active_jobs": len(self.scheduler.get_jobs()) if self._running else 0,
-            "registered_jobs": [
-                {
-                    "job_id": job_id,
-                    "component": job_reg.component,
-                    "description": job_reg.description
-                }
-                for job_id, job_reg in self._registered_jobs.items()
-            ]
-        }
-    
-    def get_job_info(self, job_id: str) -> Optional[Dict[str, Any]]:
-        if job_id not in self._registered_jobs:
-            return None
-        
-        job_reg = self._registered_jobs[job_id]
-        job_info = {
-            "job_id": job_id,
-            "component": job_reg.component,
-            "description": job_reg.description,
-            "registered": True,
-            "active": False
-        }
-        
-        if self._running:
-            try:
-                scheduler_job = self.scheduler.get_job(job_id)
-                if scheduler_job:
-                    job_info["active"] = True
-                    job_info["next_run"] = scheduler_job.next_run_time.isoformat() if scheduler_job.next_run_time else None
-            except:
-                pass
-        
-        return job_info
 
 
 scheduler_service = SchedulerService()

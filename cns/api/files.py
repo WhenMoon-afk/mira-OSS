@@ -1,0 +1,66 @@
+"""
+File download endpoint for code execution artifacts.
+
+Serves files from data/users/{user_id}/tmp/{file_id}/ that were eagerly
+downloaded from Anthropic during response processing. Security layers:
+1. Auth gate (Depends(get_current_user)) scopes to user's directory
+2. file_id regex validation (alphanumeric + hyphen/underscore only)
+3. Path traversal guard (resolved path must stay within base_dir)
+4. Safe headers (Content-Disposition: attachment, application/octet-stream)
+"""
+import json
+import re
+from pathlib import Path
+
+from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import FileResponse
+
+from auth.api import get_current_user
+from auth.types import SessionData, APITokenContext
+
+router = APIRouter()
+
+FILE_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
+@router.get("/files/{file_id}")
+async def download_file(
+    file_id: str,
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
+) -> FileResponse:
+    """Download a code execution file artifact.
+
+    Files are stored during response processing and cleaned up at segment collapse.
+    """
+    if not FILE_ID_PATTERN.match(file_id):
+        raise HTTPException(status_code=400, detail="Invalid file ID")
+
+    user_id = current_user.user_id
+    base_dir = (Path("data/users") / user_id / "tmp" / file_id).resolve()
+
+    if not base_dir.is_dir():
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Find the .bin (content) and .meta (metadata) files
+    bin_files = list(base_dir.glob("*.bin"))
+    meta_files = list(base_dir.glob("*.meta"))
+    if not bin_files or not meta_files:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    file_path = bin_files[0].resolve()
+    # Path traversal guard — resolved path must be within base_dir
+    file_path.relative_to(base_dir)
+
+    # Read original filename from metadata sidecar
+    meta: dict[str, str] = json.loads(meta_files[0].read_text())
+    original_filename = meta.get("filename", "download")
+
+    return FileResponse(
+        path=file_path,
+        filename=original_filename,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{original_filename}"',
+            "Cache-Control": "no-store",
+        }
+    )

@@ -7,9 +7,10 @@ Wraps scheduled tasks with detailed logging and timeout detection.
 import logging
 import functools
 import threading
-import signal
-import time
-from typing import Any, Callable, Optional, Dict
+import tempfile
+from typing import Any, Callable, Optional, Dict, Union
+
+from typing_extensions import TypedDict
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError
 
 from utils.thread_monitor import ThreadMonitor, monitored_operation
@@ -18,11 +19,22 @@ from utils.timezone_utils import utc_now
 logger = logging.getLogger(__name__)
 
 
+class JobStats(TypedDict):
+    """Execution statistics for a single scheduled job."""
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    timeout_runs: int
+    last_run_time: Optional[str]
+    last_duration_seconds: Optional[float]
+    max_duration_seconds: float
+
+
 class ScheduledTaskMonitor:
     """Monitors scheduled task execution for hanging detection."""
 
     # Track execution history for each job
-    _job_history: Dict[str, Dict[str, Any]] = {}
+    _job_history: Dict[str, JobStats] = {}
     _history_lock = threading.RLock()
 
     @classmethod
@@ -84,52 +96,62 @@ class ScheduledTaskMonitor:
             try:
                 if timeout_seconds:
                     # Execute with timeout using ThreadPoolExecutor
-                    with ThreadPoolExecutor(max_workers=1) as executor:
-                        future = executor.submit(func, *args, **kwargs)
-                        try:
-                            result = future.result(timeout=timeout_seconds)
-                            duration = (utc_now() - start_time).total_seconds()
+                    # CRITICAL: Don't use 'with' context manager - it calls
+                    # shutdown(wait=True) which blocks forever if thread is stuck
+                    executor = ThreadPoolExecutor(max_workers=1)
+                    future = executor.submit(func, *args, **kwargs)
+                    try:
+                        result = future.result(timeout=timeout_seconds)
+                        duration = (utc_now() - start_time).total_seconds()
 
-                            logger.info(
-                                f"Scheduled job '{job_id}' completed successfully in {duration:.2f}s"
+                        logger.info(
+                            f"Scheduled job '{job_id}' completed successfully in {duration:.2f}s"
+                        )
+
+                        # Update success stats
+                        with cls._history_lock:
+                            cls._job_history[job_id]['successful_runs'] += 1
+                            cls._job_history[job_id]['last_duration_seconds'] = duration
+                            cls._job_history[job_id]['max_duration_seconds'] = max(
+                                cls._job_history[job_id]['max_duration_seconds'],
+                                duration
                             )
 
-                            # Update success stats
-                            with cls._history_lock:
-                                cls._job_history[job_id]['successful_runs'] += 1
-                                cls._job_history[job_id]['last_duration_seconds'] = duration
-                                cls._job_history[job_id]['max_duration_seconds'] = max(
-                                    cls._job_history[job_id]['max_duration_seconds'],
-                                    duration
-                                )
+                        return result
 
-                            return result
+                    except FuturesTimeoutError:
+                        duration = (utc_now() - start_time).total_seconds()
 
-                        except FuturesTimeoutError:
-                            duration = (utc_now() - start_time).total_seconds()
+                        logger.error(
+                            f"TIMEOUT: Scheduled job '{job_id}' exceeded timeout of "
+                            f"{timeout_seconds}s (ran for {duration:.2f}s) on thread {thread_name}"
+                        )
 
+                        # Update timeout stats
+                        with cls._history_lock:
+                            cls._job_history[job_id]['timeout_runs'] += 1
+
+                        # Attempt to cancel - this won't stop a running thread,
+                        # but will prevent queued work from starting
+                        future.cancel()
+
+                        if kill_on_timeout:
                             logger.error(
-                                f"TIMEOUT: Scheduled job '{job_id}' exceeded timeout of "
-                                f"{timeout_seconds}s (ran for {duration:.2f}s) on thread {thread_name}"
+                                f"Job '{job_id}' thread is stuck - cannot force-kill Python threads. "
+                                f"The orphaned thread will continue running until it completes or the process restarts."
                             )
+                            # Log thread dump for debugging
+                            dump = ThreadMonitor.dump_thread_states()
+                            logger.error(f"Thread dump for stuck job:\n{dump}")
 
-                            # Update timeout stats
-                            with cls._history_lock:
-                                cls._job_history[job_id]['timeout_runs'] += 1
+                        raise TimeoutError(
+                            f"Job '{job_id}' timed out after {timeout_seconds}s"
+                        )
 
-                            # Attempt to cancel the future
-                            cancelled = future.cancel()
-                            if not cancelled and kill_on_timeout:
-                                logger.error(
-                                    f"Failed to cancel job '{job_id}' - thread may be stuck!"
-                                )
-                                # Log thread dump for debugging
-                                dump = ThreadMonitor.dump_thread_states()
-                                logger.error(f"Thread dump for stuck job:\n{dump}")
-
-                            raise TimeoutError(
-                                f"Job '{job_id}' timed out after {timeout_seconds}s"
-                            )
+                    finally:
+                        # Shutdown WITHOUT waiting - don't block if thread is stuck
+                        # cancel_futures=True attempts to cancel pending (not running) work
+                        executor.shutdown(wait=False, cancel_futures=True)
                 else:
                     # Execute without timeout
                     result = func(*args, **kwargs)
@@ -181,15 +203,23 @@ class ScheduledTaskMonitor:
                     # Dump thread state if very long
                     if duration > 300:  # More than 5 minutes
                         dump = ThreadMonitor.dump_thread_states()
-                        dump_file = f"/tmp/slow_job_{job_id}_{int(time.time())}.txt"
-                        with open(dump_file, 'w') as f:
-                            f.write(dump)
-                        logger.warning(f"Thread dump for slow job written to {dump_file}")
+                        try:
+                            with tempfile.NamedTemporaryFile(
+                                mode='w',
+                                prefix=f'slow_job_{job_id}_',
+                                suffix='.txt',
+                                delete=False
+                            ) as f:
+                                f.write(dump)
+                                dump_file = f.name
+                            logger.warning(f"Thread dump for slow job written to {dump_file}")
+                        except OSError as e:
+                            logger.warning(f"Could not write thread dump: {e}")
 
         return monitored_wrapper
 
     @classmethod
-    def get_job_stats(cls, job_id: Optional[str] = None) -> Dict[str, Any]:
+    def get_job_stats(cls, job_id: Optional[str] = None) -> Union[JobStats, Dict[str, JobStats]]:
         """
         Get execution statistics for scheduled jobs.
 
@@ -243,68 +273,3 @@ class ScheduledTaskMonitor:
                         f"Job '{job_id}' has taken up to {stats['max_duration_seconds']:.2f}s - "
                         f"consider optimization or timeout adjustment"
                     )
-
-
-def monitor_batch_polling_operations():
-    """
-    Specifically monitor the problematic batch polling operations.
-
-    This adds extra logging around the database operations and API calls
-    that seem to be hanging.
-    """
-    import functools
-
-    def add_detailed_logging(func):
-        """Add very detailed logging to diagnose hanging."""
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            operation = f"{func.__module__}.{func.__name__}"
-            logger.debug(f"[POLL_DEBUG] Starting {operation}")
-
-            # Log each major step
-            original_func = func
-
-            # Intercept database calls
-            def log_db_operation(db_func):
-                @functools.wraps(db_func)
-                def db_wrapper(*db_args, **db_kwargs):
-                    db_op = f"{db_func.__name__}"
-                    logger.debug(f"[POLL_DEBUG] DB operation starting: {db_op}")
-                    start = time.time()
-                    try:
-                        result = db_func(*db_args, **db_kwargs)
-                        duration = time.time() - start
-                        logger.debug(
-                            f"[POLL_DEBUG] DB operation completed: {db_op} "
-                            f"(took {duration:.2f}s)"
-                        )
-                        return result
-                    except Exception as e:
-                        duration = time.time() - start
-                        logger.error(
-                            f"[POLL_DEBUG] DB operation failed: {db_op} "
-                            f"after {duration:.2f}s: {e}"
-                        )
-                        raise
-                return db_wrapper
-
-            # Execute with monitoring
-            start_time = time.time()
-            try:
-                result = func(*args, **kwargs)
-                duration = time.time() - start_time
-                logger.debug(
-                    f"[POLL_DEBUG] Completed {operation} in {duration:.2f}s"
-                )
-                return result
-            except Exception as e:
-                duration = time.time() - start_time
-                logger.error(
-                    f"[POLL_DEBUG] Failed {operation} after {duration:.2f}s: {e}",
-                    exc_info=True
-                )
-                raise
-
-        return wrapper
-
-    return add_detailed_logging

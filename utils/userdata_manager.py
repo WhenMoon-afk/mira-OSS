@@ -34,10 +34,10 @@ class UserDataManager:
     context manager pattern (`with get_user_data_manager(user_id) as db:`).
     """
 
-    def __init__(self, user_id: UUID, session_key: Optional[bytes] = None):
+    def __init__(self, user_id: UUID, session_key: bytes):
         self.user_id = user_id
         self.session_key = session_key
-        self.fernet = self._create_fernet() if session_key else None
+        self.fernet = self._create_fernet()
         self.db_path = self._get_user_db_path()
         self._conn: Optional[sqlite3.Connection] = None  # Lazy persistent connection
         self._ensure_database()
@@ -49,13 +49,17 @@ class UserDataManager:
 
         Connection is created on first access and reused for all subsequent operations.
         Uses check_same_thread=False to allow reuse across ThreadPoolExecutor workers.
+        WAL mode enables concurrent reads/writes from multiple threads.
         """
         if self._conn is None:
             self._conn = sqlite3.connect(
                 str(self.db_path),
-                check_same_thread=False  # Allow cross-thread usage (WAL mode handles concurrency)
+                check_same_thread=False  # Allow cross-thread usage
             )
             self._conn.row_factory = sqlite3.Row
+            # Enable WAL mode for concurrent read/write support
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=5000")  # Wait up to 5s for locks
         return self._conn
 
     def close(self) -> None:
@@ -86,16 +90,26 @@ class UserDataManager:
         return self.base_dir / "userdata.db"
     
     def _ensure_database(self):
-        """Create database file if it doesn't exist and set up tool schemas."""
-        is_new_database = not self.db_path.exists()
-        if is_new_database:
+        """Ensure database exists and schemas are current.
+
+        Always runs schema initialization since CREATE TABLE IF NOT EXISTS
+        is idempotent. This ensures new tables are added to existing databases
+        when features are deployed.
+        """
+        if not self.db_path.exists():
             self.db_path.touch()
             logger.info(f"Created user database: {self.db_path}")
-            # Set up all tool schemas for new user
-            self._initialize_tool_schemas()
+        self._initialize_tool_schemas()
     
     def _initialize_tool_schemas(self):
-        """Initialize database schemas for all tools."""
+        """Initialize database schemas for all tools.
+
+        TODO: Move schema migrations out of this hot path into standalone
+        scripts (scripts/migrations/) with a version table per user DB.
+        Running migrations on every UserDataManager instantiation is fragile —
+        migration ordering bugs caused a production outage (archived index
+        before column existed).
+        """
         logger.info(f"Initializing tool schemas for user {self.user_id}")
 
         # Initialize PagerTool schema
@@ -198,6 +212,7 @@ class UserDataManager:
             label TEXT UNIQUE NOT NULL,
             encrypted__description TEXT,
             enabled BOOLEAN DEFAULT TRUE,
+            archived BOOLEAN DEFAULT FALSE,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL
         )
@@ -211,9 +226,11 @@ class UserDataManager:
             parent_section_id INTEGER DEFAULT NULL REFERENCES domaindoc_sections(id) ON DELETE CASCADE,
             header TEXT NOT NULL,
             encrypted__content TEXT NOT NULL,
+            encrypted__summary TEXT DEFAULT NULL,
             sort_order INTEGER NOT NULL,
             collapsed BOOLEAN DEFAULT FALSE,
             expanded_by_default BOOLEAN DEFAULT FALSE,
+            pinned BOOLEAN DEFAULT FALSE,
             created_at TEXT NOT NULL,
             updated_at TEXT NOT NULL,
             UNIQUE(domaindoc_id, parent_section_id, header)
@@ -238,6 +255,7 @@ class UserDataManager:
         indexes_sql = [
             "CREATE INDEX IF NOT EXISTS idx_domaindocs_label ON domaindocs(label)",
             "CREATE INDEX IF NOT EXISTS idx_domaindocs_enabled ON domaindocs(enabled)",
+            "CREATE INDEX IF NOT EXISTS idx_domaindocs_archived ON domaindocs(archived)",
             "CREATE INDEX IF NOT EXISTS idx_sections_domaindoc ON domaindoc_sections(domaindoc_id)",
             "CREATE INDEX IF NOT EXISTS idx_sections_collapsed ON domaindoc_sections(domaindoc_id, collapsed)",
             "CREATE INDEX IF NOT EXISTS idx_sections_parent ON domaindoc_sections(parent_section_id)",
@@ -249,42 +267,59 @@ class UserDataManager:
         cursor.execute(sections_sql)
         cursor.execute(versions_sql)
 
+        # Run migrations for existing databases (must precede index creation
+        # since indexes may reference columns added by migrations)
+        self._migrate_domaindoc_schema(cursor)
+
         # Create indexes
         for index_sql in indexes_sql:
             cursor.execute(index_sql)
 
         self.connection.commit()
 
-    def _encrypt_value(self, value: Any) -> str:
-        """
-        Encrypt a value for storage.
+    def _migrate_domaindoc_schema(self, cursor: sqlite3.Cursor) -> None:
+        """Run schema migrations for domaindoc tables.
 
-        Raises:
-            RuntimeError: If encryption key is not available
+        Handles adding new columns to existing databases and setting
+        appropriate defaults for existing data. Must run BEFORE index
+        creation since indexes may reference columns added here.
         """
-        if self.fernet is None:
-            raise RuntimeError(
-                "No encryption key available. Cannot store encrypted data without encryption key. "
-                "Ensure session_key is provided to UserDataManager."
+        # Migrate domaindocs table
+        cursor.execute("PRAGMA table_info(domaindocs)")
+        domaindoc_columns = {row[1] for row in cursor.fetchall()}
+
+        if "archived" not in domaindoc_columns:
+            cursor.execute(
+                "ALTER TABLE domaindocs ADD COLUMN archived BOOLEAN DEFAULT FALSE"
             )
+            self.connection.commit()
+            logger.info("Migrated domaindocs: added archived column")
 
+        # Migrate domaindoc_sections table
+        cursor.execute("PRAGMA table_info(domaindoc_sections)")
+        section_columns = {row[1] for row in cursor.fetchall()}
+
+        if "pinned" not in section_columns:
+            cursor.execute(
+                "ALTER TABLE domaindoc_sections ADD COLUMN pinned BOOLEAN DEFAULT FALSE"
+            )
+            # Migrate: set pinned=TRUE for top-level sections that were previously
+            # always-expanded (sort_order=0 with no parent)
+            cursor.execute(
+                "UPDATE domaindoc_sections SET pinned = TRUE "
+                "WHERE sort_order = 0 AND parent_section_id IS NULL"
+            )
+            self.connection.commit()
+            logger.info("Migrated domaindoc_sections: added pinned column")
+
+    def _encrypt_value(self, value: Any) -> str:
+        """Encrypt a value for storage."""
         json_str = json.dumps(value)
         encrypted_token = self.fernet.encrypt(json_str.encode())
         return encrypted_token.decode()  # Fernet returns base64-encoded bytes
     
     def _decrypt_value(self, encrypted_str: str) -> Any:
-        """
-        Decrypt a value from storage.
-
-        Raises:
-            RuntimeError: If encryption key is not available
-        """
-        if self.fernet is None:
-            raise RuntimeError(
-                "No encryption key available. Cannot decrypt data without encryption key. "
-                "Ensure session_key is provided to UserDataManager."
-            )
-
+        """Decrypt a value from storage."""
         try:
             decrypted_bytes = self.fernet.decrypt(encrypted_str.encode())
             return json.loads(decrypted_bytes.decode())
@@ -404,26 +439,10 @@ class UserDataManager:
         self.connection.commit()
         return cursor.rowcount
     
-    @property
-    def conversations_dir(self) -> Path:
-        path = self.base_dir / "conversations"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    
-    @property
-    def tool_feedback_dir(self) -> Path:
-        path = self.base_dir / "tool_feedback"
-        path.mkdir(parents=True, exist_ok=True)
-        return path
-    
     def get_tool_data_dir(self, tool_name: str) -> Path:
         path = self.base_dir / "tools" / tool_name
         path.mkdir(parents=True, exist_ok=True)
         return path
-    
-    @property
-    def config_path(self) -> Path:
-        return self.base_dir / "config.json"
     
     def _ensure_credentials_table(self):
         """Helper method to ensure credentials table exists (used by UserCredentialService)."""

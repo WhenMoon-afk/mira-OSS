@@ -14,15 +14,37 @@ This module is pure data processing with no side effects.
 """
 import json
 import logging
-from typing import List, Dict, Any, Optional, Tuple, Set
+from typing import List, Dict, Any, NamedTuple, NotRequired, Optional, Tuple, TypedDict
+from uuid import UUID
 
 from rapidfuzz import fuzz
 
-from lt_memory.models import ExtractedMemory, ExtractionResult
+from lt_memory.models import ExtractedMemory, ExtractionResult, LinkingPair, MemoryContext, VALID_RELATIONSHIP_TYPES
 from lt_memory.vector_ops import VectorOps
 from config.config import ExtractionConfig
 
 logger = logging.getLogger(__name__)
+
+
+class DuplicateCheckResult(NamedTuple):
+    """Result of duplicate memory check."""
+    is_duplicate: bool
+    similarity: float | None
+    duplicate_id: str | None
+
+
+class RawMemoryDict(TypedDict, total=False):
+    """Raw memory dict from LLM extraction response before validation."""
+    text: str
+    importance_score: float
+    confidence: float
+    expires_at: str | None
+    happens_at: str | None
+    relationship_type: str | None
+    related_memory_ids: list[dict[str, str]]
+    consolidates_memory_ids: list[str]
+    linking_hints: list[dict[str, Any]]
+    entities: list[dict[str, str]]
 
 
 class MemoryProcessor:
@@ -49,7 +71,7 @@ class MemoryProcessor:
         self,
         response_text: str,
         short_to_uuid: Dict[str, str],
-        memory_context: Dict[str, Any]
+        memory_context: MemoryContext
     ) -> ExtractionResult:
         """
         Process batch extraction result from LLM response.
@@ -107,7 +129,8 @@ class MemoryProcessor:
                 relationship_type=memory_dict.get("relationship_type"),
                 related_memory_ids=memory_dict.get("related_memory_ids", []),
                 consolidates_memory_ids=memory_dict.get("consolidates_memory_ids", []),
-                linking_hints=memory_dict.get("linking_hints", [])
+                linking_hints=memory_dict.get("linking_hints", []),
+                entities=memory_dict.get("entities", [])
             )
 
             # Track mapping from original index to filtered index
@@ -259,7 +282,7 @@ class MemoryProcessor:
                     f"JSON repair failed with unexpected error: {repair_error}"
                 ) from repair_error
 
-    def _validate_memory_list_structure(self, parsed: Any) -> bool:
+    def _validate_memory_list_structure(self, parsed: object) -> bool:
         """
         Validate that parsed result is a list of memory dicts.
 
@@ -291,9 +314,9 @@ class MemoryProcessor:
 
     def _remap_short_ids_to_full(
         self,
-        memories_data: List[Dict[str, Any]],
+        memories_data: List[RawMemoryDict],
         short_to_full: Dict[str, str]
-    ) -> List[Dict[str, Any]]:
+    ) -> List[RawMemoryDict]:
         """
         Remap shortened UUID identifiers back to full UUIDs.
 
@@ -307,24 +330,25 @@ class MemoryProcessor:
             Updated memory dicts with full UUIDs
         """
         for memory_dict in memories_data:
-            # Remap related_memory_ids
+            # Remap related_memory_ids: remap id field inside dicts
             if "related_memory_ids" in memory_dict:
                 related_ids = memory_dict["related_memory_ids"]
                 if isinstance(related_ids, list):
-                    full_ids = [
-                        short_to_full.get(short_id, short_id)
-                        for short_id in related_ids
-                    ]
-                    memory_dict["related_memory_ids"] = full_ids
+                    for ref in related_ids:
+                        if isinstance(ref, dict) and "id" in ref:
+                            ref["id"] = short_to_full.get(ref["id"], ref["id"])
 
-            # Remap consolidates_memory_ids
+            # Remap consolidates_memory_ids (short str → full UUID)
             if "consolidates_memory_ids" in memory_dict:
                 consolidate_ids = memory_dict["consolidates_memory_ids"]
                 if isinstance(consolidate_ids, list):
-                    full_ids = [
-                        short_to_full.get(short_id, short_id)
-                        for short_id in consolidate_ids
-                    ]
+                    full_ids = []
+                    for short_id in consolidate_ids:
+                        full_str = short_to_full.get(short_id, short_id)
+                        try:
+                            full_ids.append(UUID(full_str))
+                        except ValueError:
+                            logger.warning(f"Invalid UUID in consolidates_memory_ids after remap: {full_str}")
                     memory_dict["consolidates_memory_ids"] = full_ids
 
         return memories_data
@@ -365,34 +389,50 @@ class MemoryProcessor:
         # FIX: Normalize relationship type
         relationship_type = memory_dict.get("relationship_type")
         if relationship_type:
-            valid_types = {"conflicts", "supports", "supersedes", "related", "null"}
-            if relationship_type not in valid_types:
+            if relationship_type not in VALID_RELATIONSHIP_TYPES:
                 logger.warning(f"Fixing invalid relationship_type '{relationship_type}' -> null")
                 memory_dict["relationship_type"] = None
 
-        # FIX: Ensure UUID lists are valid
-        for uuid_field in ["related_memory_ids", "consolidates_memory_ids"]:
-            if uuid_field in memory_dict:
-                uuid_list = memory_dict[uuid_field]
-                if not isinstance(uuid_list, list):
-                    logger.warning(f"Fixing {uuid_field}: converting {type(uuid_list)} to empty list")
-                    memory_dict[uuid_field] = []
+        # FIX: Ensure consolidates_memory_ids is valid UUID list
+        if "consolidates_memory_ids" in memory_dict:
+            uuid_list = memory_dict["consolidates_memory_ids"]
+            if not isinstance(uuid_list, list):
+                logger.warning(f"Fixing consolidates_memory_ids: converting {type(uuid_list)} to empty list")
+                memory_dict["consolidates_memory_ids"] = []
 
-        # FIX: Validate linking hints
+        # REJECT: Validate related_memory_ids as list of ExtractionRef dicts
+        if "related_memory_ids" in memory_dict:
+            refs = memory_dict["related_memory_ids"]
+            if not isinstance(refs, list):
+                logger.error(f"Rejecting memory: related_memory_ids is {type(refs)}, not list")
+                return False
+            for ref in refs:
+                if not isinstance(ref, dict) or "id" not in ref or "bond" not in ref:
+                    logger.error(
+                        f"Rejecting memory: malformed related_memory_ids entry {ref!r}. "
+                        f"Expected {{'id': str, 'bond': str}}"
+                    )
+                    return False
+
+        # REJECT: Validate linking_hints as list of LinkingHint dicts
         if "linking_hints" in memory_dict:
             hints = memory_dict["linking_hints"]
             if not isinstance(hints, list):
-                logger.warning(f"Fixing linking_hints: converting {type(hints)} to empty list")
-                memory_dict["linking_hints"] = []
-            else:
-                # Filter out invalid hints (keep only non-negative integers)
-                valid_hints = []
-                for hint in hints:
-                    if isinstance(hint, int) and hint >= 0:
-                        valid_hints.append(hint)
-                    else:
-                        logger.warning(f"Removing invalid linking hint: {hint} (type: {type(hint)})")
-                memory_dict["linking_hints"] = valid_hints
+                logger.error(f"Rejecting memory: linking_hints is {type(hints)}, not list")
+                return False
+            for hint in hints:
+                if not isinstance(hint, dict) or "idx" not in hint or "bond" not in hint:
+                    logger.error(
+                        f"Rejecting memory: malformed linking_hints entry {hint!r}. "
+                        f"Expected {{'idx': int, 'bond': str}}"
+                    )
+                    return False
+                if not isinstance(hint["idx"], int) or hint["idx"] < 0:
+                    logger.error(
+                        f"Rejecting memory: linking_hints idx must be non-negative int, "
+                        f"got {hint['idx']!r}"
+                    )
+                    return False
 
         # FIX: Validate numeric fields with fallbacks
         if "confidence" in memory_dict:
@@ -407,13 +447,36 @@ class MemoryProcessor:
                 logger.warning(f"Fixing invalid importance_score {importance} -> None (will use default)")
                 memory_dict.pop("importance_score", None)
 
+        # Validate and filter entities list
+        if "entities" in memory_dict:
+            entities = memory_dict["entities"]
+            if not isinstance(entities, list):
+                logger.warning(f"Fixing entities: converting {type(entities)} to empty list")
+                memory_dict["entities"] = []
+            else:
+                # Filter to valid entity dicts
+                valid_entities = []
+                for entity in entities:
+                    if not isinstance(entity, dict):
+                        continue
+                    if 'name' not in entity or 'type' not in entity:
+                        continue
+                    if not isinstance(entity['name'], str) or not isinstance(entity['type'], str):
+                        continue
+                    # Normalize entity name (strip whitespace)
+                    entity['name'] = entity['name'].strip()
+                    if len(entity['name']) < 2:
+                        continue
+                    valid_entities.append(entity)
+                memory_dict["entities"] = valid_entities
+
         return True
 
     def _is_duplicate_memory(
         self,
         memory_dict: Dict[str, Any],
-        memory_context: Dict[str, Any]
-    ) -> Tuple[bool, Optional[float], Optional[str]]:
+        memory_context: MemoryContext
+    ) -> DuplicateCheckResult:
         """
         Check if extracted memory is duplicate of existing memory.
 
@@ -431,18 +494,18 @@ class MemoryProcessor:
         """
         # Consolidation memories intentionally mirror existing memories
         if memory_dict.get("consolidates_memory_ids"):
-            return False, None, None
+            return DuplicateCheckResult(False, None, None)
 
         memory_text = memory_dict.get("text", "").strip()
         if not memory_text:
-            return False, None, None
+            return DuplicateCheckResult(False, None, None)
 
         # Stage 1: Fuzzy text matching (wider net than exact, cheaper than vector)
         if memory_context:
             context_ids = memory_context.get("memory_ids", [])
             context_texts = memory_context.get("memory_texts", [])
 
-            # Handle dict format: {uuid: text}
+            # Dict format: {uuid: text} — produced by extraction_engine.py
             if isinstance(context_texts, dict):
                 for memory_id, existing_text in context_texts.items():
                     if not existing_text:
@@ -455,33 +518,18 @@ class MemoryProcessor:
                             f"Fuzzy match found: similarity {similarity:.3f} "
                             f"with existing memory {memory_id}"
                         )
-                        return True, similarity, memory_id
-            # Handle list format (parallel arrays)
-            elif isinstance(context_texts, list):
-                for idx, existing_text in enumerate(context_texts):
-                    if not existing_text:
-                        continue
-
-                    # Use rapidfuzz for fuzzy matching
-                    similarity = fuzz.ratio(existing_text.strip(), memory_text) / 100.0
-                    if similarity >= 0.95:  # High fuzzy threshold for near-duplicates
-                        duplicate_id = context_ids[idx] if idx < len(context_ids) else None
-                        logger.debug(
-                            f"Fuzzy match found: similarity {similarity:.3f} "
-                            f"with existing memory {duplicate_id}"
-                        )
-                        return True, similarity, duplicate_id
+                        return DuplicateCheckResult(True, similarity, memory_id)
 
         # Stage 2: Vector similarity search
-        similar_memories = self.vector_ops.find_similar_memories(
-            query=memory_text,
+        similar_memories = self.vector_ops.find_similar_for_dedup(
+            query_text=memory_text,
             limit=5,
             similarity_threshold=self.config.dedup_similarity_threshold,
             min_importance=0.001  # Filter cold storage (0.0) memories
         )
 
         if not similar_memories:
-            return False, None, None
+            return DuplicateCheckResult(False, None, None)
 
         # Extract best match score and ID
         best_score = None
@@ -489,25 +537,23 @@ class MemoryProcessor:
 
         for memory in similar_memories:
             score = memory.similarity_score
-            memory_id = memory.id
-
             if score is not None and (best_score is None or score > best_score):
                 best_score = score
-                best_memory_id = str(memory_id)
+                best_memory_id = memory.id
 
         # Fallback if no scores extracted
         if best_score is None:
             best_score = self.config.dedup_similarity_threshold
             if similar_memories:
-                best_memory_id = str(similar_memories[0].id)
+                best_memory_id = similar_memories[0].id
 
-        return True, best_score, best_memory_id
+        return DuplicateCheckResult(True, best_score, best_memory_id)
 
     def _build_linking_pairs(
         self,
         extracted_memories: List[ExtractedMemory],
         original_to_filtered_idx: Dict[int, int]
-    ) -> List[Tuple[int, int]]:
+    ) -> List[LinkingPair]:
         """
         Build linking pairs from extraction hints with index remapping.
 
@@ -518,13 +564,16 @@ class MemoryProcessor:
             original_to_filtered_idx: Mapping from original LLM index to filtered index
 
         Returns:
-            List of (source_idx, target_idx) tuples
+            List of LinkingPair dicts with source_idx, target_idx, and bond
         """
-        linking_pairs = []
+        linking_pairs: List[LinkingPair] = []
+        seen_pairs: set[tuple[int, int]] = set()
 
         for filtered_idx, memory in enumerate(extracted_memories):
-            # Deduplicate hints and remap to filtered indices
-            for original_hint_idx in set(memory.linking_hints):
+            for hint in memory.linking_hints:
+                original_hint_idx = hint["idx"]
+                bond = hint.get("bond", "")
+
                 # Check if hinted memory survived filtering
                 if original_hint_idx not in original_to_filtered_idx:
                     logger.debug(
@@ -542,6 +591,16 @@ class MemoryProcessor:
                     )
                     continue
 
-                linking_pairs.append((filtered_idx, target_filtered_idx))
+                # Deduplicate by pair
+                pair_key = (filtered_idx, target_filtered_idx)
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+
+                linking_pairs.append(LinkingPair(
+                    source_idx=filtered_idx,
+                    target_idx=target_filtered_idx,
+                    bond=bond
+                ))
 
         return linking_pairs

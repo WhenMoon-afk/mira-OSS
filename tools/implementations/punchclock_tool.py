@@ -158,7 +158,7 @@ class PunchclockTool(Tool):
                     },
                     "start_time": {
                         "type": "string",
-                        "description": "Start time override (ISO timestamp or offset like '-5m')",
+                        "description": "Start time override: offset ('-10m', '+30m') or ISO timestamp ('2025-01-02T09:00')",
                     },
                     "session_id": {
                         "type": "string",
@@ -166,7 +166,7 @@ class PunchclockTool(Tool):
                     },
                     "time": {
                         "type": "string",
-                        "description": "Time override for pause, resume, or punch_out",
+                        "description": "Time override for pause, resume, or punch_out: offset ('-10m', '+30m') or ISO timestamp",
                     },
                     "include_completed": {
                         "type": "boolean",
@@ -182,11 +182,6 @@ class PunchclockTool(Tool):
                 "additionalProperties": False,
             },
         }
-
-    tool_hints = (
-        "Use punchclock_tool to keep lightweight time logs: punch_in with a label, pause/resume as needed,"
-        " and punch_out when finished. For offsets pass '-10m', '+30m', or natural times like '2025-01-02T09:00'."
-    )
 
     def __init__(self, working_memory: Optional["WorkingMemory"] = None):
         super().__init__()

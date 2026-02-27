@@ -8,14 +8,14 @@ and configurable through these endpoints.
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field, ValidationError as PydanticValidationError
 
 from auth.api import get_current_user
+from auth.types import SessionData, APITokenContext
 from cns.api.base import (
-    APIResponse,
     ValidationError,
     NotFoundError,
     create_success_response,
@@ -31,45 +31,28 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# Response models
-class ToolListItem(BaseModel):
-    """Tool information for listing."""
-    name: str = Field(..., description="Tool identifier")
-    config_class: str = Field(..., description="Pydantic config class name")
-    has_user_config: bool = Field(..., description="Whether user has saved config")
-
-
-class ToolConfigResponse(BaseModel):
-    """Response containing tool configuration."""
-    tool_name: str
-    config: Dict[str, Any]
-    has_user_config: bool
-    defaults: Dict[str, Any]
-
-
 # Helper functions
-def _get_configurable_tools() -> Dict[str, type]:
+def _get_configurable_tools() -> dict[str, type]:
     """Get all tools with registered config classes."""
     return {name: config_class for name, config_class in registry._registry.items()}
 
 
-def _get_user_tool_config(tool_name: str) -> Optional[Dict[str, Any]]:
+def _get_user_tool_config(tool_name: str) -> dict[str, Any] | None:
     """Get user's saved config for a tool, or None if not set."""
+    credential_service = UserCredentialService()
+    config_json = credential_service.get_credential(
+        credential_type="tool_config",
+        service_name=tool_name
+    )
+    if not config_json:
+        return None
     try:
-        credential_service = UserCredentialService()
-        config_json = credential_service.get_credential(
-            credential_type="tool_config",
-            service_name=tool_name
-        )
-        if config_json:
-            return json.loads(config_json)
-        return None
-    except Exception as e:
-        logger.error(f"Error retrieving tool config for {tool_name}: {e}")
-        return None
+        return json.loads(config_json)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Corrupt tool config for {tool_name}: {e}") from e
 
 
-def _save_user_tool_config(tool_name: str, config: Dict[str, Any]) -> None:
+def _save_user_tool_config(tool_name: str, config: dict[str, Any]) -> None:
     """Save user's config for a tool."""
     credential_service = UserCredentialService()
     credential_service.store_credential(
@@ -92,8 +75,8 @@ def _delete_user_tool_config(tool_name: str) -> bool:
 @router.get("/actions/tools")
 async def list_configurable_tools(
     response: Response,
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
+) -> dict[str, Any]:
     """
     List all tools with registered configuration classes.
 
@@ -138,8 +121,8 @@ async def list_configurable_tools(
 async def get_tool_config(
     tool_name: str,
     response: Response,
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
+) -> dict[str, Any]:
     """
     Get current configuration for a tool.
 
@@ -196,8 +179,8 @@ async def get_tool_config(
 async def get_tool_schema(
     tool_name: str,
     response: Response,
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
+) -> dict[str, Any]:
     """
     Get JSON Schema for a tool's configuration.
 
@@ -240,7 +223,7 @@ async def get_tool_schema(
 
 class ToolConfigUpdateRequest(BaseModel):
     """Request body for updating tool configuration."""
-    config: Dict[str, Any] = Field(..., description="Tool configuration values")
+    config: dict[str, Any] = Field(..., description="Tool configuration values")
 
 
 @router.put("/actions/tools/{tool_name}")
@@ -248,8 +231,8 @@ async def update_tool_config(
     tool_name: str,
     request_body: ToolConfigUpdateRequest,
     response: Response,
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
+) -> dict[str, Any]:
     """
     Update configuration for a tool.
 
@@ -318,8 +301,8 @@ async def validate_tool_config(
     tool_name: str,
     request_body: ToolConfigUpdateRequest,
     response: Response,
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
+) -> dict[str, Any]:
     """
     Validate tool configuration without saving.
 
@@ -352,7 +335,6 @@ async def validate_tool_config(
             )
 
         config_dict = validated_config.model_dump()
-        discovered_data = {}
 
         # Call tool-specific validation if the tool implements it
         discovered_data = _call_tool_validation(tool_name, config_dict)
@@ -387,20 +369,36 @@ async def validate_tool_config(
         return api_response.to_dict()
 
 
-def _call_tool_validation(tool_name: str, config: Dict[str, Any]) -> Dict[str, Any]:
+def _call_tool_validation(tool_name: str, config: dict[str, Any]) -> dict[str, Any]:
     """
     Call the tool's validate_config method if it exists.
 
     Tools can implement custom validation (connection tests, auto-discovery)
     by overriding the validate_config classmethod.
     """
-    from tools.repo import ToolRepository
+    import importlib
+    import inspect
+    from tools.repo import Tool
 
-    # Get the tool repository to look up tool classes
-    tool_repo = ToolRepository()
-    tool_repo.discover_tools()
+    # Import the tool module directly - avoids ToolRepository.discover_tools()
+    # which has expensive side effects and requires working_memory for some tools
+    try:
+        module = importlib.import_module(f"tools.implementations.{tool_name}")
+    except ImportError:
+        return {}
 
-    tool_class = tool_repo.tool_classes.get(tool_name)
+    # Find the Tool subclass matching this tool_name
+    tool_class: type[Tool] | None = None
+    for attr_name in dir(module):
+        attr = getattr(module, attr_name)
+        if (inspect.isclass(attr) and
+            issubclass(attr, Tool) and
+            attr is not Tool and
+            attr.__module__ == module.__name__ and
+            getattr(attr, 'name', None) == tool_name):
+            tool_class = attr
+            break
+
     if not tool_class:
         return {}
 
@@ -418,8 +416,8 @@ def _call_tool_validation(tool_name: str, config: Dict[str, Any]) -> Dict[str, A
 async def reset_tool_config(
     tool_name: str,
     response: Response,
-    current_user: dict = Depends(get_current_user)
-) -> Dict[str, Any]:
+    current_user: SessionData | APITokenContext = Depends(get_current_user)
+) -> dict[str, Any]:
     """
     Reset tool configuration to defaults.
 

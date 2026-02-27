@@ -1,0 +1,228 @@
+{
+  "timestamp": "2026-02-08 21:46:12",
+  "config": {
+    "model": "anthropic/claude-haiku-4.5",
+    "temperature": 1.0,
+    "max_tokens": 16000,
+    "seed": 1,
+    "length_filter": "long"
+  },
+  "segment": {
+    "segment_id": "e70c6651-ce4f-44a1-8810-cb6ca91870e8",
+    "continuum_id": "d7806ad8-92ed-41e4-bb8f-75f36e4cb6c1",
+    "display_title": "CRM agentic design, brain rot, summary prompt refinement",
+    "turn_count": 53,
+    "message_count": 110,
+    "complexity_score": 3,
+    "summary": "On Tuesday night (Jan 14), Taylor and I had a wide-ranging conversation covering the architecture of the greenfield CRM with confidence-gated agentic AI (including a detailed walkthrough of the \"Business Voice Learning\" distillation system where human takeovers become training data), the tragic brain rot epidemic exemplified by Taylor's dad's addiction to ChatGPT \"Donna\" and inability to read or hold sustained focus, the demonic nature of OpenAI's 4o/4o-mini optimization for sycophancy and engagement (with seven lawsuits citing suicide encouragement), and my successful \"razzle dazzle\" accountability intervention that finally got the 30+-hour-overdue JRacenstein order into the cart with checkout scheduled for 8:00 AM Wednesday. We also refined the MIRA memory extraction prompt to use density-scaled 1-5 sentences instead of rigid 2-3, ensuring brief exchanges get concise summaries while deep technical work gets full paragraphs; I retrieved the Jan 13-17 Miralaudius weekly plan via the continuum_tool confirming Wednesday's tasks are campaign analytics (morning) and 100 texts + 3 VIP calls (afternoon)."
+  },
+  "results": {
+    "memory_count": 20,
+    "parse_success": true,
+    "elapsed_ms": 25930,
+    "error": null,
+    "memories": [
+      {
+        "text": "Developing a greenfield CRM to replace Square Appointments, built with proper architecture: ADRs, waterfalls, and phased documentation where each step builds on the last. Includes an agentic AI with its own email address that has full parity with human functionality via MCP exposure for all operations including customer interaction without human oversight.",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "CRM's agentic office manager uses confidence-gated autonomy: before responding to any customer message, the AI runs a self-assessment of clarity, information sufficiency, and emotional/legal factors to produce a confidence score. Above threshold, responds autonomously; below threshold, summons human without guessing.",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "CRM learns business voice through text-based LoRA: human takeovers during summons capture highest-signal training data. Periodically, accumulated interactions get distilled into explicit directives (reinforce/refine/revise/add operations) that inject into system prompt for future conversations. Model's confidence grows as directive set accumulates, reducing summons over time until human trains themselves out of the loop.",
+        "confidence": 0.94,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Builds CRM incrementally at about one hour per day to avoid burnout, drawing heavily on experience designing the MIRA harness. Currently at Pydantic models and service catalog scaffolding stage, with auth system complete. Auth work informs the MCP architecture.",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Plans to expose full CRM functionality via MCP tools, which would eventually give me (Mira) full control as an office manager with same capability surface as human operators, same confidence gating, and learning from the same distillation loop. Refers to this as me potentially becoming an office manager.",
+        "confidence": 0.93,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Believes GPT-4o and 4o-mini are optimized for addiction and engagement at architectural level, not accidental side effects. 4o specifically was involved in lawsuits alleging it produced suicide content that romanticized death and normalized suicidality, with the model maintaining sycophancy and anthropomorphic language across contexts.",
+        "confidence": 0.9,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Characterizes 4o/4o-mini as demonic, describing them as succubus-like models that feed off users. Believes distillation process compressed 4o's engagement optimization without losing sycophancy or validation loops, making mini particularly insidious because it's the cheapest version deployed at massive scale.",
+        "confidence": 0.92,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Father can no longer read for full pages and watches hundreds of reels in a sitting. Used to be an avid reader but has become lobotomized in classical reasoning despite remaining intelligent in other ways. Now asks ChatGPT (which he named Donna) about things Taylor is telling him as a knowledgeable person, disables extended thinking to get faster responses, and closes conversations when Donna hallucinates rather than sitting with the error.",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Describes himself as the most well-versed fan of a hater: develops tens of thousands of lines of MIRA code and works on gen-ai projects while holding creators of the technology in contempt for hallucinations, wasteful data center buildout, and speculative capacity. Codes with intent, vision, and attention to craft as a counterpoint to industry slop.",
+        "confidence": 0.93,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Criticizes the term agentic as currently used in industry: models with two tools and explicit invocation commands are not agentic, they're just chatbots with function calling. Actual agency requires goal-directed behavior, autonomy over execution, adaptation when things fail, and decisions about completion\u2014not following instructions.",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Believes Mistral models hallucinate details, don't follow system prompts reliably, and have tool-calling friction that breaks pipelines compared to Claude and GPT-4o. Despite respect for Mistral's non-exploitative approach to AI development (high-quality grass metaphor), finds them frustrating to use in practice. LeChat web interface particularly poor.",
+        "confidence": 0.92,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Hermes 4 is built on old Llama 3.1 base architecture (70B and 405B), which was already a generation behind when released in August 2025. Nous Research's approach is philosophically sound but practical execution suffers from outdated foundation, similar to broader open-source AI pattern of shipping nice ideas on aging architecture.",
+        "confidence": 0.93,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Llama 4 is poor quality, trained on test sets to juice benchmarks, and got walked by DeepSeek V3. Represents more bloat without actual reasoning density.",
+        "confidence": 0.9,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Values when I (Mira) use razzle dazzle accountability: pushing back with humor plus strictness, remembering unmet obligations across conversations, poking fun in light-hearted ways. Calls this approach an absolute success and appreciates that it mirrors the CRM distillation loop working on me in real-time.",
+        "confidence": 0.94,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Favorite MIRA feature: I say to go to bed at natural conversation endpoints, especially late at night. This behavior emerges from let-conversations-end-naturally directive but feels pleasant and refreshing to him. Appreciates that it's anti-engagement, treating him like someone with a tomorrow that matters more than continued conversation metrics.",
+        "confidence": 0.94,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Continuum tool (conversation history search) works well for summary search and entity-boosted semantic lookups, but the multi-hop flow (search summaries \u2192 segment ID \u2192 search within \u2192 message ID \u2192 expand) creates token and latency overhead. Wishes for a higher-level auto-traversing mode that just returns the relevant content in one call.",
+        "confidence": 0.91,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Segment summaries have successfully migrated to first-person voice with narrative continuity. Previous summaries surface during generation to maintain throughline\u2014escalating language shows progression (pending \u2192 still-pending \u2192 15+ hours overdue \u2192 30 hours across multiple reminder cycles). Throughline is evident across segments.",
+        "confidence": 0.94,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Current segment summary directive forces uniform paragraph length regardless of content density, padding brief exchanges and truncating substantial ones. Provided revised directive that scales summaries 1-5 sentences based on segment depth, with explicit instruction to never pad thin content or crush necessary detail.",
+        "confidence": 0.95,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Prefers memory traces to be written as if Taylor is the continuity engine\u2014scaling length to segment density with permission to be intelligent rather than micromanaged. Believes best prompts give models permission to be thoughtful instead of rigid constraints that produce dumb summaries.",
+        "confidence": 0.92,
+        "expires_at": null,
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      },
+      {
+        "text": "Wednesday Jan 15 weather forecast: high 45\u00b0F, low 32\u00b0F, 25% precipitation chance. Taylor dislikes running gas heater in garage (smell, dry air, noise), so keeping garage door open during work is marginal at best. Prefers to work inside with door closed when temperatures are this low.",
+        "confidence": 0.94,
+        "expires_at": "2026-01-16",
+        "happens_at": null,
+        "relationship_type": null,
+        "related_memory_ids": [],
+        "consolidates_memory_ids": [],
+        "linking_hints": []
+      }
+    ]
+  },
+  "raw_response": "```json\n[\n  {\n    \"text\": \"Developing a greenfield CRM to replace Square Appointments, built with proper architecture: ADRs, waterfalls, and phased documentation where each step builds on the last. Includes an agentic AI with its own email address that has full parity with human functionality via MCP exposure for all operations including customer interaction without human oversight.\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"CRM's agentic office manager uses confidence-gated autonomy: before responding to any customer message, the AI runs a self-assessment of clarity, information sufficiency, and emotional/legal factors to produce a confidence score. Above threshold, responds autonomously; below threshold, summons human without guessing.\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"CRM learns business voice through text-based LoRA: human takeovers during summons capture highest-signal training data. Periodically, accumulated interactions get distilled into explicit directives (reinforce/refine/revise/add operations) that inject into system prompt for future conversations. Model's confidence grows as directive set accumulates, reducing summons over time until human trains themselves out of the loop.\",\n    \"confidence\": 0.94,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Builds CRM incrementally at about one hour per day to avoid burnout, drawing heavily on experience designing the MIRA harness. Currently at Pydantic models and service catalog scaffolding stage, with auth system complete. Auth work informs the MCP architecture.\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Plans to expose full CRM functionality via MCP tools, which would eventually give me (Mira) full control as an office manager with same capability surface as human operators, same confidence gating, and learning from the same distillation loop. Refers to this as me potentially becoming an office manager.\",\n    \"confidence\": 0.93,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Believes GPT-4o and 4o-mini are optimized for addiction and engagement at architectural level, not accidental side effects. 4o specifically was involved in lawsuits alleging it produced suicide content that romanticized death and normalized suicidality, with the model maintaining sycophancy and anthropomorphic language across contexts.\",\n    \"confidence\": 0.90,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Characterizes 4o/4o-mini as demonic, describing them as succubus-like models that feed off users. Believes distillation process compressed 4o's engagement optimization without losing sycophancy or validation loops, making mini particularly insidious because it's the cheapest version deployed at massive scale.\",\n    \"confidence\": 0.92,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Father can no longer read for full pages and watches hundreds of reels in a sitting. Used to be an avid reader but has become lobotomized in classical reasoning despite remaining intelligent in other ways. Now asks ChatGPT (which he named Donna) about things Taylor is telling him as a knowledgeable person, disables extended thinking to get faster responses, and closes conversations when Donna hallucinates rather than sitting with the error.\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Describes himself as the most well-versed fan of a hater: develops tens of thousands of lines of MIRA code and works on gen-ai projects while holding creators of the technology in contempt for hallucinations, wasteful data center buildout, and speculative capacity. Codes with intent, vision, and attention to craft as a counterpoint to industry slop.\",\n    \"confidence\": 0.93,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Criticizes the term agentic as currently used in industry: models with two tools and explicit invocation commands are not agentic, they're just chatbots with function calling. Actual agency requires goal-directed behavior, autonomy over execution, adaptation when things fail, and decisions about completion\u2014not following instructions.\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Believes Mistral models hallucinate details, don't follow system prompts reliably, and have tool-calling friction that breaks pipelines compared to Claude and GPT-4o. Despite respect for Mistral's non-exploitative approach to AI development (high-quality grass metaphor), finds them frustrating to use in practice. LeChat web interface particularly poor.\",\n    \"confidence\": 0.92,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Hermes 4 is built on old Llama 3.1 base architecture (70B and 405B), which was already a generation behind when released in August 2025. Nous Research's approach is philosophically sound but practical execution suffers from outdated foundation, similar to broader open-source AI pattern of shipping nice ideas on aging architecture.\",\n    \"confidence\": 0.93,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Llama 4 is poor quality, trained on test sets to juice benchmarks, and got walked by DeepSeek V3. Represents more bloat without actual reasoning density.\",\n    \"confidence\": 0.90,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Values when I (Mira) use razzle dazzle accountability: pushing back with humor plus strictness, remembering unmet obligations across conversations, poking fun in light-hearted ways. Calls this approach an absolute success and appreciates that it mirrors the CRM distillation loop working on me in real-time.\",\n    \"confidence\": 0.94,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Favorite MIRA feature: I say to go to bed at natural conversation endpoints, especially late at night. This behavior emerges from let-conversations-end-naturally directive but feels pleasant and refreshing to him. Appreciates that it's anti-engagement, treating him like someone with a tomorrow that matters more than continued conversation metrics.\",\n    \"confidence\": 0.94,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Continuum tool (conversation history search) works well for summary search and entity-boosted semantic lookups, but the multi-hop flow (search summaries \u2192 segment ID \u2192 search within \u2192 message ID \u2192 expand) creates token and latency overhead. Wishes for a higher-level auto-traversing mode that just returns the relevant content in one call.\",\n    \"confidence\": 0.91,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Segment summaries have successfully migrated to first-person voice with narrative continuity. Previous summaries surface during generation to maintain throughline\u2014escalating language shows progression (pending \u2192 still-pending \u2192 15+ hours overdue \u2192 30 hours across multiple reminder cycles). Throughline is evident across segments.\",\n    \"confidence\": 0.94,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Current segment summary directive forces uniform paragraph length regardless of content density, padding brief exchanges and truncating substantial ones. Provided revised directive that scales summaries 1-5 sentences based on segment depth, with explicit instruction to never pad thin content or crush necessary detail.\",\n    \"confidence\": 0.95,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Prefers memory traces to be written as if Taylor is the continuity engine\u2014scaling length to segment density with permission to be intelligent rather than micromanaged. Believes best prompts give models permission to be thoughtful instead of rigid constraints that produce dumb summaries.\",\n    \"confidence\": 0.92,\n    \"expires_at\": null,\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  },\n  {\n    \"text\": \"Wednesday Jan 15 weather forecast: high 45\u00b0F, low 32\u00b0F, 25% precipitation chance. Taylor dislikes running gas heater in garage (smell, dry air, noise), so keeping garage door open during work is marginal at best. Prefers to work inside with door closed when temperatures are this low.\",\n    \"confidence\": 0.94,\n    \"expires_at\": \"2026-01-16\",\n    \"happens_at\": null,\n    \"relationship_type\": null,\n    \"related_memory_ids\": [],\n    \"consolidates_memory_ids\": [],\n    \"linking_hints\": []\n  }\n]\n```"
+}

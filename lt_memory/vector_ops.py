@@ -6,12 +6,16 @@ Singleton service that wraps the embeddings provider and database access.
 """
 import logging
 import numpy as np
-from typing import List, Optional, Union
+from typing import List, Optional, Union, TYPE_CHECKING
 from uuid import UUID
 
 from lt_memory.models import Memory, ExtractedMemory
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.hybrid_search import HybridSearcher
+
+if TYPE_CHECKING:
+    from clients.embeddings_provider import HybridEmbeddingsProvider
+    from config.config import VectorSearchConfig, HybridSearchConfig
 
 logger = logging.getLogger(__name__)
 
@@ -23,19 +27,29 @@ class VectorOps:
     Uses mdbr-leaf-ir-asym (768d) for document embeddings.
     """
 
-    def __init__(self, embeddings_provider, db: LTMemoryDB):
+    def __init__(
+        self,
+        embeddings_provider: 'HybridEmbeddingsProvider',
+        db: LTMemoryDB,
+        vector_search_config: Optional['VectorSearchConfig'] = None,
+        hybrid_search_config: Optional['HybridSearchConfig'] = None
+    ):
         """
         Initialize vector operations service.
 
         Args:
             embeddings_provider: Hybrid embeddings provider singleton
             db: LTMemoryDB instance for database access
+            vector_search_config: VectorSearchConfig for search defaults (optional)
+            hybrid_search_config: HybridSearchConfig for hybrid search (optional)
         """
         self.embeddings_provider = embeddings_provider
         self.db = db
+        self.vector_search_config = vector_search_config
+        self.hybrid_search_config = hybrid_search_config
 
-        # Initialize hybrid searcher
-        self.hybrid_searcher = HybridSearcher(db)
+        # Initialize hybrid searcher with config
+        self.hybrid_searcher = HybridSearcher(db, config=hybrid_search_config)
 
     def generate_embedding(self, text: str) -> List[float]:
         """
@@ -130,24 +144,61 @@ class VectorOps:
     def find_similar_memories(
         self,
         query: str,
-        limit: int = 10,
-        similarity_threshold: float = 0.7,
-        min_importance: float = 0.1
+        limit: Optional[int] = None,
+        similarity_threshold: Optional[float] = None,
+        min_importance: Optional[float] = None
     ) -> List[Memory]:
         """
         Find similar memories using vector similarity search from text query.
 
         Args:
             query: Query text to search for
-            limit: Maximum results to return
-            similarity_threshold: Minimum cosine similarity (0-1)
-            min_importance: Minimum importance score filter
+            limit: Maximum results to return (uses config default if None)
+            similarity_threshold: Minimum cosine similarity (uses config default if None)
+            min_importance: Minimum importance score filter (default: 0.1)
 
         Returns:
             List of Memory models sorted by similarity
         """
+        # Apply config defaults if values not provided
+        if self.vector_search_config:
+            limit = limit if limit is not None else self.vector_search_config.default_limit
+            similarity_threshold = similarity_threshold if similarity_threshold is not None else self.vector_search_config.default_similarity_threshold
+        else:
+            limit = limit if limit is not None else 10
+            similarity_threshold = similarity_threshold if similarity_threshold is not None else 0.7
+        min_importance = min_importance if min_importance is not None else 0.1
+
         # Use realtime (query) encoding for search queries
         embedding = self.embeddings_provider.encode_realtime([query])[0]
+        if isinstance(embedding, np.ndarray):
+            query_embedding = embedding.tolist()
+        else:
+            query_embedding = embedding
+
+        return self._search_with_embedding(
+            query_embedding=query_embedding,
+            limit=limit,
+            similarity_threshold=similarity_threshold,
+            min_importance=min_importance
+        )
+
+    def find_similar_for_dedup(
+        self,
+        query_text: str,
+        limit: int = 5,
+        similarity_threshold: float = 0.92,
+        min_importance: float = 0.001
+    ) -> List[Memory]:
+        """
+        Find similar memories using document encoding for dedup comparison.
+
+        Unlike find_similar_memories() which uses encode_realtime() (query encoder),
+        this uses encode_deep() (document encoder) for document-to-document comparison.
+        The asymmetric embedding model produces different vector spaces for queries vs
+        documents — dedup compares documents against documents so must use the same encoder.
+        """
+        embedding = self.embeddings_provider.encode_deep([query_text])[0]
         if isinstance(embedding, np.ndarray):
             query_embedding = embedding.tolist()
         else:
@@ -297,7 +348,7 @@ class VectorOps:
             min_importance=min_importance
         )
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Clean up resources.
 

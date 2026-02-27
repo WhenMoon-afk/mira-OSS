@@ -8,10 +8,10 @@ link creation and batch classification payload building.
 import json
 import logging
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Optional, Union
 from uuid import UUID
 
-from lt_memory.models import Memory, MemoryLink
+from lt_memory.models import Memory, MemoryLink, ClassificationPayload, ClassificationResult, TraversalResult, VALID_RELATIONSHIP_TYPES
 from config.config import LinkingConfig
 from lt_memory.vector_ops import VectorOps
 from lt_memory.db_access import LTMemoryDB
@@ -54,7 +54,7 @@ class LinkingService:
         self.llm_provider = llm_provider
         self._load_prompts()
 
-    def _load_prompts(self):
+    def _load_prompts(self) -> None:
         """
         Load relationship classification prompt.
 
@@ -81,8 +81,13 @@ class LinkingService:
         """
         Find candidate memories for relationship classification.
 
-        Searches for semantically similar memories above the configured
-        similarity threshold, filtered by minimum importance.
+        Uses two discovery axes:
+        1. Vector similarity — finds memories with similar embedding content
+        2. Entity co-occurrence — finds memories sharing entities (people,
+           places, orgs) regardless of embedding distance
+
+        The union of both axes feeds the classifier, which decides whether
+        each candidate pair has a meaningful relationship.
 
         Args:
             memory_id: Source memory UUID
@@ -90,24 +95,87 @@ class LinkingService:
         Returns:
             List of candidate Memory objects (excludes source memory)
         """
-        similar_memories = self.vector_ops.find_similar_to_memory(
+        # Axis 1: Vector similarity (existing behavior)
+        vector_candidates = self.vector_ops.find_similar_to_memory(
             memory_id=memory_id,
             limit=self.config.max_candidates_per_memory,
             similarity_threshold=self.config.similarity_threshold_for_linking,
             min_importance=0.001  # Filter cold storage (0.0) memories
         )
 
+        # Axis 2: Entity co-occurrence
+        entity_candidates = self._find_entity_candidates(memory_id)
+
+        # Union and deduplicate
+        seen_ids = set()
+        combined = []
+        for mem in vector_candidates + entity_candidates:
+            if mem.id not in seen_ids and mem.id != memory_id:
+                seen_ids.add(mem.id)
+                combined.append(mem)
+
         logger.debug(
-            f"Found {len(similar_memories)} candidates for memory {memory_id}"
+            f"Found {len(combined)} candidates for memory {memory_id} "
+            f"(vector={len(vector_candidates)}, entity={len(entity_candidates)}, "
+            f"unique={len(combined)})"
         )
 
-        return similar_memories
+        return combined
+
+    def _find_entity_candidates(
+        self,
+        memory_id: UUID
+    ) -> List[Memory]:
+        """
+        Find memories that share entities with the source memory.
+
+        For each entity linked to the source memory, retrieves other memories
+        also linked to that entity. This catches cross-domain connections where
+        memories share people/places/orgs but have distant embeddings (e.g.,
+        "Annika is vegetarian" + "planning birthday dinner for Annika").
+
+        Args:
+            memory_id: Source memory UUID
+
+        Returns:
+            List of candidate Memory objects (excludes source, cold storage)
+        """
+        source_memory = self.db.get_memory(memory_id)
+        if not source_memory or not source_memory.entity_links:
+            return []
+
+        seen_ids = {memory_id}  # Exclude source
+        candidates = []
+
+        for entity_link in source_memory.entity_links:
+            entity_id = entity_link.get("uuid")
+            if not entity_id:
+                continue
+
+            try:
+                entity_uuid = UUID(entity_id)
+            except ValueError:
+                logger.warning(f"Malformed entity UUID in entity_links: {entity_id}")
+                continue
+
+            co_occurring = self.db.get_memories_for_entity(entity_uuid)
+
+            for mem in co_occurring:
+                if mem.id in seen_ids:
+                    continue
+                if mem.importance_score is not None and mem.importance_score <= 0.0:
+                    continue  # Skip cold storage
+                seen_ids.add(mem.id)
+                candidates.append(mem)
+
+        return candidates
 
     def build_classification_payload(
         self,
         source_memory: Memory,
-        target_memory: Memory
-    ) -> Dict[str, Any]:
+        target_memory: Memory,
+        bond: str = ""
+    ) -> ClassificationPayload:
         """
         Build relationship classification request payload for batch API.
 
@@ -117,12 +185,13 @@ class LinkingService:
         Args:
             source_memory: Source memory
             target_memory: Target memory for comparison
+            bond: Extraction-time bond descriptor (3-word hint from extraction LLM)
 
         Returns:
             Dictionary with prompt and classification parameters
         """
         # Build user prompt
-        user_prompt = self._build_relationship_prompt(source_memory, target_memory)
+        user_prompt = self._build_relationship_prompt(source_memory, target_memory, bond=bond)
 
         return {
             "source_id": str(source_memory.id),
@@ -154,7 +223,8 @@ class LinkingService:
     def _build_relationship_prompt(
         self,
         source_memory: Memory,
-        target_memory: Memory
+        target_memory: Memory,
+        bond: str = ""
     ) -> str:
         """
         Build user prompt for relationship classification.
@@ -162,6 +232,7 @@ class LinkingService:
         Args:
             source_memory: Source memory
             target_memory: Target memory
+            bond: Extraction-time bond descriptor (optional context hint)
 
         Returns:
             Formatted prompt text
@@ -169,7 +240,11 @@ class LinkingService:
         source_temporal = self._format_temporal_fields(source_memory)
         target_temporal = self._format_temporal_fields(target_memory)
 
-        prompt = f"""Analyze the relationship between these memories:
+        extraction_context = ""
+        if bond:
+            extraction_context = f"\nExtraction context: \"{bond}\"\n"
+
+        prompt = f"""Classify the relationship between these memories:
 
 NEW MEMORY:
 Text: "{source_memory.text}"
@@ -180,31 +255,23 @@ EXISTING MEMORY:
 Text: "{target_memory.text}"
 Temporal: {target_temporal}
 Importance: {target_memory.importance_score:.3f}
-
-RELATIONSHIP TYPES:
-- conflicts: Mutually exclusive or contradictory information
-- supersedes: New memory explicitly updates or replaces old information
-- causes: New memory directly leads to or triggers target memory
-- instance_of: New memory is specific example of target memory's general pattern
-- invalidated_by: New memory provides empirical evidence that disproves target memory
-- motivated_by: New memory explains the reasoning/intent behind target memory
-- null: No meaningful relationship (default when uncertain)
-
-Default to "null" when uncertain - sparse, high-confidence links are better than dense, noisy ones.
+{extraction_context}
+Would knowing one of these memories change how you'd act on the other? If so, classify the connection.
 
 Respond with JSON:
 {{
-    "relationship_type": "conflicts|supersedes|causes|instance_of|invalidated_by|motivated_by|null",
+    "relationship_type": "supports|conflicts|supersedes|refines|precedes|contextualizes|null",
     "confidence": 0.0-1.0,
     "reasoning": "Brief explanation"
 }}"""
 
         return prompt
 
+    # DEAD CODE — no active callers (verified 2026-02-26). Candidate for removal.
     def _parse_classification_response(
         self,
         response_text: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[ClassificationResult]:
         """
         Parse relationship classification response from LLM.
 
@@ -228,11 +295,7 @@ Respond with JSON:
                 return None
 
             # Validate relationship type
-            valid_types = {
-                "conflicts", "supersedes", "causes", "instance_of",
-                "invalidated_by", "motivated_by", "null"
-            }
-            if relationship_type not in valid_types:
+            if relationship_type not in VALID_RELATIONSHIP_TYPES:
                 logger.warning(f"Invalid relationship type: {relationship_type}")
                 return None
 
@@ -242,6 +305,7 @@ Respond with JSON:
             logger.error(f"Failed to parse classification response: {e}")
             return None
 
+    # DEAD CODE — no active callers (verified 2026-02-26). Candidate for removal.
     def classify_relationship_sync(
         self,
         source_memory: Memory,
@@ -271,15 +335,14 @@ Respond with JSON:
         # Build prompt
         user_prompt = self._build_relationship_prompt(source_memory, target_memory)
 
-        # Call LLM
+        # Call LLM using relationship internal LLM config
         response = self.llm_provider.generate_response(
             messages=[
                 {"role": "system", "content": self.relationship_system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.2,
-            max_tokens=self.config.classification_max_tokens,
-            response_format={"type": "json_object"}
+            internal_llm='relationship',
+            allow_negative=True,  # System task - complete even if user balance negative
         )
 
         response_text = self.llm_provider.extract_text_content(response)
@@ -317,7 +380,8 @@ Respond with JSON:
         target_id: UUID,
         link_type: str,
         confidence: float,
-        reasoning: str
+        reasoning: str,
+        extraction_bond: str = ""
     ) -> bool:
         """
         Create single bidirectional link between memories.
@@ -331,6 +395,7 @@ Respond with JSON:
             link_type: Relationship type (conflicts, supports, supersedes, related)
             confidence: Link confidence (0.0-1.0)
             reasoning: Explanation of relationship
+            extraction_bond: 3-word bond from extraction LLM (preserved as-is)
 
         Returns:
             True if link created successfully
@@ -344,6 +409,7 @@ Respond with JSON:
             link_type=link_type,
             confidence=confidence,
             reasoning=reasoning,
+            extraction_bond=extraction_bond,
             created_at=utc_now()
         )
 
@@ -385,7 +451,7 @@ Respond with JSON:
         self,
         memory_id: UUID,
         depth: Optional[int] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> List[TraversalResult]:
         """
         Traverse memory graph from starting memory with link metadata.
 
@@ -483,45 +549,7 @@ Respond with JSON:
 
         return all_related
 
-    def get_link_statistics(
-        self,
-        memory_id: UUID
-    ) -> Dict[str, int]:
-        """
-        Get link statistics for a memory.
-
-        Args:
-            memory_id: Memory UUID
-
-        Returns:
-            Dictionary with link counts by type
-        """
-        links = self.db.get_links_for_memory(memory_id)
-
-        stats = {
-            "total_inbound": len(links["inbound"]),
-            "total_outbound": len(links["outbound"]),
-            "inbound_by_type": {},
-            "outbound_by_type": {}
-        }
-
-        # Count inbound by type
-        for link in links["inbound"]:
-            link_type = link.get("type", "unknown")
-            stats["inbound_by_type"][link_type] = (
-                stats["inbound_by_type"].get(link_type, 0) + 1
-            )
-
-        # Count outbound by type
-        for link in links["outbound"]:
-            link_type = link.get("type", "unknown")
-            stats["outbound_by_type"][link_type] = (
-                stats["outbound_by_type"].get(link_type, 0) + 1
-            )
-
-        return stats
-
-    def cleanup(self):
+    def cleanup(self) -> None:
         """
         Clean up resources.
 

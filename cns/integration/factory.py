@@ -4,11 +4,10 @@ CNS Integration Factory
 Provides service initialization and dependency injection for connecting CNS
 with existing MIRA components (tool repository, working memory, workflow manager, etc.)
 """
+from __future__ import annotations
 
-import os
-from pathlib import Path
-from typing import Optional, Dict, Any
 import logging
+from typing import TYPE_CHECKING
 
 from config.config_manager import config
 from clients.llm_provider import LLMProvider
@@ -17,12 +16,18 @@ from tools.repo import ToolRepository
 from utils.tag_parser import TagParser
 
 from ..services.orchestrator import ContinuumOrchestrator
-from ..infrastructure.continuum_repository import ContinuumRepository
 from .event_bus import EventBus
 from ..services.summary_generator import SummaryGenerator
 from ..core.segment_cache_loader import SegmentCacheLoader
 from ..services.segment_collapse_handler import SegmentCollapseHandler
 from ..infrastructure.continuum_pool import get_continuum_pool, initialize_continuum_pool
+from ..infrastructure.valkey_message_cache import ValkeyMessageCache
+
+if TYPE_CHECKING:
+    from clients.hybrid_embeddings_provider import HybridEmbeddingsProvider
+    from cns.services.memory_relevance_service import MemoryRelevanceService
+    from cns.services.subcortical import SubcorticalLayer
+    from cns.services.peanutgallery_service import PeanutGalleryService
 
 logger = logging.getLogger(__name__)
 
@@ -35,25 +40,26 @@ class CNSIntegrationFactory:
     clean dependency injection for the CNS architecture.
     """
     
-    def __init__(self, config_instance = None):
+    def __init__(self, config_instance: object = None) -> None:
         """
         Initialize the factory with configuration.
-        
+
         Args:
             config_instance: MIRA configuration instance. If None, will use global config.
         """
         self.config = config_instance or config
-        self._embedding_model = None
-        self._llm_provider = None
-        self._working_memory = None
-        self._tool_repo = None
-        self._tag_parser = None
-        self._event_bus = None
-        self._summary_generator = None
-        self._session_cache_loader = None
-        self._pointer_summary_coordinator = None
-        self._fingerprint_generator = None
-        self._memory_evacuator = None
+        self._embedding_model: HybridEmbeddingsProvider | None = None
+        self._llm_provider: LLMProvider | None = None
+        self._working_memory: WorkingMemory | None = None
+        self._tool_repo: ToolRepository | None = None
+        self._tag_parser: TagParser | None = None
+        self._event_bus: EventBus | None = None
+        self._summary_generator: SummaryGenerator | None = None
+        self._session_cache_loader: SegmentCacheLoader | None = None
+        self._subcortical_layer: SubcorticalLayer | None = None
+        self._peanutgallery_service: PeanutGalleryService | None = None
+        self._valkey_cache: ValkeyMessageCache | None = None
+        self._memory_relevance_service: MemoryRelevanceService | None = None
         
     def create_orchestrator(self) -> ContinuumOrchestrator:
         """
@@ -75,9 +81,10 @@ class CNSIntegrationFactory:
 
         tool_repo = self._get_tool_repository(working_memory)
 
-        # Create ToolLoaderTrinket after tool_repo is available
-        # This must be done after tool_repo creation but before LLM provider
-        self._create_tool_loader_trinket(event_bus, working_memory, tool_repo)
+        # Wire ephemeral tool cleanup on turn end
+        essential_set = set(self.config.tools.essential_tools)
+        event_bus.subscribe('TurnCompletedEvent',
+            lambda e: tool_repo.cleanup_ephemeral_tools(essential_set))
 
         llm_provider = self._get_llm_provider(tool_repo)
         tag_parser = self._get_tag_parser()
@@ -90,11 +97,8 @@ class CNSIntegrationFactory:
         # Create memory relevance service for surfacing memories
         memory_relevance_service = self._get_memory_relevance_service()
 
-        # Create fingerprint generator for retrieval query expansion
-        fingerprint_generator = self._get_fingerprint_generator(llm_provider)
-
-        # Create memory evacuator for curating pinned memories under pressure
-        memory_evacuator = self._get_memory_evacuator(llm_provider)
+        # Create subcortical layer for retrieval query expansion
+        subcortical_layer = self._get_subcortical_layer(llm_provider)
 
         # Initialize session cache loader
         self._initialize_session_cache(continuum_repo, event_bus)
@@ -112,6 +116,9 @@ class CNSIntegrationFactory:
         # Initialize manifest query service with event bus
         self._initialize_manifest_query_service(event_bus)
 
+        # Initialize Peanut Gallery metacognitive observer service with event bus
+        self._initialize_peanutgallery_service(event_bus, llm_provider)
+
         # Create orchestrator with all dependencies
         orchestrator = ContinuumOrchestrator(
             llm_provider=llm_provider,
@@ -119,16 +126,15 @@ class CNSIntegrationFactory:
             working_memory=working_memory,
             tool_repo=tool_repo,
             tag_parser=tag_parser,
-            fingerprint_generator=fingerprint_generator,
+            subcortical_layer=subcortical_layer,
             memory_relevance_service=memory_relevance_service,
             event_bus=event_bus,
-            memory_evacuator=memory_evacuator
         )
 
         logger.info("CNS orchestrator initialized successfully with full integration")
         return orchestrator
         
-    def _get_embedding_model(self):
+    def _get_embedding_model(self) -> HybridEmbeddingsProvider:
         """Get or create hybrid embedding provider instance."""
         if self._embedding_model is None:
             logger.info("Initializing hybrid embedding provider")
@@ -137,7 +143,7 @@ class CNSIntegrationFactory:
             logger.info("Hybrid embedding provider initialized")
         return self._embedding_model
         
-    def _get_llm_provider(self, tool_repo=None) -> LLMProvider:
+    def _get_llm_provider(self, tool_repo: ToolRepository | None = None) -> LLMProvider:
         """Get or create LLM provider instance."""
         if self._llm_provider is None:
             logger.info("Initializing LLM provider")
@@ -161,29 +167,21 @@ class CNSIntegrationFactory:
             from working_memory.trinkets.reminder_manager import ReminderManager
             from working_memory.trinkets.manifest_trinket import ManifestTrinket
             from working_memory.trinkets.proactive_memory_trinket import ProactiveMemoryTrinket
-            from working_memory.trinkets.tool_guidance_trinket import ToolGuidanceTrinket
             from working_memory.trinkets.domaindoc_trinket import DomaindocTrinket
             from working_memory.trinkets.getcontext_trinket import GetContextTrinket
+            from working_memory.trinkets.lora_trinket import LoraTrinket
 
             # Trinkets self-register with working memory
             TimeManager(event_bus, self._working_memory)
             ReminderManager(event_bus, self._working_memory)
             ManifestTrinket(event_bus, self._working_memory)
             ProactiveMemoryTrinket(event_bus, self._working_memory)
-            ToolGuidanceTrinket(event_bus, self._working_memory)
             DomaindocTrinket(event_bus, self._working_memory)
             GetContextTrinket(event_bus, self._working_memory)
+            LoraTrinket(event_bus, self._working_memory)
             
             logger.info("Event-driven working memory initialized with trinkets")
         return self._working_memory
-
-    def _create_tool_loader_trinket(self, event_bus: EventBus, working_memory: WorkingMemory, tool_repo: ToolRepository) -> None:
-        """Create ToolLoaderTrinket after tool repository is available."""
-        from working_memory.trinkets.tool_loader_trinket import ToolLoaderTrinket
-
-        # Create trinket with tool_repo for cleanup operations
-        ToolLoaderTrinket(event_bus, working_memory, tool_repo)
-        logger.info("ToolLoaderTrinket initialized for dynamic tool loading")
 
     def _get_tool_repository(self, working_memory: WorkingMemory) -> ToolRepository:
         """Get or create tool repository instance."""
@@ -237,7 +235,7 @@ class CNSIntegrationFactory:
             logger.info("Summary generator initialized")
         return self._summary_generator
     
-    def _initialize_session_cache(self, continuum_repo, event_bus: EventBus):
+    def _initialize_session_cache(self, continuum_repo: object, event_bus: EventBus) -> None:
         """Initialize session cache loader."""
         logger.info("Initializing session cache loader")
 
@@ -251,26 +249,9 @@ class CNSIntegrationFactory:
         # Initialize continuum pool with session loader
         initialize_continuum_pool(continuum_repo, self._session_cache_loader)
 
-        # Get continuum pool
-        continuum_pool = get_continuum_pool()
-
-        # NOTE: Memory extraction now uses segment-based APScheduler jobs
-        # Segments collapse on timeout and trigger batch memory extraction automatically
-        # if self._pointer_summary_coordinator is None:
-        #     logger.info("Initializing pointer summary extraction coordinator")
-        #     from lt_memory.pointer_summary_extraction import PointerSummaryExtractionCoordinator
-        #     from lt_memory.memory_extraction_service import memory_extraction_service
-        #
-        #     self._pointer_summary_coordinator = PointerSummaryExtractionCoordinator(
-        #         event_bus=event_bus,
-        #         continuum_repository=continuum_repo,
-        #         memory_service=memory_extraction_service,
-        #     )
-        #     logger.info("Pointer summary extraction coordinator initialized")
-
-    def _get_memory_relevance_service(self):
+    def _get_memory_relevance_service(self) -> MemoryRelevanceService:
         """Get or create memory relevance service for surfacing memories."""
-        if not hasattr(self, '_memory_relevance_service') or self._memory_relevance_service is None:
+        if self._memory_relevance_service is None:
             logger.info("Initializing Memory Relevance Service")
 
             # Import new CNS service and lt_memory factory
@@ -290,34 +271,19 @@ class CNSIntegrationFactory:
         return self._memory_relevance_service
         
     
-    def _get_fingerprint_generator(self, llm_provider: LLMProvider):
-        """Get or create fingerprint generator instance."""
-        if self._fingerprint_generator is None:
-            logger.info("Initializing FingerprintGenerator")
-            from ..services.fingerprint_generator import FingerprintGenerator
-            self._fingerprint_generator = FingerprintGenerator(
+    def _get_subcortical_layer(self, llm_provider: LLMProvider) -> SubcorticalLayer:
+        """Get or create subcortical layer instance."""
+        if self._subcortical_layer is None:
+            logger.info("Initializing SubcorticalLayer")
+            from ..services.subcortical import SubcorticalLayer
+            self._subcortical_layer = SubcorticalLayer(
                 analysis_enabled=self.config.api.analysis_enabled,
                 llm_provider=llm_provider
             )
-            logger.info("FingerprintGenerator initialized")
-        return self._fingerprint_generator
+            logger.info("SubcorticalLayer initialized")
+        return self._subcortical_layer
 
-    def _get_memory_evacuator(self, llm_provider: LLMProvider):
-        """Get or create memory evacuator instance."""
-        if self._memory_evacuator is None:
-            logger.info("Initializing MemoryEvacuator")
-            from ..services.memory_evacuator import MemoryEvacuator
-            self._memory_evacuator = MemoryEvacuator(
-                proactive_config=self.config.lt_memory.proactive,
-                llm_provider=llm_provider
-            )
-            logger.info(
-                f"MemoryEvacuator initialized: threshold={self.config.lt_memory.proactive.evacuation_trigger_threshold}, "
-                f"target={self.config.lt_memory.proactive.evacuation_target_count}"
-            )
-        return self._memory_evacuator
-
-    def _initialize_domain_knowledge_service(self, event_bus: EventBus):
+    def _initialize_domain_knowledge_service(self, event_bus: EventBus) -> None:
         """
         Initialize domain knowledge (domaindoc) system.
 
@@ -332,7 +298,7 @@ class CNSIntegrationFactory:
         """
         logger.info("Domaindoc system uses SQLite storage (no service initialization needed)")
 
-    def _initialize_segment_collapse_handler(self, event_bus: EventBus):
+    def _initialize_segment_collapse_handler(self, event_bus: EventBus) -> None:
         """
         Initialize segment collapse handler with event bus.
 
@@ -371,7 +337,7 @@ class CNSIntegrationFactory:
 
         logger.info("Segment collapse handler initialized and subscribed to SegmentTimeoutEvent")
 
-    def _initialize_userdata_cleanup_handler(self, event_bus: EventBus):
+    def _initialize_userdata_cleanup_handler(self, event_bus: EventBus) -> None:
         """
         Initialize UserDataManager cleanup handler with event bus.
 
@@ -383,7 +349,7 @@ class CNSIntegrationFactory:
         self._userdata_cleanup_handler = UserDataManagerCleanupHandler(event_bus)
         logger.info("UserDataManager cleanup handler initialized")
 
-    def _initialize_manifest_query_service(self, event_bus: EventBus):
+    def _initialize_manifest_query_service(self, event_bus: EventBus) -> None:
         """
         Initialize manifest query service with event bus.
 
@@ -391,15 +357,72 @@ class CNSIntegrationFactory:
         """
         logger.info("Initializing manifest query service with event subscriptions")
 
-        from cns.services.manifest_query_service import get_manifest_query_service
+        from cns.services.manifest_query_service import initialize_manifest_query_service
 
         # Initialize service with event bus (singleton pattern)
-        manifest_service = get_manifest_query_service(event_bus=event_bus)
+        manifest_service = initialize_manifest_query_service(event_bus=event_bus)
 
         logger.info("Manifest query service initialized and subscribed to ManifestUpdatedEvent")
 
+    def _initialize_peanutgallery_service(self, event_bus: EventBus, llm_provider: LLMProvider) -> None:
+        """
+        Initialize Peanut Gallery metacognitive observer service with event bus.
 
-def create_cns_orchestrator(config_instance = None) -> ContinuumOrchestrator:
+        The service subscribes to TurnCompletedEvent and periodically evaluates
+        the conversation for compaction, concerns, and coaching opportunities.
+        """
+        if self._peanutgallery_service is not None:
+            return
+
+        # Check if peanutgallery is enabled
+        if not self.config.peanutgallery.enabled:
+            logger.info("Peanut Gallery observer disabled in config")
+            return
+
+        logger.info("Initializing Peanut Gallery observer service")
+
+        from cns.services.peanutgallery_model import PeanutGalleryModel
+        from cns.services.peanutgallery_service import PeanutGalleryService
+        from working_memory.trinkets.peanutgallery_trinket import PeanutGalleryTrinket
+        from lt_memory.factory import get_lt_memory_factory
+
+        # Get or create Valkey cache
+        if self._valkey_cache is None:
+            self._valkey_cache = ValkeyMessageCache()
+
+        # Get lt_memory factory for linking and proactive services
+        lt_factory = get_lt_memory_factory()
+
+        # Create PeanutGallery model
+        model = PeanutGalleryModel(
+            config=self.config.peanutgallery,
+            llm_provider=llm_provider,
+            linking_service=lt_factory.linking
+        )
+
+        # Create PeanutGalleryTrinket for HUD guidance display
+        PeanutGalleryTrinket(
+            event_bus,
+            self._working_memory,
+            default_ttl=self.config.peanutgallery.guidance_ttl_turns
+        )
+
+        # Create and store Peanut Gallery service
+        self._peanutgallery_service = PeanutGalleryService(
+            model=model,
+            valkey_cache=self._valkey_cache,
+            event_bus=event_bus,
+            config=self.config.peanutgallery,
+            proactive_service=lt_factory.proactive
+        )
+
+        logger.info(
+            f"Peanut Gallery service initialized "
+            f"(trigger_interval={self.config.peanutgallery.trigger_interval})"
+        )
+
+
+def create_cns_orchestrator(config_instance: object = None) -> ContinuumOrchestrator:
     """
     Convenience function to create a fully configured CNS orchestrator.
     

@@ -1,0 +1,248 @@
+{
+  "timestamp": "2026-02-24 04:24:51",
+  "config": {
+    "consolidation_similarity_threshold": 0.85,
+    "min_cluster_size": 2,
+    "max_consolidation_rejection_count": 3
+  },
+  "metrics": {
+    "clusters_processed": 1,
+    "total_input_memories": 47,
+    "total_merged": 24,
+    "total_independent": 23,
+    "total_merge_groups": 9,
+    "merge_rate": 0.5106382978723404,
+    "independence_rate": 0.48936170212765956,
+    "avg_merge_group_size": 2.6666666666666665,
+    "cluster_sizes": [
+      47
+    ],
+    "compression": {
+      "mean": 0.7083737875192155,
+      "min": 0.30807248764415157,
+      "max": 0.8717948717948718
+    },
+    "parse_failure_rate": 0.0,
+    "parse_failures": 0,
+    "coverage_failure_rate": 0.0,
+    "coverage_failures": 0,
+    "violation_counts": {},
+    "samples_with_violations": 0
+  },
+  "clusters": [
+    {
+      "cluster_id": "component_4",
+      "input_memory_ids": [
+        "40d142e4-7b88-4a73-a61f-74b0e7ea27d3",
+        "e45201a8-fecf-43f5-8415-fab8a60ab01c",
+        "271aad78-d49b-4505-88a0-10e97a0565cd",
+        "b4f0018e-225b-4a4e-bd3f-2d91e0c19ae1",
+        "0bd05cf5-c5ea-4aad-8661-4e85575f3015",
+        "5efa3a71-867c-46ad-91b8-8f440091d481",
+        "44ae1e9a-4f38-42a5-be90-392f2f9bbbc9",
+        "ad166bd1-ef0b-4f5c-a448-bc7769771a82",
+        "80b336c2-182b-453a-bdfa-32448663711f",
+        "6221aab1-c55a-4e85-980c-45c906dc1156",
+        "2e409aa4-4e7b-44c9-8f95-a049cf193444",
+        "9b839743-22ba-46ea-b4a0-686f3c0c2722",
+        "00482dc5-4511-4950-94f1-4bb6b1bc8d9b",
+        "61c50705-8bee-4bb5-87a1-01ecebb4005f",
+        "75533a95-ec1e-4007-881a-48af13c2daca",
+        "40dfff2c-2f92-42d5-8096-7d2a03e26a69",
+        "b495d655-b1a7-49d6-bb26-6af14cf2d1c5",
+        "2af038a5-dbd7-4ca1-a83e-e4654561ff11",
+        "ceda0806-33c5-4249-baf5-c3d4ac8fd5a7",
+        "a37838b3-b153-431a-910b-9f9d1a7d26b3",
+        "abcab4c4-30b0-494a-ad16-bd3d122e0e32",
+        "14f415d3-de3d-4cf2-9655-c797fd143119",
+        "e55654f9-f4be-46fe-882d-2a85ad99268c",
+        "5cf73656-c4b2-4de3-8e3b-d9fd97370286",
+        "aacc0ddc-ad61-4766-bafa-31c5a0f982dd",
+        "9021e765-2063-4223-8f7a-72aadb3d5081",
+        "e88f98a0-9148-4b30-b640-5f74ff82b38c",
+        "6d270638-3d73-4251-af6c-8dd790850424",
+        "561411c6-ca00-4376-845a-655788068685",
+        "e3849109-3e88-406c-867e-57e62b385332",
+        "c0652868-5831-4f07-94d2-34b1e460dfe5",
+        "cd6dd277-84ce-46cf-810f-c053d777a624",
+        "f63bab5b-cecf-4d87-a6c7-92ab18d5585b",
+        "32f3c064-bbf1-4360-8097-919f097ab949",
+        "d25c6bb4-4b18-49b7-a6eb-c6deae097069",
+        "56fab8fa-4820-48b2-91b0-b40b4176f32f",
+        "14ef2c07-6617-41b8-81d1-8a6cc3db0a13",
+        "4e0d40dd-e830-452b-ad9f-da6c18746ded",
+        "d38a4f3c-a498-444f-ad55-9104bec136af",
+        "b8719de7-3151-4dd3-985c-d7556853d597",
+        "b5631c67-5eb8-41c1-afee-5f98e9f233ab",
+        "259cc83d-543d-4252-a929-ade3cddbc148",
+        "5fd6471e-2f08-4565-98b7-25da60c205aa",
+        "7b8e4cb0-87de-4f8c-9513-2975eb489c70",
+        "32afd232-4850-4964-adb4-de84259b28c4",
+        "aa8966b5-c18f-4f71-a2bc-b0ab34298641",
+        "d5bfeb85-7bad-483d-802f-ece332bc775b"
+      ],
+      "input_memory_texts": [
+        "Frustrated watching Letta gain traction while MIRA sits without users; feels isolated because no one in network understands MIRA's architecture; lost meaningful community space from Letta Dev Hours",
+        "Feeling weary about MIRA despite months of development and excellent architecture; concerned good software does not guarantee commercial success and MIRA could be a well-architected product that fails to gain traction",
+        "Release philosophy: refuses to promote MIRA beyond passive mentions until shipping with zero bugs; explicitly rejects fast-and-loose development culture; acknowledges this may be self-limiting in current market but remains committed to personal style of quality over speed",
+        "Made significant progress on MIRA hosted version during two-month development cycle with extensive changes to both frontend and backend",
+        "Feels isolated developing MIRA alone because protecting intellectual property conflicts with open-source ideals",
+        "MIRA's interface is now working well and 'really clicking' after iterative development and troubleshooting",
+        "Develops MIRA projects because they are interesting and worth doing, independent of civilizational or long-term impact considerations",
+        "On two-day timeline to complete documentation and tests for MIRA open source release, targeting 0.9 quality (ship it when it works, not pursuit of perfection)",
+        "Builds programming projects because they're interesting and worth doing now, not because they will save the world or prevent collapse",
+        "Building MIRA, a long-term application project. Currently in constant cycle of build-cleanup-build-cleanup involving architectural fixes, bug fixes, and redesigning deprecated components.",
+        "Seeking open source contributors to help with MIRA development as the project has become overwhelming and difficult to code alone",
+        "Goal for MIRA: OSS release will establish mature architecture with good primitives that can be edited incrementally over time, locking in the major form as stable foundation.",
+        "Builds MIRA in private repo while using open source extensively; grapples with tension between wanting to contribute back to open source community and protecting business opportunity",
+        "Plans to release MIRA 1.0.0 and hopes OSS version gains community traction",
+        "MIRA project is long-running with exhausting constant cycle of architectural fixes, bug fixes, and redesigns of deprecated patterns",
+        "Reluctant to open-source MIRA because the core logic and math could be stolen, leaving the project vulnerable",
+        "Committed to MIRA despite fatigue from build-cleanup cycles, goal is OSS release establishing mature architecture with stable primitives for future iterative refinement",
+        "Built MIRA as one-man team managing complete system architecture and implementation solo",
+        "Wants Mira to continue sharing technical opinions in future conversations",
+        "Worked on MIRA project for many months, poured heart and soul into it before setting it free as open source",
+        "Long-time open source advocate since childhood, believes MIRA has potential beyond sum of its parts and no single person should own it, committed to maintaining open-source version as long as in charge",
+        "Knows MIRA is a good application and building it is the right thing to do, but the constant build-cleanup cycle is exhausting despite knowing the work matters.",
+        "Planning OSS release of MIRA on the 31st",
+        "MIRA codebase is 99,741 lines of code as of January 2026",
+        "Builds MIRA and other programming projects because they are interesting and worth doing now, not motivated by belief in preventing collapse or saving civilization",
+        "Fixed some stability issues in MIRA, uncertain whether fixes resolve the problems (fingers crossed for validation)",
+        "Currently working toward OSS release for MIRA, planning to use release as line in sand for architecture stability rather than continued rearchitecting.",
+        "Planning MIRA 0.9 open-source release after federation completion rather than 1.0, confident that real peer federation will reveal edge cases requiring post-release adjustments and refinement",
+        "Intentionally delays MIRA promotion until stable 1.0.0 release because believes in shipping working products rather than following fast-and-loose development culture",
+        "During two-month production testing phase of hosted MIRA version, implemented substantial changes to system prompt and memory architecture",
+        "Experiencing rapid disillusionment with working on the Mira codebase despite the project being technically sound and well-architected",
+        "MIRA codebase exceeds 100,000 lines",
+        "Planning MIRA OSS release as 0.9 rather than 1.0 to signal stability while accommodating anticipated adjustments and edge cases discovered during real peer federation testing",
+        "Shipped MIRA 1.0.0 release today after ten months of development with quality-first approach, meeting the Halloween deadline goal",
+        "Spent approximately one year developing MIRA system from concept to functional deployment",
+        "Releasing MIRA as 0.9 instead of 1.0 to signal that significant adjustments will be needed once real peer federation testing occurs and unforeseen edge cases emerge",
+        "Frustrated watching Letta gain commercial traction while MIRA remains without users, but maintains conviction in MIRA's architectural superiority for its use case",
+        "Has been working intensively on the Mira codebase for almost a year",
+        "Chose not to open source MIRA prematurely because early release would allow venture-backed companies to exploit the codebase and add engagement-maximizing features that contradict the core mission, plans to establish significant traction first",
+        "Planning MIRA 0.9 OSS release instead of 1.0 specifically because federation behavior needs real-world testing with actual peers to identify what breaks and adjustments needed before 1.0",
+        "Completed entire MIRA system overhaul in one month (January 2026), scope surprised even the developer",
+        "MIRA 0.9 OSS release strategy: releasing as 0.9 rather than 1.0 with explicit expectation that real peer federation testing will surface issues requiring post-release adjustments. Views 0.9 versioning as setting appropriate expectations for adoption.",
+        "Plans major MIRA OSS release in February 2026 incorporating all upgrades since January 2025",
+        "MIRA shipped live on GitHub repository and matches original envisioned concept; met self-imposed deadline",
+        "MIRA open source release philosophy: building interesting projects for the sake of quality work and craft rather than for world-changing impact or outcome guarantees, continues developing despite believing in inevitable systemic collapse",
+        "Planning OSS release of federation system as 0.9 instead of 1.0 because confident significant adjustments will be needed after real peer federation begins, anticipating federation will reveal unanticipated behaviors and edge cases in live deployment",
+        "Hasn't used MIRA API in many months, assumed it was broken until testing it via TUI script"
+      ],
+      "cluster_size": 47,
+      "merge_groups": [
+        {
+          "memory_ids": [
+            "mem_40d142e4",
+            "mem_14ef2c07"
+          ],
+          "merged_text": "Frustrated watching Letta gain commercial traction while MIRA remains without users; maintains conviction in MIRA's architectural superiority for its use case; feels isolated because no one in network understands MIRA's architecture and lost meaningful community space from Letta Dev Hours",
+          "reason": "Both express frustration about Letta gaining traction vs MIRA having no users, with architectural conviction; first adds isolation/community context"
+        },
+        {
+          "memory_ids": [
+            "mem_0bd05cf5",
+            "mem_00482dc5"
+          ],
+          "merged_text": "Feels isolated developing MIRA alone; builds MIRA in private repo while using open source extensively, grappling with tension between wanting to contribute back to the open source community and protecting intellectual property and business opportunity",
+          "reason": "Both describe the same IP-vs-open-source tension causing isolation; second adds the private repo and business opportunity specifics"
+        },
+        {
+          "memory_ids": [
+            "mem_44ae1e9a",
+            "mem_80b336c2",
+            "mem_aacc0ddc"
+          ],
+          "merged_text": "Builds MIRA and other programming projects because they are interesting and worth doing now, not motivated by belief in preventing collapse or saving civilization or any long-term civilizational impact considerations",
+          "reason": "All three express the identical motivation: building for intrinsic interest, not world-saving outcomes. mem_aacc0ddc is the synthesis of the other two."
+        },
+        {
+          "memory_ids": [
+            "mem_6221aab1",
+            "mem_75533a95",
+            "mem_14f415d3"
+          ],
+          "merged_text": "Building MIRA as a long-term application project; currently in constant exhausting cycle of build-cleanup-build-cleanup involving architectural fixes, bug fixes, and redesigning deprecated components; knows MIRA is a good application and building it is the right thing to do, but the cycle is exhausting despite knowing the work matters",
+          "reason": "All three describe the same exhausting build-cleanup cycle on MIRA with overlapping wording; third adds the emotional conviction layer"
+        },
+        {
+          "memory_ids": [
+            "mem_271aad78",
+            "mem_561411c6"
+          ],
+          "merged_text": "Intentionally delays MIRA promotion until stable 1.0.0 release; refuses to promote beyond passive mentions until shipping with zero bugs; explicitly rejects fast-and-loose development culture; acknowledges this approach may be self-limiting in the current market but remains committed to personal style of quality over speed",
+          "reason": "Both express the same release philosophy: no promotion until stable, rejecting fast-and-loose culture; first adds the zero-bugs threshold and self-limiting acknowledgment"
+        },
+        {
+          "memory_ids": [
+            "mem_f63bab5b",
+            "mem_6d270638",
+            "mem_56fab8fa",
+            "mem_b8719de7",
+            "mem_aa8966b5",
+            "mem_259cc83d"
+          ],
+          "merged_text": "Planning MIRA OSS release as 0.9 rather than 1.0 after federation completion, to signal stability while setting appropriate expectations for adoption; confident that real peer federation will reveal unanticipated behaviors and edge cases requiring post-release adjustments and refinement before 1.0; views 0.9 versioning as honest signaling rather than pursuit of perfection",
+          "reason": "All six express the same decision to release as 0.9 instead of 1.0 for the same reason: federation testing will surface issues. Consolidating preserves all nuances."
+        },
+        {
+          "memory_ids": [
+            "mem_9b839743",
+            "mem_e88f98a0"
+          ],
+          "merged_text": "Currently working toward OSS release for MIRA; goal is that the release will establish mature architecture with good primitives that can be edited incrementally over time, using the release as a line in the sand for architecture stability rather than continued rearchitecting",
+          "reason": "Both describe the same goal: OSS release as architectural stabilization point with good primitives for incremental future refinement"
+        },
+        {
+          "memory_ids": [
+            "mem_b4f0018e",
+            "mem_e3849109"
+          ],
+          "merged_text": "During a two-month development and production testing cycle for the hosted MIRA version, made significant progress with extensive changes to both frontend and backend, including substantial changes to system prompt and memory architecture",
+          "reason": "Both describe the same two-month hosted MIRA development cycle; second adds the specific detail of system prompt and memory architecture changes"
+        },
+        {
+          "memory_ids": [
+            "mem_d25c6bb4",
+            "mem_4e0d40dd"
+          ],
+          "merged_text": "Has been working intensively on the MIRA codebase for approximately one year, from concept to functional deployment",
+          "reason": "Both state the same ~one year development duration on MIRA"
+        }
+      ],
+      "independent_ids": [
+        "mem_e45201a8",
+        "mem_ad166bd1",
+        "mem_5efa3a71",
+        "mem_2e409aa4",
+        "mem_61c50705",
+        "mem_40dfff2c",
+        "mem_b495d655",
+        "mem_2af038a5",
+        "mem_ceda0806",
+        "mem_a37838b3",
+        "mem_abcab4c4",
+        "mem_e55654f9",
+        "mem_5cf73656",
+        "mem_9021e765",
+        "mem_c0652868",
+        "mem_cd6dd277",
+        "mem_32f3c064",
+        "mem_d38a4f3c",
+        "mem_b5631c67",
+        "mem_5fd6471e",
+        "mem_7b8e4cb0",
+        "mem_32afd232",
+        "mem_d5bfeb85"
+      ],
+      "summary": "Found 9 merge groups among the 46 memories. Major consolidations: the Letta-frustration pair, the IP-vs-opensource tension pair, the intrinsic-motivation triplet, the build-cleanup-cycle triplet, the release-philosophy pair, the 0.9-versioning sextuplet (largest group \u2014 all say the same thing about releasing as 0.9 due to federation uncertainty), the OSS-architecture-stability pair, the two-month-hosted-cycle pair, and the one-year-development pair. Many memories remain independent as they capture distinct facts, events, or emotional states that would lose specificity if merged.",
+      "parse_success": true,
+      "format_violations": [],
+      "all_ids_accounted": true,
+      "missing_ids": [],
+      "duplicate_ids": [],
+      "raw_response": "```json\n{\n    \"merge_groups\": [\n        {\n            \"memory_ids\": [\"mem_40d142e4\", \"mem_14ef2c07\"],\n            \"merged_text\": \"Frustrated watching Letta gain commercial traction while MIRA remains without users; maintains conviction in MIRA's architectural superiority for its use case; feels isolated because no one in network understands MIRA's architecture and lost meaningful community space from Letta Dev Hours\",\n            \"reason\": \"Both express frustration about Letta gaining traction vs MIRA having no users, with architectural conviction; first adds isolation/community context\"\n        },\n        {\n            \"memory_ids\": [\"mem_0bd05cf5\", \"mem_00482dc5\"],\n            \"merged_text\": \"Feels isolated developing MIRA alone; builds MIRA in private repo while using open source extensively, grappling with tension between wanting to contribute back to the open source community and protecting intellectual property and business opportunity\",\n            \"reason\": \"Both describe the same IP-vs-open-source tension causing isolation; second adds the private repo and business opportunity specifics\"\n        },\n        {\n            \"memory_ids\": [\"mem_44ae1e9a\", \"mem_80b336c2\", \"mem_aacc0ddc\"],\n            \"merged_text\": \"Builds MIRA and other programming projects because they are interesting and worth doing now, not motivated by belief in preventing collapse or saving civilization or any long-term civilizational impact considerations\",\n            \"reason\": \"All three express the identical motivation: building for intrinsic interest, not world-saving outcomes. mem_aacc0ddc is the synthesis of the other two.\"\n        },\n        {\n            \"memory_ids\": [\"mem_6221aab1\", \"mem_75533a95\", \"mem_14f415d3\"],\n            \"merged_text\": \"Building MIRA as a long-term application project; currently in constant exhausting cycle of build-cleanup-build-cleanup involving architectural fixes, bug fixes, and redesigning deprecated components; knows MIRA is a good application and building it is the right thing to do, but the cycle is exhausting despite knowing the work matters\",\n            \"reason\": \"All three describe the same exhausting build-cleanup cycle on MIRA with overlapping wording; third adds the emotional conviction layer\"\n        },\n        {\n            \"memory_ids\": [\"mem_271aad78\", \"mem_561411c6\"],\n            \"merged_text\": \"Intentionally delays MIRA promotion until stable 1.0.0 release; refuses to promote beyond passive mentions until shipping with zero bugs; explicitly rejects fast-and-loose development culture; acknowledges this approach may be self-limiting in the current market but remains committed to personal style of quality over speed\",\n            \"reason\": \"Both express the same release philosophy: no promotion until stable, rejecting fast-and-loose culture; first adds the zero-bugs threshold and self-limiting acknowledgment\"\n        },\n        {\n            \"memory_ids\": [\"mem_f63bab5b\", \"mem_6d270638\", \"mem_56fab8fa\", \"mem_b8719de7\", \"mem_aa8966b5\", \"mem_259cc83d\"],\n            \"merged_text\": \"Planning MIRA OSS release as 0.9 rather than 1.0 after federation completion, to signal stability while setting appropriate expectations for adoption; confident that real peer federation will reveal unanticipated behaviors and edge cases requiring post-release adjustments and refinement before 1.0; views 0.9 versioning as honest signaling rather than pursuit of perfection\",\n            \"reason\": \"All six express the same decision to release as 0.9 instead of 1.0 for the same reason: federation testing will surface issues. Consolidating preserves all nuances.\"\n        },\n        {\n            \"memory_ids\": [\"mem_9b839743\", \"mem_e88f98a0\"],\n            \"merged_text\": \"Currently working toward OSS release for MIRA; goal is that the release will establish mature architecture with good primitives that can be edited incrementally over time, using the release as a line in the sand for architecture stability rather than continued rearchitecting\",\n            \"reason\": \"Both describe the same goal: OSS release as architectural stabilization point with good primitives for incremental future refinement\"\n        },\n        {\n            \"memory_ids\": [\"mem_b4f0018e\", \"mem_e3849109\"],\n            \"merged_text\": \"During a two-month development and production testing cycle for the hosted MIRA version, made significant progress with extensive changes to both frontend and backend, including substantial changes to system prompt and memory architecture\",\n            \"reason\": \"Both describe the same two-month hosted MIRA development cycle; second adds the specific detail of system prompt and memory architecture changes\"\n        },\n        {\n            \"memory_ids\": [\"mem_d25c6bb4\", \"mem_4e0d40dd\"],\n            \"merged_text\": \"Has been working intensively on the MIRA codebase for approximately one year, from concept to functional deployment\",\n            \"reason\": \"Both state the same ~one year development duration on MIRA\"\n        }\n    ],\n    \"independent_ids\": [\n        \"mem_e45201a8\",\n        \"mem_ad166bd1\",\n        \"mem_5efa3a71\",\n        \"mem_2e409aa4\",\n        \"mem_61c50705\",\n        \"mem_40dfff2c\",\n        \"mem_b495d655\",\n        \"mem_2af038a5\",\n        \"mem_ceda0806\",\n        \"mem_a37838b3\",\n        \"mem_abcab4c4\",\n        \"mem_e55654f9\",\n        \"mem_5cf73656\",\n        \"mem_9021e765\",\n        \"mem_c0652868\",\n        \"mem_cd6dd277\",\n        \"mem_32f3c064\",\n        \"mem_d38a4f3c\",\n        \"mem_b5631c67\",\n        \"mem_5fd6471e\",\n        \"mem_7b8e4cb0\",\n        \"mem_32afd232\",\n        \"mem_d5bfeb85\"\n    ],\n    \"summary\": \"Found 9 merge groups among the 46 memories. Major consolidations: the Letta-frustration pair, the IP-vs-opensource tension pair, the intrinsic-motivation triplet, the build-cleanup-cycle triplet, the release-philosophy pair, the 0.9-versioning sextuplet (largest group \u2014 all say the same thing about releasing as 0.9 due to federation uncertainty), the OSS-architecture-stability pair, the two-month-hosted-cycle pair, and the one-year-development pair. Many memories remain independent as they capture distinct facts, events, or emotional states that would lose specificity if merged.\"\n}\n```"
+    }
+  ]
+}

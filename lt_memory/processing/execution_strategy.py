@@ -15,14 +15,13 @@ from datetime import timedelta
 from typing import List, Dict, Any, Optional, Tuple
 from uuid import UUID, uuid4
 
-import anthropic
-
-from lt_memory.models import ProcessingChunk, ExtractionBatch
+from lt_memory.models import ProcessingChunk, ExtractedMemory, ExtractionBatch, MemoryLink, LinkingPair
 from lt_memory.processing.extraction_engine import ExtractionEngine, ExtractionPayload
 from lt_memory.processing.memory_processor import MemoryProcessor
 from lt_memory.vector_ops import VectorOps
 from lt_memory.db_access import LTMemoryDB
-from clients.llm_provider import LLMProvider
+from lt_memory.linking import LinkingService
+from clients.llm_provider import LLMProvider, build_batch_params
 from config.config import BatchingConfig, ExtractionConfig
 from utils.timezone_utils import utc_now
 from utils.user_context import set_current_user_id, clear_user_context
@@ -65,7 +64,7 @@ class ExecutionStrategy(ABC):
         self,
         user_id: str,
         chunks: List[ProcessingChunk]
-    ) -> Optional[str]:
+    ) -> str:
         """
         Execute extraction for chunks.
 
@@ -75,6 +74,9 @@ class ExecutionStrategy(ABC):
 
         Returns:
             Batch ID (for batch strategy) or synthetic ID (for immediate strategy)
+
+        Raises:
+            ValueError: If no valid payloads could be built from the chunks
         """
         pass
 
@@ -83,7 +85,7 @@ class ExecutionStrategy(ABC):
         user_id: str,
         response_text: str,
         payload: ExtractionPayload
-    ) -> Tuple[List[UUID], List[Tuple[int, int]]]:
+    ) -> Tuple[List[UUID], List[LinkingPair]]:
         """
         Shared business logic: process LLM response and store memories.
 
@@ -113,7 +115,98 @@ class ExecutionStrategy(ABC):
             memory_ids = self.vector_ops.store_memories_with_embeddings(memories)
             logger.info(f"Stored {len(memory_ids)} memories for user {user_id}")
 
+            # Persist LLM-extracted entities via fuzzy matching
+            self._persist_llm_entities(user_id, memories, memory_ids)
+
+            # Persist extraction-time links to existing memories (related_memory_ids)
+            extraction_links = []
+            for idx, memory in enumerate(memories):
+                if idx < len(memory_ids) and memory.related_memory_ids:
+                    new_id = memory_ids[idx]
+                    for ref in memory.related_memory_ids:
+                        related_id = UUID(ref["id"])
+                        bond = ref.get("bond", "")
+                        extraction_links.append(MemoryLink(
+                            source_id=new_id,
+                            target_id=related_id,
+                            link_type="extraction_ref",
+                            confidence=0.9,
+                            reasoning=bond if bond else "Referenced during conversation",
+                            extraction_bond=bond,
+                            created_at=utc_now()
+                        ))
+
+            if extraction_links:
+                self.db.create_links(extraction_links)
+                logger.info(f"Created {len(extraction_links)} extraction_ref links for user {user_id}")
+
         return memory_ids, linking_pairs
+
+    def _persist_llm_entities(
+        self,
+        user_id: str,
+        memories: List[ExtractedMemory],
+        memory_ids: List[UUID]
+    ) -> int:
+        """
+        Persist entities extracted by LLM during memory extraction.
+
+        Uses pg_trgm fuzzy matching via get_or_create_entity to resolve
+        name variations to existing entities before creating new ones.
+
+        Args:
+            user_id: User ID
+            memories: ExtractedMemory objects (with entities field populated)
+            memory_ids: Parallel list of stored memory UUIDs
+
+        Returns:
+            Number of entity links created
+        """
+        if len(memories) != len(memory_ids):
+            logger.error(
+                f"Memory/ID length mismatch: {len(memories)} memories vs {len(memory_ids)} IDs"
+            )
+            return 0
+
+        total_links = 0
+
+        try:
+            for memory, memory_id in zip(memories, memory_ids):
+                if not memory.entities:
+                    continue
+
+                # Deduplicate entities by name within this memory
+                seen_names = set()
+                for entity_dict in memory.entities:
+                    entity_name = entity_dict['name']
+                    entity_type = entity_dict.get('type', 'UNKNOWN')
+
+                    if entity_name in seen_names:
+                        continue
+                    seen_names.add(entity_name)
+
+                    entity = self.db.get_or_create_entity(
+                        name=entity_name,
+                        entity_type=entity_type,
+                        user_id=user_id
+                    )
+
+                    self.db.link_memory_to_entity(
+                        memory_id=memory_id,
+                        entity_id=entity.id,
+                        entity_name=entity_name,
+                        entity_type=entity.entity_type,
+                        user_id=user_id
+                    )
+                    total_links += 1
+
+            if total_links:
+                logger.info(f"Persisted LLM entities: {total_links} links for {len(memories)} memories")
+
+        except Exception as e:
+            logger.warning(f"Entity persistence failed for user {user_id} (non-critical): {e}", exc_info=True)
+
+        return total_links
 
 
 class BatchExecutionStrategy(ExecutionStrategy):
@@ -130,12 +223,12 @@ class BatchExecutionStrategy(ExecutionStrategy):
         memory_processor: MemoryProcessor,
         vector_ops: VectorOps,
         db: LTMemoryDB,
-        anthropic_client: anthropic.Anthropic,
+        batch_coordinator: 'BatchCoordinator',
         batching_config: BatchingConfig,
         extraction_config: ExtractionConfig
     ):
         super().__init__(extraction_engine, memory_processor, vector_ops, db)
-        self.anthropic_client = anthropic_client
+        self.batch_coordinator = batch_coordinator
         self.batching_config = batching_config
         self.extraction_config = extraction_config
 
@@ -143,7 +236,7 @@ class BatchExecutionStrategy(ExecutionStrategy):
         self,
         user_id: str,
         chunks: List[ProcessingChunk]
-    ) -> Optional[str]:
+    ) -> str:
         """
         Submit extraction batch to Anthropic.
 
@@ -152,9 +245,10 @@ class BatchExecutionStrategy(ExecutionStrategy):
             chunks: Processing chunks
 
         Returns:
-            Batch ID if successful, None if no chunks to process
+            Batch ID from Anthropic
 
         Raises:
+            ValueError: If no valid payloads could be built from the chunks
             Exception: If Anthropic API call fails
         """
         requests = []
@@ -170,43 +264,46 @@ class BatchExecutionStrategy(ExecutionStrategy):
             if not payload.messages:
                 continue
 
+            params = build_batch_params(
+                'extraction',
+                system_prompt=payload.system_prompt,
+                messages=payload.messages,
+                cache_ttl="1h",
+            )
+
             request = {
                 "custom_id": f"{user_id}_{chunk.chunk_index}",
-                "params": {
-                    "model": self.extraction_config.extraction_model,
-                    "max_tokens": self.extraction_config.max_extraction_tokens,
-                    "temperature": self.extraction_config.extraction_temperature,
-                    "thinking": {"type": "enabled", "budget_tokens": 1024},
-                    "system": [{
-                        "type": "text",
-                        "text": payload.system_prompt,
-                        "cache_control": {"type": "ephemeral"}
-                    }],
-                    "messages": payload.messages
-                }
+                "params": params
             }
 
             requests.append(request)
             chunk_request_mapping.append((chunk, len(requests) - 1, payload))
 
         if not requests:
-            return None
+            raise ValueError(
+                f"No valid extraction payloads built from {len(chunks)} chunks for user {user_id}"
+            )
 
-        # Submit to Anthropic
-        batch = self.anthropic_client.beta.messages.batches.create(requests=requests)
+        # Submit via BatchCoordinator (single submission path)
+        batch_id = self.batch_coordinator.submit_batch(
+            requests=requests,
+            batch_type="extraction",
+            user_id=user_id,
+        )
         expires_at = utc_now() + timedelta(hours=self.batching_config.batch_expiry_hours)
 
         # Store batch records with UUID mapping
         for chunk, request_idx, payload in chunk_request_mapping:
             batch_record = ExtractionBatch(
-                batch_id=batch.id,
+                batch_id=batch_id,
                 custom_id=f"{user_id}_{chunk.chunk_index}",
                 user_id=user_id,
                 chunk_index=chunk.chunk_index,
                 request_payload=requests[request_idx],
                 chunk_metadata={
                     "message_count": len(chunk.messages),
-                    "short_to_uuid": payload.short_to_uuid
+                    "short_to_uuid": payload.short_to_uuid,
+                    "segment_id": str(chunk.segment_id) if chunk.segment_id else None
                 },
                 memory_context=payload.memory_context,
                 status="submitted",
@@ -216,8 +313,8 @@ class BatchExecutionStrategy(ExecutionStrategy):
             )
             self.db.create_extraction_batch(batch_record, user_id=user_id)
 
-        logger.info(f"Submitted batch {batch.id} for user {user_id}: {len(requests)} chunks")
-        return batch.id
+        logger.info(f"Submitted batch {batch_id} for user {user_id}: {len(requests)} chunks")
+        return batch_id
 
 
 class ImmediateExecutionStrategy(ExecutionStrategy):
@@ -225,7 +322,8 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
     Execute extraction immediately via OpenAI fallback.
 
     Used when Anthropic Batch API is unavailable (failover mode).
-    Executes synchronously and stores results immediately.
+    Executes synchronously and stores results immediately, including
+    entity persistence and relationship classification.
     """
 
     def __init__(
@@ -234,16 +332,18 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
         memory_processor: MemoryProcessor,
         vector_ops: VectorOps,
         db: LTMemoryDB,
-        llm_provider: LLMProvider
+        llm_provider: LLMProvider,
+        linking_service: LinkingService
     ):
         super().__init__(extraction_engine, memory_processor, vector_ops, db)
         self.llm_provider = llm_provider
+        self.linking = linking_service
 
     def execute_extraction(
         self,
         user_id: str,
         chunks: List[ProcessingChunk]
-    ) -> Optional[str]:
+    ) -> str:
         """
         Execute extraction immediately using OpenAI fallback.
 
@@ -259,7 +359,8 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
         """
         set_current_user_id(user_id)
         total_memories_stored = 0
-        all_linking_pairs = []
+        all_memory_ids: List[UUID] = []
+        all_linking_pairs: List[LinkingPair] = []
 
         try:
             for chunk in chunks:
@@ -272,12 +373,12 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
                 if not payload.user_prompt:
                     continue
 
-                # Call LLM directly (routes to OpenAI fallback)
+                # Call LLM directly using extraction internal LLM config
                 response = self.llm_provider.generate_response(
                     messages=[{"role": "user", "content": payload.user_prompt}],
                     system_override=payload.system_prompt,
-                    thinking_enabled=True,
-                    thinking_budget=1024
+                    internal_llm='extraction',
+                    allow_negative=True,  # System task — segment already paid for
                 )
 
                 # Extract text from response
@@ -291,6 +392,7 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
                 )
 
                 total_memories_stored += len(memory_ids)
+                all_memory_ids.extend(memory_ids)
                 all_linking_pairs.extend(linking_pairs)
 
                 logger.info(
@@ -298,9 +400,12 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
                     f"{len(memory_ids)} memories stored"
                 )
 
-            # Update timestamp to prevent reprocessing
+            # Post-storage processing: relationships
+            if all_memory_ids:
+                # Trigger relationship classification
+                self._trigger_relationship_classification(user_id, all_memory_ids, all_linking_pairs)
+
             if total_memories_stored > 0:
-                self.db.update_extraction_timestamp(user_id)
                 logger.info(
                     f"Immediate extraction complete for user {user_id}: "
                     f"{total_memories_stored} total memories"
@@ -311,6 +416,114 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
         finally:
             clear_user_context()
 
+    def _trigger_relationship_classification(
+        self,
+        user_id: str,
+        memory_ids: List[UUID],
+        linking_hints: List[LinkingPair]
+    ) -> None:
+        """
+        Execute relationship classification immediately for new memories.
+
+        Since ImmediateExecutionStrategy runs during failover mode,
+        classifications are executed synchronously via the LLM provider.
+        """
+        if not memory_ids:
+            return
+
+        all_pairs = []
+
+        # Process extraction hints first
+        if linking_hints:
+            new_memories = {m.id: m for m in self.db.get_memories_by_ids(memory_ids, user_id=user_id)}
+
+            for pair in linking_hints:
+                src_idx = pair["source_idx"]
+                tgt_idx = pair["target_idx"]
+                bond = pair.get("bond", "")
+
+                if src_idx < len(memory_ids) and tgt_idx < len(memory_ids):
+                    src_id = memory_ids[src_idx]
+                    tgt_id = memory_ids[tgt_idx]
+
+                    if src_id in new_memories and tgt_id in new_memories:
+                        all_pairs.append({
+                            "new_memory_id": src_id,
+                            "similar_memory_id": tgt_id,
+                            "new_memory": new_memories[src_id],
+                            "similar_memory": new_memories[tgt_id],
+                            "from_extraction_hint": True,
+                            "bond": bond
+                        })
+
+            logger.info(f"Added {len(all_pairs)} pairs from extraction hints for user {user_id}")
+
+        # Find similar existing memories
+        for mem_id in memory_ids:
+            candidates = self.linking.find_similar_candidates(mem_id)
+            for candidate in candidates:
+                all_pairs.append({
+                    "new_memory_id": mem_id,
+                    "similar_memory_id": candidate.id,
+                    "new_memory": self.db.get_memory(mem_id, user_id=user_id),
+                    "similar_memory": candidate,
+                    "from_extraction_hint": False
+                })
+
+        if not all_pairs:
+            return
+
+        # Execute classifications immediately (we're in failover mode)
+        links_created = 0
+        for pair in all_pairs:
+            try:
+                # Build classification payload
+                payload = self.linking.build_classification_payload(
+                    pair["new_memory"],
+                    pair["similar_memory"],
+                    bond=pair.get("bond", "")
+                )
+
+                # Call LLM directly using relationship internal LLM config
+                response = self.llm_provider.generate_response(
+                    messages=[{"role": "user", "content": payload["user_prompt"]}],
+                    system_override=payload["system_prompt"],
+                    internal_llm='relationship',
+                    allow_negative=True,  # System task — segment already paid for
+                )
+
+                # Extract text from response
+                response_text = self.llm_provider.extract_text_content(response)
+
+                # Parse classification result
+                import json
+                classification = json.loads(response_text)
+                rel_type = classification.get("relationship_type")
+
+                if rel_type and rel_type != "null":
+                    # Create bidirectional link
+                    if self.linking.create_bidirectional_link(
+                        source_id=pair["new_memory_id"],
+                        target_id=pair["similar_memory_id"],
+                        link_type=rel_type,
+                        confidence=classification.get("confidence", 0.9),
+                        reasoning=classification.get("reasoning", ""),
+                        extraction_bond=pair.get("bond", "")
+                    ):
+                        links_created += 1
+
+            except json.JSONDecodeError:
+                logger.error("Invalid JSON in relationship classification response")
+                continue
+            except Exception as e:
+                logger.warning(f"Relationship classification failed for pair: {e}")
+                continue
+
+        logger.info(
+            f"Immediate: relationship classification complete for {len(all_pairs)} pairs, "
+            f"{links_created} links created"
+        )
+
 
 def create_execution_strategy(
     extraction_engine: ExtractionEngine,
@@ -318,9 +531,10 @@ def create_execution_strategy(
     vector_ops: VectorOps,
     db: LTMemoryDB,
     llm_provider: LLMProvider,
-    anthropic_client: Optional[anthropic.Anthropic],
+    batch_coordinator: 'BatchCoordinator | None',
     batching_config: BatchingConfig,
-    extraction_config: ExtractionConfig
+    extraction_config: ExtractionConfig,
+    linking_service: Optional[LinkingService] = None
 ) -> ExecutionStrategy:
     """
     Factory function to create appropriate execution strategy.
@@ -333,22 +547,29 @@ def create_execution_strategy(
         vector_ops: Vector operations instance
         db: Database instance
         llm_provider: LLM provider instance
-        anthropic_client: Anthropic client (None if unavailable)
+        batch_coordinator: BatchCoordinator (None if unavailable)
         batching_config: Batching configuration
         extraction_config: Extraction configuration
+        linking_service: Linking service (required for immediate mode)
 
     Returns:
         Appropriate ExecutionStrategy (Batch or Immediate)
     """
     # Check if failover mode active
-    if llm_provider._is_failover_active() or anthropic_client is None:
+    if llm_provider._is_failover_active() or batch_coordinator is None:
+        if linking_service is None:
+            raise ValueError(
+                "ImmediateExecutionStrategy requires linking_service "
+                "for relationship classification"
+            )
         logger.warning("Creating ImmediateExecutionStrategy (failover mode active)")
         return ImmediateExecutionStrategy(
             extraction_engine,
             memory_processor,
             vector_ops,
             db,
-            llm_provider
+            llm_provider,
+            linking_service
         )
     else:
         return BatchExecutionStrategy(
@@ -356,7 +577,7 @@ def create_execution_strategy(
             memory_processor,
             vector_ops,
             db,
-            anthropic_client,
+            batch_coordinator,
             batching_config,
             extraction_config
         )

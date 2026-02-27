@@ -51,6 +51,10 @@ BEGIN
 END
 $$;
 
+-- Ensure BYPASSRLS is set even if role already existed
+-- (IF NOT EXISTS above won't update existing roles)
+ALTER ROLE mira_admin BYPASSRLS;
+
 -- Application runtime role (data operations only)
 DO $$
 BEGIN
@@ -80,6 +84,7 @@ CREATE DATABASE mira_service OWNER mira_admin;
 
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;  -- Trigram fuzzy matching for typo-tolerant search
 
 -- =====================================================================
 -- SCHEMA PERMISSIONS
@@ -103,33 +108,98 @@ CREATE TABLE IF NOT EXISTS account_tiers (
     provider VARCHAR(20) NOT NULL DEFAULT 'anthropic' CHECK (provider IN ('anthropic', 'generic')),
     endpoint_url TEXT DEFAULT NULL,
     api_key_name VARCHAR(50) DEFAULT NULL,
-    show_locked BOOLEAN DEFAULT FALSE,
-    locked_message TEXT
+    hidden BOOLEAN NOT NULL DEFAULT FALSE
 );
 
-INSERT INTO account_tiers (name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, show_locked, locked_message) VALUES
-    ('fast', 'google/gemini-3-flash-preview', 0, 'Gemini 3 Flash', 1, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'provider_key', FALSE, NULL),
-    ('balanced', 'claude-sonnet-4-20250514', 0, 'Sonnet 4', 2, 'anthropic', NULL, NULL, FALSE, NULL),
-    ('nuanced', 'claude-opus-4-5-20251101', 4096, 'Opus w/ Thinking', 3, 'anthropic', NULL, NULL, FALSE, NULL)
+INSERT INTO account_tiers (name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, hidden) VALUES
+    ('gemini-low', 'google/gemini-3-flash-preview', 0, 'Gemini 3 Flash', 1, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
+    ('gemini-deep', 'google/gemini-3-pro-preview', 0, 'Gemini 3 Pro', 2, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
+    ('minimax', 'minimax/minimax-m2.5', 0, 'MiniMax M2.5', 3, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
+    ('claude-high', 'claude-opus-4-6', 1024, 'Opus 4.6', 4, 'anthropic', NULL, NULL, FALSE),
+    ('experimental', 'z-ai/glm-5', 0, 'GLM-5 (Experimental)', 5, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
+    ('gpt-legacy', 'openai/gpt-4o-2024-11-20', 0, 'GPT-4o', 6, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
+    ('qwen', 'qwen/qwen3.5-plus-02-15', 0, 'Qwen3.5 Plus', 8, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE)
 ON CONFLICT (name) DO NOTHING;
 
 -- Internal LLM configurations for system operations (not user-facing)
 -- Contrasts with account_tiers which handles user-facing tier selection
+-- Every config has two rows: 'free' (no card on file) and 'cof' (card on file)
+-- For cheap models, both rows point to the same model
 CREATE TABLE IF NOT EXISTS internal_llm (
-    name VARCHAR(50) PRIMARY KEY,
+    name VARCHAR(50) NOT NULL,
+    tier VARCHAR(10) NOT NULL CHECK (tier IN ('free', 'cof')),
     model VARCHAR(200) NOT NULL,
     endpoint_url TEXT NOT NULL,
     api_key_name VARCHAR(50),
-    description TEXT
+    description TEXT,
+    max_tokens INT NOT NULL,
+    effort VARCHAR(10) CHECK (effort IN ('low', 'medium', 'high', 'max')),
+    PRIMARY KEY (name, tier)
 );
 
-INSERT INTO internal_llm (name, model, endpoint_url, api_key_name, description) VALUES
-    ('analysis', 'openai/gpt-oss-20b', 'https://api.groq.com/openai/v1/chat/completions', 'provider_key', 'Model for fingerprint generation and memory evacuation'),
-    ('summary', 'claude-haiku-4-5', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'Model for segment summary generation'),
-    ('injection_defense', 'meta-llama/llama-3.1-8b-instruct', 'https://openrouter.ai/api/v1/chat/completions', 'provider_key', 'Model for prompt injection detection')
-ON CONFLICT (name) DO NOTHING;
+INSERT INTO internal_llm (name, tier, model, endpoint_url, api_key_name, description, max_tokens, effort) VALUES
+    -- COF configs: Anthropic models via direct API
+    ('summary', 'cof', 'claude-opus-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'Segment summary generation', 10000, 'high'),
+    ('assessment', 'cof', 'claude-opus-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'Assessment extraction', 10000, NULL),
+    ('synthesis', 'cof', 'claude-opus-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'User model synthesis', 10000, NULL),
+    ('extraction', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Memory extraction', 16000, 'high'),
+    ('consolidation', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Memory consolidation', 4096, NULL),
+    ('tidyup', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Context tidyup', 10000, NULL),
+    ('relationship', 'cof', 'claude-haiku-4-5-20251001', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Relationship classification', 500, NULL),
+    ('entity_gc', 'cof', 'claude-haiku-4-5', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Entity garbage collection', 2048, 'high'),
+    ('critic', 'cof', 'claude-haiku-4-5', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'User model critic', 10000, NULL),
+    -- COF configs: third-party models via OpenRouter
+    ('injection_defense', 'cof', 'meta-llama/llama-3.1-8b-instruct', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Prompt injection detection', 10000, NULL),
+    ('domaindoc_summary', 'cof', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'DomainDoc section summaries', 10000, NULL),
+    -- Free configs: Gemini Flash via OpenRouter for everything except subcortical
+    ('summary', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Segment summary generation', 10000, NULL),
+    ('assessment', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Assessment extraction', 10000, NULL),
+    ('synthesis', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'User model synthesis', 10000, NULL),
+    ('extraction', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Memory extraction', 16000, NULL),
+    ('relationship', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Relationship classification', 500, NULL),
+    ('consolidation', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Memory consolidation', 4096, NULL),
+    ('entity_gc', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Entity garbage collection', 2048, NULL),
+    ('tidyup', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Context tidyup', 10000, NULL),
+    ('critic', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'User model critic', 10000, NULL),
+    ('injection_defense', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Prompt injection detection', 10000, NULL),
+    ('domaindoc_summary', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'DomainDoc section summaries', 10000, NULL),
+    -- Subcortical: same model for both tiers via Groq
+    ('analysis', 'cof', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'provider_key', 'Subcortical analysis', 3072, NULL),
+    ('analysis', 'free', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'provider_key', 'Subcortical analysis', 3072, NULL)
+ON CONFLICT (name, tier) DO NOTHING;
 
 GRANT SELECT ON internal_llm TO mira_dbuser;
+
+-- Usage pricing (keyed by tier name or internal config name, not model string)
+-- NULL prices auto-resolve from OpenRouter on startup. NOT NULL = manual override.
+CREATE TABLE IF NOT EXISTS usage_pricing (
+    name VARCHAR(50) PRIMARY KEY,
+    input_price_per_mtok DECIMAL(10,6),
+    output_price_per_mtok DECIMAL(10,6),
+    cache_read_price_per_mtok DECIMAL(10,6),
+    cache_write_price_per_mtok DECIMAL(10,6),
+    effective_date DATE NOT NULL DEFAULT CURRENT_DATE
+);
+
+INSERT INTO usage_pricing (name) VALUES
+    -- Account tiers (one model per tier)
+    ('gemini-low'), ('gemini-deep'), ('minimax'), ('claude-high'),
+    ('experimental'), ('gpt-legacy'), ('qwen'), ('demo'),
+    -- Internal LLM configs (tier-qualified: different models per free/cof)
+    ('analysis:cof'), ('analysis:free'),
+    ('consolidation:cof'), ('consolidation:free'),
+    ('domaindoc_summary:cof'), ('domaindoc_summary:free'),
+    ('entity_gc:cof'), ('entity_gc:free'),
+    ('extraction:cof'), ('extraction:free'),
+    ('injection_defense:cof'), ('injection_defense:free'),
+    ('relationship:cof'), ('relationship:free'),
+    ('summary:cof'), ('summary:free'),
+    ('tidyup:cof'), ('tidyup:free')
+ON CONFLICT (name) DO NOTHING;
+
+UPDATE usage_pricing SET input_price_per_mtok = 5.000000, output_price_per_mtok = 20.000000 WHERE name = 'gpt-legacy';
+
+GRANT SELECT ON usage_pricing TO mira_dbuser;
 
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -149,12 +219,7 @@ CREATE TABLE IF NOT EXISTS users (
     last_activity_date DATE,
 
     -- LLM tier preference
-    llm_tier VARCHAR(20) DEFAULT 'balanced' REFERENCES account_tiers(name),
-    -- Maximum tier this user can access (hierarchical: fast < balanced < nuanced)
-    max_tier VARCHAR(20) NOT NULL DEFAULT 'balanced' REFERENCES account_tiers(name),
-
-    -- Donation tracking (suppresses donation banner for 21 days when set)
-    last_donated_at TIMESTAMP WITH TIME ZONE
+    llm_tier VARCHAR(20) DEFAULT 'claude-high' REFERENCES account_tiers(name)
 );
 
 -- Grant SELECT on account_tiers to application user
@@ -355,14 +420,17 @@ CREATE TABLE IF NOT EXISTS memories (
     is_archived BOOLEAN DEFAULT FALSE,
     archived_at TIMESTAMP WITH TIME ZONE,
 
-    -- Refinement tracking to prevent repeated refinement
-    is_refined BOOLEAN DEFAULT FALSE,
-    last_refined_at TIMESTAMP WITH TIME ZONE,
-    refinement_rejection_count INTEGER DEFAULT 0,
+    consolidation_rejection_count INTEGER DEFAULT 0,
 
     -- Activity day snapshots for vacation-proof scoring
     activity_days_at_creation INT,
-    activity_days_at_last_access INT
+    activity_days_at_last_access INT,
+
+    -- Annotations for contextual notes
+    annotations JSONB DEFAULT '[]'::jsonb,
+
+    -- Source segment for context exploration
+    source_segment_id UUID  -- Segment this memory was extracted from (enables context exploration via continuum_tool)
 );
 
 COMMENT ON TABLE memories IS 'Long-term memory storage with embeddings, links, and activity-based decay';
@@ -374,9 +442,10 @@ COMMENT ON COLUMN memories.happens_at IS 'When the memory event occurred (for te
 COMMENT ON COLUMN memories.inbound_links IS 'JSONB array of memories that link TO this memory';
 COMMENT ON COLUMN memories.outbound_links IS 'JSONB array of memories this memory links TO';
 COMMENT ON COLUMN memories.entity_links IS 'JSONB array of entity references this memory mentions';
-COMMENT ON COLUMN memories.refinement_rejection_count IS 'Number of times memory was marked do_nothing during refinement. After 3 rejections, excluded from future refinement.';
 COMMENT ON COLUMN memories.activity_days_at_creation IS 'User cumulative_activity_days when memory was created (snapshot for decay calculation)';
 COMMENT ON COLUMN memories.activity_days_at_last_access IS 'User cumulative_activity_days when memory was last accessed (snapshot for recency calculation)';
+COMMENT ON COLUMN memories.annotations IS 'Contextual notes: [{text, created_at, source}]';
+COMMENT ON COLUMN memories.source_segment_id IS 'Segment this memory was extracted from (enables context exploration via continuum_tool search_within_segment)';
 
 -- Set LZ4 compression for large text columns
 ALTER TABLE memories ALTER COLUMN text SET COMPRESSION lz4;
@@ -418,6 +487,72 @@ FOR EACH ROW
 EXECUTE FUNCTION update_memories_search_vector();
 
 -- =====================================================================
+-- GLOBAL MEMORIES TABLE (centralized, no RLS, no decay)
+-- =====================================================================
+-- Global memories are manually curated facts accessible to all users.
+-- They surface through ProactiveService retrieval but cannot be queried,
+-- linked to, or annotated via the memory_tool (which only sees personal memories).
+-- Cross-table linking silently fails by design - global memory IDs return
+-- "memory not found" when users attempt to link to them.
+
+CREATE TABLE IF NOT EXISTS global_memories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    text TEXT NOT NULL,
+    embedding vector(768),  -- mdbr-leaf-ir-asym embeddings for memory search
+    search_vector tsvector,  -- Full-text search vector for BM25-style retrieval
+    importance_score NUMERIC(5,3) NOT NULL DEFAULT 1.0 CHECK (importance_score >= 0 AND importance_score <= 1),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE,
+    happens_at TIMESTAMP WITH TIME ZONE,  -- Optional temporal context
+    entity_links JSONB DEFAULT '[]'::jsonb,  -- Array of {uuid, type, name}
+    -- Link arrays for global ↔ global relationships (manually curated)
+    inbound_links JSONB DEFAULT '[]'::jsonb,
+    outbound_links JSONB DEFAULT '[]'::jsonb,
+    is_archived BOOLEAN DEFAULT FALSE,
+    archived_at TIMESTAMP WITH TIME ZONE
+);
+
+COMMENT ON TABLE global_memories IS 'Centralized memories accessible to all users - no RLS, no decay. Manually curated via psql.';
+COMMENT ON COLUMN global_memories.importance_score IS 'Fixed at 1.0 for global memories (no decay applied)';
+COMMENT ON COLUMN global_memories.entity_links IS 'Entity references for potential future hub discovery integration';
+COMMENT ON COLUMN global_memories.inbound_links IS 'JSONB array of other global memories that link TO this memory';
+COMMENT ON COLUMN global_memories.outbound_links IS 'JSONB array of other global memories this memory links TO';
+
+-- Set LZ4 compression for large text columns
+ALTER TABLE global_memories ALTER COLUMN text SET COMPRESSION lz4;
+
+-- =====================================================================
+-- GLOBAL MEMORY INDEXES
+-- =====================================================================
+
+-- Full-text search index for keyword-based retrieval
+CREATE INDEX IF NOT EXISTS idx_global_memories_search_vector ON global_memories USING gin (search_vector);
+
+-- Vector similarity index for semantic search (IVFFlat algorithm)
+CREATE INDEX IF NOT EXISTS idx_global_memories_embedding_ivfflat
+    ON global_memories USING ivfflat (embedding vector_cosine_ops)
+    WITH (lists = 100);
+
+COMMENT ON INDEX idx_global_memories_search_vector IS 'GIN index for full-text search operations';
+COMMENT ON INDEX idx_global_memories_embedding_ivfflat IS 'IVFFlat index for fast cosine similarity search';
+
+-- Trigger to maintain search vectors (reuses existing function)
+CREATE TRIGGER global_memories_search_vector_update
+BEFORE INSERT OR UPDATE OF text
+ON global_memories
+FOR EACH ROW
+EXECUTE FUNCTION update_memories_search_vector();
+
+-- =====================================================================
+-- GLOBAL MEMORY PERMISSIONS (NO RLS)
+-- =====================================================================
+-- Note: RLS is NOT enabled on this table - all users can read global memories.
+-- Write access is intended for manual curation via psql only.
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON global_memories TO mira_dbuser;
+GRANT ALL ON global_memories TO mira_admin;
+
+-- =====================================================================
 -- ENTITIES TABLE (knowledge graph nodes)
 -- =====================================================================
 
@@ -426,7 +561,6 @@ CREATE TABLE IF NOT EXISTS entities (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     entity_type TEXT NOT NULL,  -- PERSON, ORG, GPE, PRODUCT, EVENT, WORK_OF_ART, LAW, LANGUAGE, NORP, FAC
-    embedding VECTOR(300),       -- spaCy en_core_web_lg word vector (300-dimensional)
     link_count INTEGER DEFAULT 0,
     last_linked_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -434,15 +568,17 @@ CREATE TABLE IF NOT EXISTS entities (
     is_archived BOOLEAN DEFAULT FALSE,
     archived_at TIMESTAMP WITH TIME ZONE,
 
-    CONSTRAINT entities_user_name_type_unique UNIQUE (user_id, name, entity_type)
+    CONSTRAINT entities_user_name_unique UNIQUE (user_id, name)
 );
 
 COMMENT ON TABLE entities IS 'Persistent knowledge anchors (people, organizations, products, etc.) that memories link to';
 COMMENT ON COLUMN entities.name IS 'Canonical normalized entity name';
-COMMENT ON COLUMN entities.entity_type IS 'spaCy NER entity type (PERSON, ORG, GPE, PRODUCT, etc.)';
-COMMENT ON COLUMN entities.embedding IS 'spaCy word vector for semantic similarity (300d from en_core_web_lg)';
+COMMENT ON COLUMN entities.entity_type IS 'LLM-extracted entity type (PERSON, ORG, GPE, PRODUCT, etc.)';
 COMMENT ON COLUMN entities.link_count IS 'Number of memories linking to this entity';
 COMMENT ON COLUMN entities.last_linked_at IS 'Timestamp of most recent memory link (for dormancy detection)';
+
+-- Trigram index for fuzzy name matching (handles LLM naming variations)
+CREATE INDEX IF NOT EXISTS idx_entities_name_trgm ON entities USING gin (name gin_trgm_ops);
 
 -- =====================================================================
 -- EXTRACTION BATCHES (async memory extraction tracking)
@@ -485,7 +621,7 @@ COMMENT ON COLUMN extraction_batches.extracted_memories IS 'JSON array of extrac
 CREATE TABLE IF NOT EXISTS post_processing_batches (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     batch_id TEXT NOT NULL,  -- Anthropic batch API ID
-    batch_type TEXT NOT NULL CHECK (batch_type IN ('relationship_classification', 'consolidation', 'consolidation_review')),
+    batch_type TEXT NOT NULL CHECK (batch_type IN ('relationship_classification', 'consolidation')),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     request_payload JSONB NOT NULL,
     input_data JSONB NOT NULL,
@@ -538,6 +674,52 @@ BEFORE UPDATE ON entities
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 -- =====================================================================
+-- FEEDBACK SIGNALS TABLE (DIY reinforcement loop)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS feedback_signals (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    segment_id UUID NOT NULL,
+    continuum_id UUID NOT NULL,
+    signal_type TEXT NOT NULL CHECK (signal_type IN ('alignment', 'misalignment', 'contextual_pass')),
+    section_id TEXT NOT NULL,
+    strength TEXT NOT NULL CHECK (strength IN ('strong', 'moderate', 'mild')),
+    evidence TEXT NOT NULL,
+    extracted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    synthesized BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE feedback_signals IS 'Assessment signals for the user model pipeline';
+COMMENT ON COLUMN feedback_signals.signal_type IS 'Type: alignment, misalignment, contextual_pass';
+COMMENT ON COLUMN feedback_signals.section_id IS 'System prompt section ID this signal references';
+COMMENT ON COLUMN feedback_signals.strength IS 'Signal strength: strong, moderate, mild';
+COMMENT ON COLUMN feedback_signals.synthesized IS 'True after user model synthesis has processed this signal';
+
+CREATE INDEX IF NOT EXISTS idx_feedback_signals_user_id ON feedback_signals(user_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_signals_user_type ON feedback_signals(user_id, signal_type);
+CREATE INDEX IF NOT EXISTS idx_feedback_signals_unsynthesized ON feedback_signals(user_id) WHERE NOT synthesized;
+CREATE INDEX IF NOT EXISTS idx_feedback_signals_section_id ON feedback_signals(user_id, section_id) WHERE NOT synthesized;
+
+-- =====================================================================
+-- FEEDBACK SYNTHESIS TRACKING TABLE
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS feedback_synthesis_tracking (
+    user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    activity_days_at_last_synthesis INTEGER NOT NULL DEFAULT 0,
+    last_synthesis_at TIMESTAMP WITH TIME ZONE,
+    last_synthesis_output TEXT,
+    needs_checkin BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+COMMENT ON TABLE feedback_synthesis_tracking IS 'Tracks synthesis state for the user model pipeline (modular arithmetic on cumulative_activity_days)';
+COMMENT ON COLUMN feedback_synthesis_tracking.activity_days_at_last_synthesis IS 'Snapshot of users.cumulative_activity_days when synthesis last ran (modular arithmetic base)';
+COMMENT ON COLUMN feedback_synthesis_tracking.last_synthesis_output IS 'User model XML from previous synthesis for evolutionary refinement';
+COMMENT ON COLUMN feedback_synthesis_tracking.needs_checkin IS 'True when user model contains check-in topics for behavioral debrief';
+
+-- =====================================================================
 -- PERMISSIONS
 -- =====================================================================
 
@@ -548,7 +730,8 @@ BEGIN
             users, users_trash, magic_links,
             user_activity_days, domain_knowledge_blocks, domain_knowledge_block_content,
             continuums, messages,
-            memories, entities, extraction_batches, post_processing_batches
+            memories, entities, extraction_batches, post_processing_batches,
+            feedback_signals, feedback_synthesis_tracking
         TO mira_dbuser;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO mira_dbuser;
     END IF;
@@ -617,6 +800,16 @@ ALTER TABLE api_tokens ENABLE ROW LEVEL SECURITY;
 CREATE POLICY api_tokens_user_policy ON api_tokens
     FOR ALL TO PUBLIC
     USING (user_id = current_setting('app.current_user_id', true)::uuid);
+
+ALTER TABLE feedback_signals ENABLE ROW LEVEL SECURITY;
+CREATE POLICY feedback_signals_user_policy ON feedback_signals
+    FOR ALL TO PUBLIC
+    USING (user_id = current_setting('app.current_user_id')::uuid);
+
+ALTER TABLE feedback_synthesis_tracking ENABLE ROW LEVEL SECURITY;
+CREATE POLICY feedback_synthesis_tracking_user_policy ON feedback_synthesis_tracking
+    FOR ALL TO PUBLIC
+    USING (user_id = current_setting('app.current_user_id')::uuid);
 
 -- Note: extraction_batches and post_processing_batches do NOT have RLS
 -- These are system tracking tables accessed by admin polling jobs

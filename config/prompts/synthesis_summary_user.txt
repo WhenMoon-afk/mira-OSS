@@ -1,0 +1,8 @@
+Synthesize these partial memory traces into a unified first-person memory:
+
+{chunk_summaries}
+
+## Tools Used:
+{tools_used}
+
+Generate a single coherent memory trace that captures the full arc of the conversation. Maintain first-person voice ("I", "we") and use absolute timestamps. Include the display_title and complexity tags.

@@ -10,18 +10,16 @@ import json
 import logging
 import uuid
 from datetime import datetime, timedelta
-from pathlib import Path
 from typing import Dict, Any, Optional, List
-from dateutil import parser as date_parser
 from dateutil.relativedelta import relativedelta
 from pydantic import BaseModel, Field
 
 from tools.repo import Tool
 from tools.registry import registry
 from utils.timezone_utils import (
-    validate_timezone, convert_to_timezone,
+    convert_to_timezone,
     format_datetime, parse_time_string, utc_now, ensure_utc, format_utc_iso,
-    parse_utc_time_string, convert_from_utc, get_timezone_instance, convert_to_utc
+    parse_utc_time_string, convert_from_utc
 )
 from utils.user_context import get_user_preferences
 
@@ -38,14 +36,22 @@ registry.register("reminder_tool", ReminderToolConfig)
 class ReminderTool(Tool):
     """
     SQLite-based reminder tool with complete user isolation and contacts integration.
-    
+
     All reminder data is stored in user-specific SQLite databases with automatic
     user isolation through the db property inherited from the Tool base class.
-    
+
     Integrates with user's contacts by storing contact UUID references.
     """
 
     name = "reminder_tool"
+
+    # Operations without ordering dependencies — safe for concurrent execution
+    _parallel_safe_operations = frozenset({"get_reminders"})
+
+    @classmethod
+    def is_call_parallel_safe(cls, tool_input: Dict[str, Any]) -> bool:
+        return tool_input.get("operation") in cls._parallel_safe_operations
+
     simple_description = "Create and manage scheduled reminders. Link reminders to contacts. Query by date (today, tomorrow, upcoming, overdue). Supports both user-facing and internal (MIRA's own) reminders."
 
     anthropic_schema = {
@@ -104,7 +110,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
                     "category": {
                         "type": "string",
                         "enum": ["user", "internal"],
-                        "description": "Category of reminder: 'user' for user-facing reminders, 'internal' for MIRA's internal reminders (default: 'user')"
+                        "description": "Category of reminder: 'user' for user-facing reminders (default: 'user'). 'internal' — Simulate ambient social cognition across context gaps. When a friend mentions a job interview Thursday, you don't set a task, but Friday it's just there: \"how'd it go?\" That attentiveness-to-recall conversion is lost between segments. When you notice something with a future resolution point (something ordered, a result pending, a call to make, a decision deferred), create an internal reminder dated to when you'd naturally think of it again. Always set a date: the moment your future self should \"notice.\" Write brief notes with enough context to act on cold. Bias toward creation; an unnecessary reminder costs nothing, a lost observation can't be recovered."
                     },
                     "additional_notes": {
                         "type": "string",
@@ -198,6 +204,59 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
         """Save a reminder to SQLite database."""
         # Insert new reminder
         return self.db.insert('reminders', reminder)
+
+    def _check_duplicate_reminder(self, title: str, reminder_date: datetime, window_seconds: int = 60) -> Optional[Dict[str, Any]]:
+        """
+        Check for duplicate reminders created within a time window.
+
+        Prevents duplicate creation from retries, race conditions, or streaming artifacts.
+
+        Args:
+            title: Reminder title to check
+            reminder_date: Reminder date to check
+            window_seconds: Time window in seconds to check for duplicates
+
+        Returns:
+            Existing reminder dict if duplicate found, None otherwise
+        """
+        try:
+            # Get all reminders and check for recent duplicates
+            all_reminders = self.db.select('reminders')
+            now = utc_now()
+            window_start = now - timedelta(seconds=window_seconds)
+
+            for existing in all_reminders:
+                # Check if title matches (case-insensitive)
+                existing_title = existing.get('encrypted__title', '')
+                if existing_title.lower() != title.lower():
+                    continue
+
+                # Check if reminder_date matches (within 1 minute tolerance)
+                existing_date_str = existing.get('reminder_date')
+                if not existing_date_str:
+                    continue
+                try:
+                    existing_date = parse_utc_time_string(existing_date_str)
+                    if abs((existing_date - reminder_date).total_seconds()) > 60:
+                        continue
+                except Exception:
+                    continue
+
+                # Check if created recently (within window)
+                created_at_str = existing.get('created_at')
+                if not created_at_str:
+                    continue
+                try:
+                    created_at = parse_utc_time_string(created_at_str)
+                    if created_at >= window_start:
+                        return existing
+                except Exception:
+                    continue
+
+            return None
+        except Exception as e:
+            self.logger.warning(f"Duplicate check failed, proceeding with creation: {e}")
+            return None
 
     def _load_contacts(self) -> List[Dict[str, Any]]:
         """Load user's contacts from SQLite database."""
@@ -360,6 +419,21 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             if contact_info:
                 contact_uuid = contact_info["contact"]["id"]
             
+        # Check for duplicate reminder (prevents retries/race conditions from creating duplicates)
+        existing = self._check_duplicate_reminder(title, reminder_date)
+        if existing:
+            self.logger.info(f"Duplicate reminder detected, returning existing: {existing.get('id')}")
+            response_reminder = self._format_reminder_for_display(existing)
+            user_tz = get_user_preferences().timezone
+            existing_date = parse_utc_time_string(existing.get('reminder_date'))
+            local_reminder_time = convert_from_utc(existing_date, user_tz)
+            formatted_local_time = format_datetime(local_reminder_time, 'date_time', include_timezone=True)
+            return {
+                "reminder": response_reminder,
+                "message": f"Reminder already exists for {formatted_local_time}",
+                "duplicate_detected": True
+            }
+
         # Create the reminder object
         reminder = {
             "id": reminder_id,
@@ -374,7 +448,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             "encrypted__additional_notes": additional_notes,
             "category": category
         }
-        
+
         # Save reminder
         self._save_reminder(reminder)
             

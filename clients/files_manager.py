@@ -6,11 +6,10 @@ Manages file uploads, lifecycle, and cleanup for structured data files
 """
 
 import logging
-from typing import Dict, Set, Optional
+from typing import Dict, Set
 import anthropic
 from anthropic import APIStatusError
 
-from utils.user_context import get_current_user_id
 from tools.repo import FILES_API_BETA_FLAG
 
 
@@ -62,14 +61,12 @@ class FilesManager:
             file_id for use in container_upload blocks
 
         Raises:
-            ValueError: File too large (>32MB)
+            ValueError: File too large (>32MB, Anthropic server-enforced limit)
             RuntimeError: API errors (403, 404, etc.)
         """
-        user_id = get_current_user_id()
-
         try:
             # Upload file with beta API
-            self.logger.info(f"Uploading file {filename} ({media_type}) for segment {segment_id}")
+            self.logger.debug(f"Uploading file {filename} ({media_type}) for segment {segment_id}")
 
             response = self.client.beta.files.upload(
                 file=(filename, file_bytes, media_type),
@@ -88,28 +85,28 @@ class FilesManager:
 
         except APIStatusError as e:
             if e.status_code == 413:
-                self.logger.error(f"File too large: {filename} ({len(file_bytes)} bytes)")
+                self.logger.error(f"File too large: {filename} ({len(file_bytes)} bytes)", exc_info=True)
                 raise ValueError(
-                    f"File too large for Files API. Maximum size: 32MB. "
+                    f"File too large for Files API. Maximum size: 32MB (Anthropic server-enforced limit). "
                     f"Consider splitting the file or using data sampling. "
                     f"Current size: {len(file_bytes) / (1024*1024):.1f}MB"
                 )
             elif e.status_code == 403:
-                self.logger.error(f"Files API access denied: {e}")
+                self.logger.error(f"Files API access denied: {e}", exc_info=True)
                 raise RuntimeError(
                     "Files API access denied. Check API key permissions for Files API beta access. "
                     "Contact Anthropic support if needed."
                 )
             elif e.status_code == 404:
-                self.logger.error(f"Files API endpoint not found: {e}")
+                self.logger.error(f"Files API endpoint not found: {e}", exc_info=True)
                 raise RuntimeError(
                     "Files API endpoint not found. Verify beta flag is set correctly."
                 )
             else:
-                self.logger.error(f"Files API error ({e.status_code}): {e}")
+                self.logger.error(f"Files API error ({e.status_code}): {e}", exc_info=True)
                 raise RuntimeError(f"Files API error ({e.status_code}): {str(e)}")
         except Exception as e:
-            self.logger.error(f"Unexpected error uploading file {filename}: {e}")
+            self.logger.error(f"Unexpected error uploading file {filename}: {e}", exc_info=True)
             raise RuntimeError(f"Failed to upload file: {str(e)}")
 
     def delete_file(self, file_id: str) -> None:
@@ -134,10 +131,10 @@ class FilesManager:
                 # File already deleted or never existed - not an error
                 self.logger.debug(f"File not found (may already be deleted): {file_id}")
             else:
-                self.logger.warning(f"Error deleting file {file_id}: {e}")
+                self.logger.warning(f"Error deleting file {file_id}: {e}", exc_info=True)
         except Exception as e:
             # Log but don't fail request on cleanup errors
-            self.logger.warning(f"Unexpected error deleting file {file_id}: {e}")
+            self.logger.warning(f"Unexpected error deleting file {file_id}: {e}", exc_info=True)
 
     def cleanup_segment_files(self, segment_id: str) -> None:
         """
@@ -160,7 +157,7 @@ class FilesManager:
         if not file_ids:
             return
 
-        self.logger.info(f"Cleaning up {len(file_ids)} files for segment {segment_id}")
+        self.logger.debug(f"Cleaning up {len(file_ids)} files for segment {segment_id}")
 
         for file_id in file_ids:
             self.delete_file(file_id)

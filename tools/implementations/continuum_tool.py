@@ -11,13 +11,10 @@ from entire conversation segments. MIRA can then search within specific segments
 using the provided time boundaries for detailed information.
 """
 
-import json
 import logging
 import math
-import re
 from datetime import timedelta
-from typing import Dict, Any, Optional, List, Tuple
-from uuid import UUID
+from typing import Dict, Any, Optional, List
 
 from pydantic import BaseModel, Field
 
@@ -26,8 +23,6 @@ from tools.registry import registry
 from cns.infrastructure.continuum_repository import get_continuum_repository
 from utils.timezone_utils import format_utc_iso, parse_utc_time_string, utc_now
 from clients.hybrid_embeddings_provider import get_hybrid_embeddings_provider
-from lt_memory.hybrid_search import HybridSearcher
-from lt_memory.db_access import LTMemoryDB
 
 
 class ContinuumSearchToolConfig(BaseModel):
@@ -134,14 +129,14 @@ class ContinuumSearchTool(Tool):
 
     name = "continuum_tool"
 
-    simple_description = "Search past conversations and extracted memories with immediate results. Hybrid vector+BM25 search finds relevant segments, messages, or memories. Use when you need synchronous search of conversation history."
+    simple_description = "Search past conversations with immediate results. Hybrid vector+BM25 search finds relevant segments or messages. Use when you need synchronous search of conversation history."
 
     anthropic_schema = {
         "name": "continuum_tool",
         "description": (
-            "Search conversation history or long-term memories using hybrid vector+BM25 search. "
-            "For conversations: start with 'search' on summaries (default) to find relevant segments. "
-            "For memories: use search_mode='memories' to search your extracted knowledge and insights. "
+            "Search conversation history using hybrid vector+BM25 search. "
+            "Start with 'search' on summaries (default) to find relevant segments. "
+            "Use 'search_within_segment' to explore a specific segment. "
             "Extract entities/proper nouns from queries for better matching."
         ),
         "input_schema": {
@@ -158,11 +153,10 @@ class ContinuumSearchTool(Tool):
                 },
                 "search_mode": {
                     "type": "string",
-                    "enum": ["summaries", "messages", "memories"],
+                    "enum": ["summaries", "messages"],
                     "description": (
                         "Search mode for 'search' operation. 'summaries' (default) searches "
-                        "segment summaries. 'messages' requires start_time and end_time. "
-                        "'memories' searches long-term memories using hybrid vector+BM25 search."
+                        "segment summaries. 'messages' requires start_time and end_time."
                     )
                 },
                 "query": {
@@ -246,6 +240,15 @@ class ContinuumSearchTool(Tool):
                     "minimum": 0,
                     "maximum": 10,
                     "description": "Number of context messages per direction (default: 2)"
+                },
+                "include_thinking": {
+                    "type": "boolean",
+                    "description": (
+                        "Include your reasoning trace from the time of each retrieved message. "
+                        "Use this to understand what you were thinking and why you responded the way you did — "
+                        "helpful for self-reflection, correcting past reasoning, or understanding context "
+                        "that isn't visible in the response alone."
+                    )
                 }
             },
             "required": []
@@ -311,10 +314,11 @@ class ContinuumSearchTool(Tool):
     # Parameter sets for each operation to filter kwargs
     _SEARCH_PARAMS = {
         'query', 'search_mode', 'entities', 'max_results', 'page',
-        'start_time', 'end_time', 'temporal_direction', 'reference_time'
+        'start_time', 'end_time', 'temporal_direction', 'reference_time',
+        'include_thinking'
     }
-    _SEARCH_WITHIN_SEGMENT_PARAMS = {'segment_id', 'query', 'max_results'}
-    _EXPAND_MESSAGE_PARAMS = {'message_id', 'direction', 'context_count'}
+    _SEARCH_WITHIN_SEGMENT_PARAMS = {'segment_id', 'query', 'max_results', 'include_thinking'}
+    _EXPAND_MESSAGE_PARAMS = {'message_id', 'direction', 'context_count', 'include_thinking'}
 
     def run(self, operation: str = "search", **kwargs) -> Dict[str, Any]:
         """
@@ -360,7 +364,8 @@ class ContinuumSearchTool(Tool):
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
         temporal_direction: Optional[str] = None,
-        reference_time: Optional[str] = None
+        reference_time: Optional[str] = None,
+        include_thinking: bool = False
     ) -> Dict[str, Any]:
         """
         Search continuum using summaries (default) or messages.
@@ -390,8 +395,8 @@ class ContinuumSearchTool(Tool):
         page = self._coerce_to_int(page, "page") or 1
 
         # Validate search mode
-        if search_mode not in ["summaries", "messages", "memories"]:
-            raise ValueError(f"search_mode must be 'summaries', 'messages', or 'memories', got: {search_mode}")
+        if search_mode not in ["summaries", "messages"]:
+            raise ValueError(f"search_mode must be 'summaries' or 'messages', got: {search_mode}")
 
         # Message mode requires timescope
         if search_mode == "messages":
@@ -407,16 +412,8 @@ class ContinuumSearchTool(Tool):
                 end_time=end_time,
                 entities=entities,
                 max_results=max_results,
-                page=page
-            )
-
-        # Memory mode - search long-term memories
-        if search_mode == "memories":
-            return self._search_memories_hybrid(
-                query=query,
-                entities=entities,
-                max_results=max_results,
-                page=page
+                page=page,
+                include_thinking=include_thinking
             )
 
         # Summary mode (default)
@@ -646,12 +643,15 @@ class ContinuumSearchTool(Tool):
             }
         }
 
-    def _format_message_preview(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_message_preview(
+        self, message: Dict[str, Any], include_thinking: bool = False
+    ) -> Dict[str, Any]:
         """
         Format a message as a preview with truncated content.
 
         Args:
             message: Raw message data from database
+            include_thinking: Whether to include thinking traces for assistant messages
 
         Returns:
             Formatted preview with short UUID and truncation markers
@@ -669,7 +669,7 @@ class ContinuumSearchTool(Tool):
         short_id = full_uuid[:8] if full_uuid else ""
 
         rank = message.get("rank", 0.0)
-        return {
+        result = {
             "message_id": short_id,
             "full_uuid": full_uuid,  # Include but don't show to user
             "continuum_id": message.get("continuum_id", ""),
@@ -682,6 +682,15 @@ class ContinuumSearchTool(Tool):
             "confidence_score": rank,  # Alias for confidence filtering compatibility
             "matched_entities": message.get("matched_entities", [])
         }
+
+        if include_thinking and message.get("role") == "assistant":
+            metadata = message.get("metadata") or {}
+            thinking = metadata.get("thinking")
+            result["thinking_trace"] = thinking
+            if thinking is None:
+                result["thinking_note"] = "No thinking trace stored for this response"
+
+        return result
 
     def _truncate_smart(self, text: str, max_chars: int) -> str:
         """
@@ -780,7 +789,8 @@ class ContinuumSearchTool(Tool):
         end_time: str,
         entities: List[str],
         max_results: Optional[int] = None,
-        page: int = 1
+        page: int = 1,
+        include_thinking: bool = False
     ) -> Dict[str, Any]:
         """
         Search messages within a specific time window using BM25.
@@ -813,7 +823,9 @@ class ContinuumSearchTool(Tool):
 
         db = self._conversation_repo._get_client(self.user_id)
 
-        # BM25 search within time boundaries
+        # Hybrid BM25 + trigram ranking within time boundaries
+        # No hard text filter - time scope from segment search is sufficient
+        # BM25 handles stemming (run/running), trigrams handle typos (Talyor/Taylor)
         search_sql = """
             SELECT
                 m.id,
@@ -822,16 +834,18 @@ class ContinuumSearchTool(Tool):
                 m.content,
                 m.created_at,
                 m.metadata,
-                ts_rank_cd(
-                    to_tsvector('english', m.content),
-                    plainto_tsquery('english', %s)
+                GREATEST(
+                    ts_rank_cd(
+                        to_tsvector('english', m.content),
+                        plainto_tsquery('english', %s)
+                    ),
+                    word_similarity(%s, m.content) * 0.5
                 ) AS rank
             FROM messages m
             WHERE m.created_at >= %s
               AND m.created_at <= %s
               AND m.content IS NOT NULL
               AND m.content <> ''
-              AND to_tsvector('english', m.content) @@ plainto_tsquery('english', %s)
               AND (m.metadata->>'is_segment_boundary' IS NULL
                    OR m.metadata->>'is_segment_boundary' = 'false')
             ORDER BY rank DESC, m.created_at ASC
@@ -839,7 +853,7 @@ class ContinuumSearchTool(Tool):
             LIMIT %s
         """
 
-        rows = db.execute_query(search_sql, (query, start_ts, end_ts, query, offset, limit))
+        rows = db.execute_query(search_sql, (query, query, start_ts, end_ts, offset, limit))
 
         # Process results with entity boosting
         results = []
@@ -872,7 +886,7 @@ class ContinuumSearchTool(Tool):
             })
 
         # Format as message previews (includes confidence_score for filtering)
-        formatted_results = [self._format_message_preview(msg) for msg in results]
+        formatted_results = [self._format_message_preview(msg, include_thinking=include_thinking) for msg in results]
 
         # Apply smart filtering based on confidence clustering
         unfiltered_count = len(formatted_results)
@@ -912,126 +926,12 @@ class ContinuumSearchTool(Tool):
             }
         }
 
-    def _search_memories_hybrid(
-        self,
-        query: str,
-        entities: List[str],
-        max_results: Optional[int] = None,
-        page: int = 1
-    ) -> Dict[str, Any]:
-        """
-        Search long-term memories using hybrid vector + BM25 search.
-
-        Args:
-            query: Natural language search query
-            entities: Accepted for API consistency but not applied to memory search.
-                Memory search relies on semantic similarity and importance scoring
-                rather than entity boosting, as memories are already entity-linked
-                via the entity_links field.
-            max_results: Number of results per page
-            page: Page number for pagination
-
-        Returns:
-            Dict with memory search results including confidence scores
-        """
-        # Set defaults
-        limit = max_results or 10
-        offset = (page - 1) * limit
-
-        # Initialize memory database and hybrid searcher
-        from utils.database_session_manager import get_shared_session_manager
-        session_manager = get_shared_session_manager()
-        memory_db = LTMemoryDB(session_manager)
-        searcher = HybridSearcher(memory_db)
-
-        try:
-            # Generate query embedding
-            query_embedding = self._embeddings_provider.encode_realtime(query)
-
-            # Perform hybrid search on memories
-            # Using 'general' intent for balanced text/vector weights
-            # Note: searcher uses ambient context internally via db._resolve_user_id()
-            results = searcher.hybrid_search(
-                query_text=query,
-                query_embedding=query_embedding.tolist(),  # Convert to list for database
-                search_intent="general",  # String, not enum
-                limit=limit + offset,  # Fetch extra for pagination
-                similarity_threshold=0.5,  # Lower threshold for memories
-                min_importance=0.1
-            )
-
-            # Apply pagination
-            paginated_results = results[offset:offset + limit]
-
-            # Format results (importance_score used as confidence_score for filtering)
-            formatted_results = []
-            for memory in paginated_results:
-                importance = round(memory.importance_score, 3)
-                formatted_results.append({
-                    "result_type": "memory",
-                    "memory_id": str(memory.id)[:8],
-                    "full_uuid": str(memory.id),
-                    "text": memory.text,
-                    "importance_score": importance,
-                    "confidence_score": importance,  # Alias for confidence filtering compatibility
-                    "confidence": round(memory.confidence, 3) if memory.confidence else 1.0,
-                    "created_at": format_utc_iso(memory.created_at),
-                    "happens_at": format_utc_iso(memory.happens_at) if memory.happens_at else None,
-                    "expires_at": format_utc_iso(memory.expires_at) if memory.expires_at else None,
-                    "is_refined": memory.is_refined,
-                    "access_count": memory.access_count,
-                    "entity_links": memory.entity_links or [],
-                    "inbound_links": len(memory.inbound_links) if memory.inbound_links else 0,
-                    "outbound_links": len(memory.outbound_links) if memory.outbound_links else 0
-                })
-
-            # Apply smart filtering based on confidence clustering
-            unfiltered_count = len(formatted_results)
-            filtered_results = self._filter_results_by_confidence(formatted_results)
-
-            # Calculate overall confidence from filtered results
-            if not filtered_results:
-                confidence = 0.0
-                status = "no_results"
-            else:
-                # Use importance score of top result as confidence
-                top_importance = filtered_results[0]["importance_score"]
-                if top_importance >= self._config.high_confidence_threshold:
-                    status = "high_confidence"
-                elif top_importance >= self._config.medium_confidence_threshold:
-                    status = "medium_confidence"
-                else:
-                    status = "low_confidence"
-                confidence = top_importance
-
-            return {
-                "status": status,
-                "confidence": round(confidence, 3),
-                "query": query,
-                "entities": entities,
-                "results": filtered_results,
-                "result_count": len(filtered_results),
-                "filtered_from": unfiltered_count,
-                "page": page,
-                "has_more_pages": len(results) == (limit + offset),
-                "search_mode": "memories",
-                "meta": {
-                    "search_tier": "hybrid_vector_bm25_memories",
-                    "total_memories_found": len(results),
-                    "vector_weight": 0.6,  # Default for GENERAL intent
-                    "text_weight": 0.4
-                }
-            }
-
-        except Exception as e:
-            self.logger.error(f"Memory search failed: {e}")
-            raise ValueError(f"Memory search failed: {str(e)}")
-
     def _search_within_segment(
         self,
         segment_id: str,
         query: str,
-        max_results: Optional[int] = None
+        max_results: Optional[int] = None,
+        include_thinking: bool = False
     ) -> Dict[str, Any]:
         """
         Search for specific messages within a segment using its time boundaries.
@@ -1109,7 +1009,8 @@ class ContinuumSearchTool(Tool):
             end_time=end_time,
             entities=[],  # No entity extraction for within-segment search
             max_results=max_results,
-            page=1
+            page=1,
+            include_thinking=include_thinking
         )
 
         # Enhance result with segment information
@@ -1125,7 +1026,8 @@ class ContinuumSearchTool(Tool):
         self,
         message_id: str,
         direction: str = "both",
-        context_count: Optional[int] = None
+        context_count: Optional[int] = None,
+        include_thinking: bool = False
     ) -> Dict[str, Any]:
         """
         Expand a message to show full content with surrounding context.
@@ -1156,17 +1058,26 @@ class ContinuumSearchTool(Tool):
         if not origin_message:
             raise ValueError(f"No message found with ID starting with '{message_id}'")
 
+        origin_dict = {
+            "message_id": message_id,
+            "full_uuid": origin_message["id"],
+            "continuum_id": origin_message["continuum_id"],
+            "role": origin_message["role"],
+            "content": origin_message["content"],
+            "timestamp": format_utc_iso(origin_message["created_at"]) if origin_message.get("created_at") else None,
+            "is_truncated": False
+        }
+
+        if include_thinking and origin_message["role"] == "assistant":
+            metadata = origin_message.get("metadata") or {}
+            thinking = metadata.get("thinking")
+            origin_dict["thinking_trace"] = thinking
+            if thinking is None:
+                origin_dict["thinking_note"] = "No thinking trace stored for this response"
+
         result = {
             "status": "expanded",
-            "origin_message": {
-                "message_id": message_id,
-                "full_uuid": origin_message["id"],
-                "continuum_id": origin_message["continuum_id"],
-                "role": origin_message["role"],
-                "content": origin_message["content"],
-                "timestamp": format_utc_iso(origin_message["created_at"]) if origin_message.get("created_at") else None,
-                "is_truncated": False
-            }
+            "origin_message": origin_dict
         }
 
         # Fetch context messages if requested
@@ -1175,14 +1086,16 @@ class ContinuumSearchTool(Tool):
                 result["context_before"] = self._fetch_context_messages(
                     origin_message,
                     direction="before",
-                    count=context_count
+                    count=context_count,
+                    include_thinking=include_thinking
                 )
 
             if direction in ["after", "both"]:
                 result["context_after"] = self._fetch_context_messages(
                     origin_message,
                     direction="after",
-                    count=context_count
+                    count=context_count,
+                    include_thinking=include_thinking
                 )
 
         return result
@@ -1232,7 +1145,8 @@ class ContinuumSearchTool(Tool):
         self,
         origin_message: Dict[str, Any],
         direction: str,
-        count: int
+        count: int,
+        include_thinking: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Fetch context messages before or after the origin message.
@@ -1241,6 +1155,7 @@ class ContinuumSearchTool(Tool):
             origin_message: The reference message
             direction: "before" or "after"
             count: Number of messages to fetch
+            include_thinking: Whether to include thinking traces for assistant messages
 
         Returns:
             List of context messages with relation indicators
@@ -1253,7 +1168,7 @@ class ContinuumSearchTool(Tool):
 
             if direction == "before":
                 query = """
-                    SELECT id, role, content, created_at
+                    SELECT id, role, content, created_at, metadata
                     FROM messages
                     WHERE continuum_id = %s
                       AND created_at < %s
@@ -1265,7 +1180,7 @@ class ContinuumSearchTool(Tool):
                 rows.reverse()
             else:  # after
                 query = """
-                    SELECT id, role, content, created_at
+                    SELECT id, role, content, created_at, metadata
                     FROM messages
                     WHERE continuum_id = %s
                       AND created_at > %s
@@ -1276,14 +1191,23 @@ class ContinuumSearchTool(Tool):
 
             context = []
             for idx, row in enumerate(rows, 1):
-                context.append({
+                msg = {
                     "message_id": str(row["id"])[:8],
                     "full_uuid": str(row["id"]),
                     "role": row["role"],
                     "content": row["content"],
                     "timestamp": format_utc_iso(row["created_at"]) if row.get("created_at") else None,
                     "relation": f"[{idx} message{'s' if idx > 1 else ''} {direction} origin]"
-                })
+                }
+
+                if include_thinking and row["role"] == "assistant":
+                    metadata = row.get("metadata") or {}
+                    thinking = metadata.get("thinking")
+                    msg["thinking_trace"] = thinking
+                    if thinking is None:
+                        msg["thinking_note"] = "No thinking trace stored for this response"
+
+                context.append(msg)
 
             return context
 

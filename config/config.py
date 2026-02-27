@@ -5,35 +5,24 @@ These are the core schema models used throughout the application to
 ensure type safety and validation of configuration values.
 """
 
-import os
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, List
 
 from pydantic import BaseModel, Field
-import multiprocessing
 
 class ApiConfig(BaseModel):
     """Anthropic API configuration settings."""
-
-    # Model configuration
-    model: str = Field(default="claude-opus-4-5-20251101", description="Primary model for all operations")
 
     # API key configuration
     api_key_name: str = Field(default="anthropic_key", description="Name of the Anthropic API key to retrieve from Vault")
 
     # Generation settings
+    model: str = Field(default="claude-sonnet-4-6", description="Default Anthropic model for LLM calls when no tier/override is specified")
     max_tokens: int = Field(default=10000, description="Maximum number of tokens to generate in responses")
     context_window_tokens: int = Field(default=200000, description="Total context window size in tokens for the model")
     temperature: float = Field(default=1.0, description="Temperature setting for response generation (Anthropic default: 1.0)")
 
     # Request settings
-    max_retries: int = Field(default=3, description="Maximum number of retries for failed API requests")
     timeout: int = Field(default=60, description="Request timeout in seconds")
-
-    # Prompt caching (Anthropic-specific)
-    enable_prompt_caching: bool = Field(default=True, description="Enable prompt caching for system prompts and tools (reduces costs by ~90% on cached content)")
-
-    # Files API (Anthropic-specific)
-    files_api_max_size_mb: int = Field(default=32, description="Maximum file size for Files API uploads (Anthropic limit)")
 
     # Emergency fallback settings (defaults to local Ollama - no API key required)
     emergency_fallback_enabled: bool = Field(default=True, description="Enable automatic failover to emergency provider on Anthropic errors")
@@ -45,9 +34,8 @@ class ApiConfig(BaseModel):
     # Generic provider thinking display
     show_generic_thinking: bool = Field(default=True, description="Show thinking blocks from generic providers to end user")
 
-    # Fingerprint generation settings (query expansion for memory retrieval)
-    analysis_enabled: bool = Field(default=True, description="Enable fingerprint generation for retrieval")
-    # analysis_endpoint, analysis_api_key_name, analysis_model moved to internal_llm table
+    # Subcortical layer settings (query expansion for memory retrieval)
+    analysis_enabled: bool = Field(default=True, description="Enable subcortical layer for retrieval")
 
 class ApiServerConfig(BaseModel):
     """FastAPI server configuration settings."""
@@ -61,70 +49,23 @@ class ApiServerConfig(BaseModel):
         default=["https://miraos.org", "http://localhost:1993", "http://127.0.0.1:1993"],
         description="Allowed CORS origins (production and local development)"
     )
-    request_timeout: int = Field(default=300, description="Request timeout in seconds")
-    rate_limit_rpm: int = Field(default=10, description="Maximum API requests per minute")
-    burst_limit: int = Field(default=5, description="Maximum number of requests allowed in a burst")
     extended_thinking: bool = Field(default=False, description="Whether to enable extended thinking capability")
     extended_thinking_budget: int = Field(default=1024, description="Token budget for extended thinking when enabled (min: 1024)")
-
-
-class PathConfig(BaseModel):
-    """Path configuration settings."""
-    
-    data_dir: str = Field(default="data", description="Directory for data storage")
-    persistent_dir: str = Field(default="persistent", description="Directory for persistent storage")
-    # Continuum history is now stored per-user in data/users/{user_id}/conversations/
-    # conversation_history_dir removed - use get_user_conversation_dir() helper instead
-    prompts_dir: str = Field(default="config/prompts", description="Directory containing prompt templates")
-    tools_dir: str = Field(default="tools/implementations", description="Directory containing tools")
-
-
-class InvokeOtherToolConfig(BaseModel):
-    """Configuration for invokeother_tool dynamic tool loader."""
-    enabled: bool = Field(default=True, description="Whether invokeother_tool is enabled")
-    idle_threshold: int = Field(default=5, description="Number of turns before an unused tool is automatically unloaded")
 
 
 class ToolConfig(BaseModel):
     """Tool-related configuration settings."""
 
-    enabled: bool = Field(default=True, description="Whether tools are enabled")
-    timeout: int = Field(default=30, description="Default timeout in seconds for tool operations")
     essential_tools: List[str] = Field(
-        default=["web_tool", "invokeother_tool", "getcontext_tool"],
+        default=["web_tool", "invokeother_tool", "continuum_tool", "reminder_tool", "memory_tool"],
         description="List of essential tools (warns if disabled)"
     )
-    invokeother_tool: InvokeOtherToolConfig = Field(
-        default_factory=InvokeOtherToolConfig,
-        description="Configuration for the invokeother_tool dynamic loader"
-    )
-    # Synthetic data generator settings
-    synthetic_data_analysis_model: str = Field(default="claude-3-7-sonnet-20250219", description="LLM model to use for code analysis and example review in synthetic data analysis")
-    synthetic_data_generation_model: str = Field(default="claude-haiku-4-5", description="LLM model to use for example generation in synthetic data generation")
-    # Synthetic data now uses unified BGE-M3 for deduplication
 
 class EmbeddingsFastModelConfig(BaseModel):
     """Embedding model configuration."""
 
-    model_name: str = Field(default="MongoDB/mdbr-leaf-ir-asym", description="mdbr-leaf-ir-asym 768d asymmetric retrieval model")
     cache_dir: Optional[str] = Field(default=None, description="Cache directory for model files")
-    thread_limit: int = Field(default=2, description="Thread limit for inference")
     batch_size: int = Field(default=32, description="Batch size for encoding")
-
-class EmbeddingsDeepModelConfig(BaseModel):
-    """Deep model configuration for advanced features."""
-    
-    model_name: str = Field(default="BAAI/bge-m3", description="Deep embeddings model (not used when OpenAI backend is enabled)")
-    cache_dir: Optional[str] = Field(default=None, description="Cache directory for model files")
-    thread_limit: int = Field(default=4, description="Thread limit for deep inference")
-    batch_size: int = Field(default=16, description="Batch size for deep model")
-
-
-class EmbeddingsRemoteConfig(BaseModel):
-    """Remote embeddings provider settings."""
-    
-    model: str = Field(default="text-embedding-3-small", description="Remote embedding model name")
-
 
 class EmbeddingsConfig(BaseModel):
     """Embeddings provider configuration settings."""
@@ -133,38 +74,12 @@ class EmbeddingsConfig(BaseModel):
 
     # Model configurations
     fast_model: EmbeddingsFastModelConfig = Field(default_factory=EmbeddingsFastModelConfig, description="Embedding model configuration (mdbr-leaf-ir-asym)")
-    deep_model: EmbeddingsDeepModelConfig = Field(default_factory=EmbeddingsDeepModelConfig, description="Deep model configuration (BGE-M3)")
-    remote: EmbeddingsRemoteConfig = Field(default_factory=EmbeddingsRemoteConfig, description="Remote provider configuration (legacy)")
-
-    # Common settings
-    cache_enabled: bool = Field(default=True, description="Enable embedding caching")
-    openai_embeddings_enabled: bool = Field(default=False, description="Enable OpenAI embeddings for deep understanding features (requires openai_embeddings_key in Vault)")
-    reranker_pool_size: int = Field(
-        default=1,
-        description=(
-            "BGE reranker pool size for concurrent requests. "
-            "pool_size=1: Thread-safe single instance (low overhead, no parallelism). "
-            "pool_size>1: Process pool with true parallelism (higher memory usage). "
-            "Set to 1 for resource-constrained systems, 4-8 for production."
-        )
-    )
-
-class DomainKnowledgeConfig(BaseModel):
-    """Domain knowledge service configuration."""
-
-    message_batch_size: int = Field(default=10, description="Number of messages to batch before sending to Letta")
-    block_cache_ttl: int = Field(default=300, description="Cache TTL for domain block content in seconds (5 minutes)")
-    sleeptime_agent_model: str = Field(default="openai/gpt-4o-mini", description="LLM model for Letta sleeptime agents (fast, cheap model for block updates)")
-
 
 class SystemConfig(BaseModel):
     """System-level configuration settings."""
 
     log_level: str = Field(default="WARNING", description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
     timezone: str = Field(default="America/Chicago", description="Default timezone for date/time operations (must be a valid IANA timezone name like 'America/New_York', 'Europe/London')")
-    streaming: bool = Field(default=True, description="Whether to stream responses from the API")
-    json_indent: int = Field(default=2, description="Indentation level for JSON output")
-    continuum_pool_size: int = Field(default=100, description="Maximum number of conversations to keep in memory pool for performance")
 
     # Segment Timeout Threshold (minutes)
     # NOTE: Can be made context-aware by time of day if needed in the future
@@ -172,13 +87,12 @@ class SystemConfig(BaseModel):
     segment_timeout: int = Field(default=60, description="Segment collapse timeout in minutes (60 minutes)")
 
     # Manifest Display Settings
-    manifest_depth: int = Field(default=30, description="Number of recent segments to include in manifest display")
+    manifest_depth: int = Field(default=15, description="Number of recent segments to include in manifest display")
     manifest_cache_ttl: int = Field(default=3600, description="TTL for manifest cache in seconds (1 hour default)")
-    manifest_summary_truncate_length: int = Field(default=60, description="Maximum characters for segment summary in manifest display")
 
     # Session Cache Settings (Complexity-Based Loading)
-    session_summary_complexity_limit: int = Field(
-        default=8,
+    session_summary_complexity_limit: float = Field(
+        default=9.5,
         description="Maximum total complexity score for loaded segment summaries (accumulates until limit reached)"
     )
     session_summary_max_count: int = Field(
@@ -201,26 +115,6 @@ class ExtractionConfig(BaseModel):
 
     Controls memory extraction behavior and LLM parameters.
     """
-    extraction_model: str = Field(
-        default="claude-haiku-4-5",
-        description="Model for memory extraction (used by both sync and batch)"
-    )
-    extraction_thinking_enabled: bool = Field(
-        default=True,
-        description="Enable extended thinking for memory extraction"
-    )
-    extraction_thinking_budget: int = Field(
-        default=1024,
-        description="Token budget for extended thinking during extraction"
-    )
-    max_extraction_tokens: int = Field(
-        default=16000,
-        description="Maximum tokens for extraction response"
-    )
-    extraction_temperature: float = Field(
-        default=1.0,
-        description="Temperature for extraction LLM calls"
-    )
     dedup_similarity_threshold: float = Field(
         default=0.92,
         ge=0.0,
@@ -232,10 +126,6 @@ class ExtractionConfig(BaseModel):
         ge=0.0,
         le=1.0,
         description="Default importance score for newly extracted memories"
-    )
-    retry_attempts: int = Field(
-        default=2,
-        description="Number of retry attempts for failed extractions"
     )
 
 
@@ -253,22 +143,6 @@ class BatchingConfig(BaseModel):
         default=24,
         description="Hours before Anthropic batch expires"
     )
-    max_chunk_size: int = Field(
-        default=100,
-        description="Maximum messages per processing chunk for boot extraction"
-    )
-    segment_chunk_size: int = Field(
-        default=40,
-        description="Maximum messages per chunk for segment-based extraction (smaller chunks for better quality)"
-    )
-    boot_check_enabled: bool = Field(
-        default=True,
-        description="Whether to run extraction sweep on application boot"
-    )
-    min_messages_for_boot_extraction: int = Field(
-        default=20,
-        description="Minimum messages required before running boot extraction (segment extraction has no minimum)"
-    )
     max_retry_count: int = Field(
         default=3,
         description="Maximum retry attempts for failed batch processing before permanent failure"
@@ -281,18 +155,6 @@ class BatchingConfig(BaseModel):
     batch_processing_timeout_seconds: int = Field(
         default=300,
         description="Maximum seconds to spend processing a single batch result (5 minutes)"
-    )
-    relationship_model: str = Field(
-        default="claude-3-5-haiku-20241022",
-        description="Model for relationship classification via Batch API"
-    )
-    relationship_max_tokens: int = Field(
-        default=500,
-        description="Maximum tokens for relationship classification"
-    )
-    relationship_temperature: float = Field(
-        default=0.2,
-        description="Temperature for relationship classification"
     )
 
 
@@ -326,26 +188,16 @@ class LinkingConfig(BaseModel):
         default=500,
         description="Maximum tokens for relationship classification LLM calls"
     )
-    entity_hub_importance_threshold: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=1.0,
-        description="Minimum importance score for memory to participate in entity linking (hub-only topology)"
-    )
 
 
 class RefinementConfig(BaseModel):
     """
     Refinement service configuration.
 
-    Controls memory consolidation and verbose trimming behavior.
+    Controls memory consolidation behavior.
     """
-    verbose_threshold_chars: int = Field(
-        default=70,
-        description="Character count above which memory is considered verbose"
-    )
     consolidation_similarity_threshold: float = Field(
-        default=0.88,
+        default=0.85,
         ge=0.0,
         le=1.0,
         description="Similarity threshold for considering consolidation"
@@ -354,39 +206,9 @@ class RefinementConfig(BaseModel):
         default=2,
         description="Minimum memories in cluster for consolidation"
     )
-    max_cluster_size: int = Field(
-        default=5,
-        description="Maximum memories in cluster for consolidation"
-    )
-    consolidation_confidence_threshold: float = Field(
-        default=0.8,
-        ge=0.0,
-        le=1.0,
-        description="Minimum confidence to perform consolidation"
-    )
-    refinement_cooldown_days: int = Field(
-        default=30,
-        description="Days to wait before re-refining a memory"
-    )
-    refinement_max_tokens: int = Field(
-        default=1000,
-        description="Maximum tokens for refinement LLM calls"
-    )
-    verbose_candidates_limit: int = Field(
-        default=20,
-        description="Maximum verbose memories to identify per run"
-    )
-    min_age_for_refinement_days: int = Field(
-        default=7,
-        description="Minimum age in days before memory is eligible for refinement"
-    )
-    min_access_count_for_refinement: int = Field(
+    max_consolidation_rejection_count: int = Field(
         default=3,
-        description="Minimum access count before verbose memory is considered stable enough to refine"
-    )
-    max_rejection_count: int = Field(
-        default=3,
-        description="Number of do_nothing rejections before memory is excluded from future refinement"
+        description="Number of consolidation rejections before memory is excluded from future consolidation candidates"
     )
 
 
@@ -416,20 +238,185 @@ class ProactiveConfig(BaseModel):
         le=1.0,
         description="Minimum importance score for surfacing"
     )
-    evacuation_trigger_threshold: int = Field(
+    max_surfaced_memories: int = Field(
+        default=20,
+        description="Maximum total primary memories in context window (pinned + fresh)"
+    )
+    max_pinned_memories: int = Field(
         default=15,
-        ge=1,
-        description="Number of pinned anchors that triggers evacuation evaluation"
+        description="Hard cap on retained memories from previous turn"
     )
-    evacuation_target_count: int = Field(
+    min_fresh_memories: int = Field(
+        default=5,
+        description="Guaranteed minimum fresh retrieval slots"
+    )
+    max_linked_per_primary: int = Field(
+        default=2,
+        description="Maximum linked memories displayed per primary memory"
+    )
+
+    # Debut boost: temporary ranking boost for new memories before they build hub connections
+    debut_full_boost_days: int = Field(
         default=7,
-        ge=1,
-        description="Target number of anchors to retain after evacuation"
+        description="Full debut boost for days 0-6 (activity days, not calendar)"
     )
-    evacuation_conversation_window: int = Field(
-        default=12,
-        ge=4,
-        description="Number of recent message pairs for evacuation context (larger than fingerprint's 6)"
+    debut_end_days: int = Field(
+        default=10,
+        description="Debut boost trails off completely by this day"
+    )
+    debut_boost_amount: float = Field(
+        default=0.15,
+        ge=0.0,
+        le=1.0,
+        description="Maximum debut boost amount (added to importance score)"
+    )
+    hub_connection_threshold: int = Field(
+        default=2,
+        description="Entity link count at which memory no longer needs debut boost"
+    )
+
+    # Supersedes penalty for soft demotion of superseded memories
+    supersedes_penalty_multiplier: float = Field(
+        default=0.3,
+        ge=0.0,
+        le=1.0,
+        description="Score multiplier for memories with inbound supersedes links (0.3 = 70% reduction)"
+    )
+
+    # Link type weights for reranking (higher = more important)
+    link_weight_conflicts: float = Field(default=1.0, description="Weight for 'conflicts' links")
+    link_weight_supports: float = Field(default=0.9, description="Weight for 'supports' links")
+    link_weight_supersedes: float = Field(default=0.9, description="Weight for 'supersedes' links")
+    link_weight_refines: float = Field(default=0.8, description="Weight for 'refines' links")
+    link_weight_precedes: float = Field(default=0.7, description="Weight for 'precedes' links")
+    link_weight_contextualizes: float = Field(default=0.7, description="Weight for 'contextualizes' links")
+    link_weight_shares_entity: float = Field(default=0.4, description="Weight for 'shares_entity' links")
+    link_weight_default: float = Field(default=0.5, description="Weight for unknown link types")
+    link_min_confidence: float = Field(
+        default=0.6,
+        ge=0.0,
+        le=1.0,
+        description="Minimum confidence score for link-based reranking"
+    )
+
+    # Importance inheritance formula: (linked * weight) + (primary * (1-weight))
+    link_importance_inheritance_weight: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Weight for linked memory importance (primary gets 1 - this value)"
+    )
+
+    # Parallel execution settings
+    search_max_workers: int = Field(
+        default=2,
+        description="Thread pool size for parallel similarity/hub searches"
+    )
+    search_oversample_factor: int = Field(
+        default=2,
+        description="Multiplier for oversampling before filtering"
+    )
+
+
+class VectorSearchConfig(BaseModel):
+    """
+    Vector search configuration.
+
+    Default parameters for similarity search operations across the system.
+    """
+    default_similarity_threshold: float = Field(
+        default=0.7,
+        ge=0.0,
+        le=1.0,
+        description="Default cosine similarity threshold for vector searches"
+    )
+    default_limit: int = Field(
+        default=10,
+        description="Default maximum results for vector searches"
+    )
+
+
+class HybridSearchConfig(BaseModel):
+    """
+    Hybrid search configuration.
+
+    Controls BM25/vector fusion weights and scoring parameters.
+    """
+    default_limit: int = Field(
+        default=20,
+        description="Default maximum results for hybrid search"
+    )
+    default_similarity_threshold: float = Field(
+        default=0.5,
+        ge=0.0,
+        le=1.0,
+        description="Default similarity threshold for hybrid search"
+    )
+    default_min_importance: float = Field(
+        default=0.1,
+        ge=0.0,
+        le=1.0,
+        description="Default minimum importance for hybrid search"
+    )
+    oversample_multiplier: int = Field(
+        default=2,
+        description="Multiplier for oversampling before fusion (e.g., 2x limit)"
+    )
+
+    # Intent-based weights: (bm25_weight, vector_weight)
+    intent_recall_bm25: float = Field(default=0.6, description="BM25 weight for 'recall' intent")
+    intent_recall_vector: float = Field(default=0.4, description="Vector weight for 'recall' intent")
+    intent_explore_bm25: float = Field(default=0.3, description="BM25 weight for 'explore' intent")
+    intent_explore_vector: float = Field(default=0.7, description="Vector weight for 'explore' intent")
+    intent_exact_bm25: float = Field(default=0.8, description="BM25 weight for 'exact' intent")
+    intent_exact_vector: float = Field(default=0.2, description="Vector weight for 'exact' intent")
+    intent_general_bm25: float = Field(default=0.4, description="BM25 weight for 'general' intent")
+    intent_general_vector: float = Field(default=0.6, description="Vector weight for 'general' intent")
+
+    # Reciprocal Rank Fusion parameters
+    rrf_k: int = Field(
+        default=60,
+        description="Constant k for reciprocal rank fusion formula"
+    )
+
+
+class ScheduledJobsConfig(BaseModel):
+    """
+    Scheduled job intervals configuration.
+
+    Controls timing for background maintenance tasks.
+    """
+    extraction_retry_hours: int = Field(
+        default=6,
+        description="Hours between failed extraction retries"
+    )
+    batch_poll_minutes: int = Field(
+        default=1,
+        description="Minutes between batch API polling (Anthropic recommends 1 minute)"
+    )
+    consolidation_use_days: int = Field(
+        default=7,
+        description="Use-days between consolidation (runs when MOD(cumulative_activity_days, interval) = 0)"
+    )
+    temporal_score_recalc_use_days: int = Field(
+        default=1,
+        description="Use-days between temporal score recalculations (runs when MOD(cumulative_activity_days, interval) = 0)"
+    )
+    bulk_score_recalc_use_days: int = Field(
+        default=1,
+        description="Use-days between bulk score recalculations (runs when MOD(cumulative_activity_days, interval) = 0)"
+    )
+    entity_gc_use_days: int = Field(
+        default=7,
+        description="Use-days between entity garbage collection (runs when MOD(cumulative_activity_days, interval) = 0)"
+    )
+    job_timeout_seconds: int = Field(
+        default=45,
+        description="Timeout for batch polling job monitors"
+    )
+    batch_cleanup_use_days: int = Field(
+        default=1,
+        description="Use-days between batch cleanup (runs when MOD(cumulative_activity_days, interval) = 0)"
     )
 
 
@@ -437,53 +424,19 @@ class EntityGarbageCollectionConfig(BaseModel):
     """
     Entity garbage collection configuration.
 
-    Controls entity dormancy detection, merge candidate scoring, and LLM review behavior.
+    Controls pg_trgm similarity threshold for finding duplicate entity pairs
+    and LLM review parameters. The GC flow: find similar pairs via self-join,
+    group via BFS connected-components, batch LLM review for per-entity decisions.
     """
-    dormancy_days: int = Field(
-        default=45,
-        description="Days without new links before entity is considered dormant"
-    )
-    max_link_count_for_gc: int = Field(
-        default=5,
-        description="Only review entities with this many or fewer links"
-    )
-    min_link_count_for_gc: int = Field(
-        default=1,
-        description="Entities with fewer links are immediately deleted without LLM review"
-    )
-    vector_similarity_threshold: float = Field(
-        default=0.75,
+    similarity_threshold: float = Field(
+        default=0.6,
         ge=0.0,
         le=1.0,
-        description="Vector similarity threshold for merge candidates (semantic equivalence)"
-    )
-    string_similarity_threshold: float = Field(
-        default=0.85,
-        ge=0.0,
-        le=1.0,
-        description="String similarity threshold for merge candidates (spelling variations)"
-    )
-    co_occurrence_threshold: float = Field(
-        default=0.3,
-        ge=0.0,
-        le=1.0,
-        description="Co-occurrence score threshold (ratio of shared memories)"
-    )
-    max_merge_candidates: int = Field(
-        default=5,
-        description="Maximum merge candidates to present per entity"
-    )
-    gc_model: str = Field(
-        default="claude-3-5-haiku-20241022",
-        description="Model for entity GC review"
-    )
-    gc_max_tokens: int = Field(
-        default=1000,
-        description="Maximum tokens for GC review response"
-    )
-    gc_temperature: float = Field(
-        default=0.2,
-        description="Temperature for GC review LLM calls"
+        description=(
+            "pg_trgm similarity threshold for entity name matching. "
+            "Calibrated from production data (887 entities): 0.6 yields ~408 pairs. "
+            "Catches same-name-different-type, spelling variations, possessives, prefix noise"
+        )
     )
 
 
@@ -500,25 +453,14 @@ class LTMemoryConfig(BaseModel):
     refinement: RefinementConfig = Field(default_factory=RefinementConfig)
     proactive: ProactiveConfig = Field(default_factory=ProactiveConfig)
     entity_gc: EntityGarbageCollectionConfig = Field(default_factory=EntityGarbageCollectionConfig)
-
-    # Global settings
-    temporal_rag_enabled: bool = Field(
-        default=True,
-        description="Whether temporal RAG features are enabled"
-    )
-    ivfflat_lists: int = Field(
-        default=0,
-        description="Number of lists for IVFFlat vector index (0 = no index, better for small datasets)"
-    )
+    vector_search: VectorSearchConfig = Field(default_factory=VectorSearchConfig)
+    hybrid_search: HybridSearchConfig = Field(default_factory=HybridSearchConfig)
+    scheduled_jobs: ScheduledJobsConfig = Field(default_factory=ScheduledJobsConfig)
 
 
 class LatticeConfig(BaseModel):
     """Lattice federation service configuration."""
 
-    enabled: bool = Field(
-        default=True,
-        description="Whether Lattice federation is enabled"
-    )
     service_url: str = Field(
         default="http://localhost:1113",
         description="URL of the Lattice discovery service"
@@ -550,5 +492,54 @@ class ContextConfig(BaseModel):
         default=5,
         ge=1,
         description="Number of oldest messages to prune when no topic drift boundary found"
+    )
+
+
+class PeanutGalleryConfig(BaseModel):
+    """
+    Peanut Gallery metacognitive observer configuration.
+
+    Controls the async observer that monitors conversation from above, providing:
+    - Compaction: Collapsing confusing, low-information sequences
+    - Concern detection: Identifying unhealthy loops or emotional escalation
+    - Coaching: Suggesting actions like getcontext_tool calls
+
+    Runs every N turns as fire-and-forget background processing.
+    """
+    enabled: bool = Field(
+        default=True,
+        description="Whether the peanut gallery observer is enabled"
+    )
+    trigger_interval: int = Field(
+        default=10,
+        ge=1,
+        description="Run observer evaluation every N turns"
+    )
+    message_window_pairs: int = Field(
+        default=10,
+        ge=3,
+        description="Number of recent user/assistant pairs to show the observer (filters out tool messages)"
+    )
+    max_tokens: int = Field(
+        default=500,
+        ge=100,
+        description="Maximum tokens for observer model response"
+    )
+    prerunner_max_tokens: int = Field(
+        default=100,
+        ge=50,
+        description="Maximum tokens for prerunner (seed selection) response"
+    )
+    seed_memory_count: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        description="Number of seed memories to provide to prerunner for relevance selection"
+    )
+    guidance_ttl_turns: int = Field(
+        default=5,
+        ge=1,
+        le=20,
+        description="Number of turns guidance messages remain visible in HUD before expiring"
     )
 

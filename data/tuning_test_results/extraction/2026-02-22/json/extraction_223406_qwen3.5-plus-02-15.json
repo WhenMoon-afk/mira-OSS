@@ -1,0 +1,27 @@
+{
+  "timestamp": "2026-02-22 22:34:06",
+  "config": {
+    "model": "qwen/qwen3.5-plus-02-15",
+    "temperature": 1.0,
+    "max_tokens": 16000,
+    "seed": 3,
+    "length_filter": null
+  },
+  "segment": {
+    "segment_id": "eb69a043-bbf4-4271-a29e-53fcf96156aa",
+    "continuum_id": "d7806ad8-92ed-41e4-bb8f-75f36e4cb6c1",
+    "display_title": "Memory refresh, tech demo restart, Marquette history",
+    "turn_count": 0,
+    "message_count": 16,
+    "complexity_score": 2,
+    "summary": "User requested memory refresh on persistent self-editing architecture for MIRA instances, referencing a December 1st conversation about deferred tool-loading for behavioral calibration injection via Anthropic's just-in-time tool descriptions to solve context-window overhead. After locating the relevant segment, user restarted a tech demo video and pivoted to requesting geographical and historical information about Marquette, Michigan (Lake Superior college town, population ~20,000, built on 1800s iron mining heritage, home to Northern Michigan University) and Jacques Marquette (1637\u20131675 French Jesuit missionary and explorer, led 1673 Mississippi River expedition with Louis Jolliet, documented Indigenous languages and cultures, died young but left detailed journals that became primary historical sources)."
+  },
+  "results": {
+    "memory_count": 0,
+    "parse_success": true,
+    "elapsed_ms": 1763,
+    "error": null,
+    "memories": []
+  },
+  "raw_response": "[]"
+}

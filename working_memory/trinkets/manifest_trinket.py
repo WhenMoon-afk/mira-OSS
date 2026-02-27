@@ -2,11 +2,12 @@
 import logging
 from collections import OrderedDict
 from datetime import timedelta
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, Optional
 
+from cns.services.manifest_query_service import ManifestSegment
 from .base import EventAwareTrinket
 from utils.timezone_utils import utc_now, convert_from_utc, parse_utc_time_string
-from utils.user_context import get_user_preferences
+from utils.user_context import get_current_user_id, get_user_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -20,23 +21,11 @@ class ManifestTrinket(EventAwareTrinket):
     conversation segments organized by time.
     """
 
-    def __init__(self, event_bus, working_memory):
-        """Initialize manifest trinket with event bus and required service."""
-        super().__init__(event_bus, working_memory)
-        # Initialize service immediately - fail at startup if misconfigured
-        from cns.services.manifest_query_service import get_manifest_query_service
-        self._manifest_service = get_manifest_query_service()
-
-    def _get_variable_name(self) -> str:
-        """Manifest publishes to 'conversation_manifest'."""
-        return "conversation_manifest"
+    variable_name = "conversation_manifest"
 
     def generate_content(self, context: Dict[str, Any]) -> str:
         """
         Generate manifest content from segment boundaries.
-
-        Args:
-            context: Update context containing 'user_id'
 
         Returns:
             Formatted manifest section or empty string if no segments
@@ -44,13 +33,12 @@ class ManifestTrinket(EventAwareTrinket):
         Raises:
             DatabaseError: If database query fails (infrastructure failure)
         """
-        user_id = context.get('user_id')
-        if not user_id:
-            logger.warning("ManifestTrinket called without user_id in context")
-            return ""
+        from cns.services.manifest_query_service import get_manifest_query_service
+
+        user_id = get_current_user_id()
 
         # Get raw segment data from service (handles caching)
-        segments = self._manifest_service.get_segments(user_id)
+        segments = get_manifest_query_service().get_segments(user_id)
 
         if not segments:
             logger.debug("No segments available for manifest")
@@ -62,7 +50,7 @@ class ManifestTrinket(EventAwareTrinket):
         logger.debug(f"Generated manifest for user {user_id}")
         return manifest
 
-    def _format_manifest(self, segments: List[Dict[str, Any]]) -> str:
+    def _format_manifest(self, segments: list[ManifestSegment]) -> str:
         """
         Format segments as XML grouped by relative time.
 
@@ -112,9 +100,9 @@ class ManifestTrinket(EventAwareTrinket):
 
     def _group_segments_by_date(
         self,
-        segments: List[Dict[str, Any]],
+        segments: list[ManifestSegment],
         timezone: str
-    ) -> Dict[str, List[Dict[str, Any]]]:
+    ) -> dict[str, list[ManifestSegment]]:
         """
         Group segments by relative date (Today, Yesterday, or date string).
 

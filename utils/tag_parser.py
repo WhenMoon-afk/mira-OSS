@@ -4,7 +4,9 @@ Tag parsing service for CNS.
 Extracts semantic tags from assistant responses.
 """
 import re
-from typing import Dict, Any, Optional
+from typing import Optional
+
+from typing_extensions import TypedDict
 
 
 # =============================================================================
@@ -81,6 +83,17 @@ def match_memory_id(full_uuid: str, short_id: str) -> bool:
 # =============================================================================
 
 
+class ParsedResponse(TypedDict):
+    """Result of parsing semantic tags from an assistant response."""
+    error_analysis: list
+    referenced_memories: list[str]
+    emotion: Optional[str]
+    display_title: Optional[str]
+    complexity: Optional[float]
+    internal_monologue: Optional[str]
+    clean_text: str
+
+
 class TagParser:
     """
     Service for parsing semantic tags from assistant responses.
@@ -90,12 +103,7 @@ class TagParser:
 
     # Tag patterns
     ERROR_ANALYSIS_PATTERN = re.compile(r'<error_analysis\s+error_id=["\']([^"\']+)["\']>(.*?)</error_analysis>', re.DOTALL | re.IGNORECASE)
-    # Pattern for memory references block: <mira:memory_refs>mem_XXX, mem_YYY</mira:memory_refs>
-    MEMORY_REFS_PATTERN = re.compile(
-        r'<mira:memory_refs>(.*?)</mira:memory_refs>',
-        re.IGNORECASE | re.DOTALL
-    )
-    # Pattern to extract individual memory IDs from the block
+    # Pattern to extract individual memory IDs
     # UUIDs only contain hex chars (0-9, a-f)
     MEMORY_ID_PATTERN = re.compile(
         r'mem_([a-fA-F0-9]{8})',
@@ -111,13 +119,25 @@ class TagParser:
         r'<mira:display_title>(.*?)</mira:display_title>',
         re.DOTALL | re.IGNORECASE
     )
-    # Pattern for segment complexity score: <mira:complexity>1-3</mira:complexity>
+    # Pattern for segment complexity score: <mira:complexity>0.5-3</mira:complexity>
     COMPLEXITY_PATTERN = re.compile(
-        r'<mira:complexity>\s*([123])\s*</mira:complexity>',
+        r'<mira:complexity>\s*(0\.5|[123])\s*</mira:complexity>',
         re.IGNORECASE
     )
-    
-    def parse_response(self, response_text: str, preserve_tags: list = None) -> Dict[str, Any]:
+    # Pattern for errant timestamps MIRA might add at message start
+    # Matches: [5:48pm], (5:48pm), 5:48pm, [5:48 PM], etc.
+    ERRANT_TIMESTAMP_PATTERN = re.compile(
+        r'^[\[\(]?\d{1,2}:\d{2}\s*(?:am|pm)[\]\)]?\s*[:,-]?\s*',
+        re.IGNORECASE
+    )
+    # Pattern for internal monologue block (cognitive anchoring mechanism)
+    # Uses mira: namespace like all other Mira output tags
+    INTERNAL_MONOLOGUE_PATTERN = re.compile(
+        r'<mira:internal_monologue>(.*?)</mira:internal_monologue>\s*',
+        re.DOTALL | re.IGNORECASE
+    )
+
+    def parse_response(self, response_text: str, preserve_tags: Optional[list[str]] = None) -> ParsedResponse:
         """
         Parse all tags from response text.
 
@@ -135,15 +155,6 @@ class TagParser:
                 'error_id': match.group(1),
                 'analysis': match.group(2).strip()
             })
-
-        # Extract memory references from <mira:memory_refs> block
-        memory_refs = []
-        refs_match = self.MEMORY_REFS_PATTERN.search(response_text)
-        if refs_match:
-            refs_content = refs_match.group(1)
-            # Extract individual mem_XXXXXXXX IDs from the block
-            for id_match in self.MEMORY_ID_PATTERN.finditer(refs_content):
-                memory_refs.append(id_match.group(1))
 
         # Extract emotion emoji
         emotion = None
@@ -165,20 +176,27 @@ class TagParser:
         complexity = None
         complexity_match = self.COMPLEXITY_PATTERN.search(response_text)
         if complexity_match:
-            complexity = int(complexity_match.group(1))
+            complexity = float(complexity_match.group(1))
+
+        # Extract internal monologue (cognitive anchoring block)
+        internal_monologue = None
+        monologue_match = self.INTERNAL_MONOLOGUE_PATTERN.search(response_text)
+        if monologue_match:
+            internal_monologue = monologue_match.group(1).strip()
 
         parsed = {
             'error_analysis': error_analyses,
-            'referenced_memories': memory_refs,
+            'referenced_memories': [],  # Now handled via memory_tool touch operation
             'emotion': emotion,
             'display_title': display_title,
             'complexity': complexity,
+            'internal_monologue': internal_monologue,
             'clean_text': self.remove_all_tags(response_text, preserve_tags=preserve_tags)
         }
 
         return parsed
 
-    def remove_all_tags(self, text: str, preserve_tags: list = None) -> str:
+    def remove_all_tags(self, text: str, preserve_tags: Optional[list[str]] = None) -> str:
         """
         Remove all semantic tags from text for clean display.
 
@@ -231,8 +249,19 @@ class TagParser:
         # Remove specific error analysis patterns
         text = self.ERROR_ANALYSIS_PATTERN.sub('', text)
 
+        # Remove internal_monologue blocks (OODA cognitive anchor)
+        # Previously left for "autoregressive conditioning" but:
+        # 1. System prompt already instructs the pattern every turn
+        # 2. Frontend streaming can't reliably strip multi-paragraph blocks
+        # 3. Partial tags leak during block extraction
+        text = self.INTERNAL_MONOLOGUE_PATTERN.sub('', text)
+
         # Clean up extra whitespace
         text = re.sub(r'\n\s*\n', '\n\n', text)  # Remove blank lines
         text = text.strip()
+
+        # Strip errant timestamps ONLY from absolute message start (after strip)
+        # The ^ anchor + post-strip placement ensures we never touch mid-sentence times
+        text = self.ERRANT_TIMESTAMP_PATTERN.sub('', text)
 
         return text

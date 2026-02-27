@@ -13,6 +13,7 @@ from uuid import UUID
 from lt_memory.models import ExtractedMemory
 from lt_memory.vector_ops import VectorOps
 from lt_memory.db_access import LTMemoryDB
+from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +43,8 @@ class ConsolidationHandler:
         self,
         old_memory_ids: List[UUID],
         consolidated_text: str,
-        confidence: float,
-        user_id: str
+        user_id: str,
+        merge_note: str | None = None,
     ) -> UUID:
         """
         Consolidate multiple memories into one with link preservation.
@@ -56,8 +57,8 @@ class ConsolidationHandler:
         Args:
             old_memory_ids: Memory UUIDs to consolidate
             consolidated_text: Text of consolidated memory
-            confidence: Confidence score for consolidation
             user_id: User ID
+            merge_note: LLM's note on what was preserved/elided (stored as annotation)
 
         Returns:
             UUID of newly created consolidated memory
@@ -139,7 +140,6 @@ class ConsolidationHandler:
         consolidated_memory = ExtractedMemory(
             text=consolidated_text,
             importance_score=median_importance,
-            confidence=confidence,
             consolidates_memory_ids=[str(mid) for mid in old_memory_ids]
         )
 
@@ -167,6 +167,18 @@ class ConsolidationHandler:
                 f"{len(unique_inbound)} inbound, {len(unique_outbound)} outbound, "
                 f"{len(unique_entities)} entities"
             )
+
+        # Step 7b: Store merge note as annotation
+        if merge_note:
+            source_uuids = [str(mid) for mid in old_memory_ids]
+            self.db.update_memory(new_memory_id, {
+                'annotations': [{
+                    'text': merge_note,
+                    'created_at': utc_now().isoformat(),
+                    'source': 'consolidation',
+                    'archived_source_ids': source_uuids,
+                }]
+            }, user_id=user_id)
 
         # Step 8: Update all memories that were linking TO old memories
         # Rewrite their outbound_links to point to new_memory_id

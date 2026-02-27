@@ -5,7 +5,7 @@ Segments are represented as sentinel messages in the messages table with
 metadata.is_segment_boundary = True, following the same pattern as session boundaries.
 """
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Optional
 from datetime import datetime
 from uuid import uuid4
 
@@ -59,29 +59,16 @@ def create_segment_boundary_sentinel(
     return sentinel
 
 
-def add_tools_to_segment(sentinel: Message, tools_used: List[str]) -> None:
-    """
-    Add tools to segment's tools_used list (deduplicated).
-
-    Args:
-        sentinel: Segment boundary sentinel message
-        tools_used: List of tool names used in this turn
-    """
-    current_tools = set(sentinel.metadata.get('tools_used', []))
-    current_tools.update(tools_used)
-    sentinel.metadata['tools_used'] = sorted(list(current_tools))
-
-
 def collapse_segment_sentinel(
     sentinel: Message,
     summary: str,
     display_title: str,
-    embedding: Optional[List[float]],
+    embedding: list[float],
     inactive_duration_minutes: int,
     processing_failed: bool = False,
-    tools_used: Optional[List[str]] = None,
+    tools_used: list[str] = (),
     segment_end_time: Optional[datetime] = None,
-    complexity_score: int = 2
+    complexity_score: float = 2
 ) -> Message:
     """
     Collapse segment sentinel with summary and embedding.
@@ -97,7 +84,7 @@ def collapse_segment_sentinel(
         processing_failed: True if summary generation failed and fallback was used
         tools_used: Tools used in segment (extracted from messages)
         segment_end_time: Timestamp of last message in segment
-        complexity_score: Cognitive complexity score (1=simple, 2=moderate, 3=complex)
+        complexity_score: Cognitive complexity score (0.5=trivial, 1=simple, 2=moderate, 3=complex)
 
     Returns:
         New Message with status='collapsed' and summary in content
@@ -123,9 +110,8 @@ def collapse_segment_sentinel(
         collapsed_metadata['segment_end_time'] = segment_end_time.isoformat()
 
     # Store embedding in metadata for repository to extract and persist
-    if embedding is not None:
-        collapsed_metadata['segment_embedding_value'] = embedding
-        collapsed_metadata['has_segment_embedding'] = True
+    collapsed_metadata['segment_embedding_value'] = embedding
+    collapsed_metadata['has_segment_embedding'] = True
 
     logger.info(
         f"Collapsed segment {sentinel.metadata['segment_id']}: "
@@ -142,65 +128,6 @@ def collapse_segment_sentinel(
         created_at=sentinel.created_at,
         metadata=collapsed_metadata
     )
-
-
-def mark_segment_processed(
-    sentinel: Message,
-    memories_extracted: bool = False,
-    domain_blocks_updated: bool = False,
-    memory_count: Optional[int] = None
-) -> None:
-    """
-    Mark segment as processed for memory extraction or domain updates.
-
-    Idempotent processing flags prevent duplicate work.
-
-    Args:
-        sentinel: Segment boundary sentinel message
-        memories_extracted: Set memories_extracted flag
-        domain_blocks_updated: Set domain_blocks_updated flag
-        memory_count: Number of memories extracted
-    """
-    if memories_extracted:
-        sentinel.metadata['memories_extracted'] = True
-        sentinel.metadata['memory_extraction_at'] = utc_now().isoformat()
-        if memory_count is not None:
-            sentinel.metadata['memory_count'] = memory_count
-
-    if domain_blocks_updated:
-        sentinel.metadata['domain_blocks_updated'] = True
-        sentinel.metadata['domain_update_at'] = utc_now().isoformat()
-
-
-def get_segment_id(sentinel: Message) -> str:
-    """Extract segment ID from sentinel metadata."""
-    return sentinel.metadata.get('segment_id', '')
-
-
-def is_segment_boundary(message: Message) -> bool:
-    """Check if message is a segment boundary sentinel."""
-    return message.metadata.get('is_segment_boundary', False)
-
-
-def is_active_segment(sentinel: Message) -> bool:
-    """Check if segment is still active (not collapsed)."""
-    return sentinel.metadata.get('status') == 'active'
-
-
-def get_segment_time_range(sentinel: Message) -> tuple[datetime, datetime]:
-    """
-    Get segment time range from sentinel metadata.
-
-    Returns:
-        Tuple of (start_time, end_time) as datetime objects
-    """
-    start_str = sentinel.metadata.get('segment_start_time')
-    end_str = sentinel.metadata.get('segment_end_time')
-
-    start_time = parse_utc_time_string(start_str) if start_str else utc_now()
-    end_time = parse_utc_time_string(end_str) if end_str else utc_now()
-
-    return start_time, end_time
 
 
 def format_segment_for_display(sentinel: Message) -> str:
@@ -246,7 +173,7 @@ def create_collapse_marker() -> Message:
         Message with collapse_marker notification type
     """
     return Message(
-        content="[...older messages and summaries available through search. use continuumsearch to find specific information from past conversations...]",
+        content='<mira:notification type="collapse_marker">Older messages and summaries available through search. Use continuumsearch to find specific information from past conversations.</mira:notification>',
         role="assistant",
         metadata={'system_notification': True, 'notification_type': 'collapse_marker'}
     )
@@ -284,25 +211,19 @@ def create_session_boundary_marker(segment_summaries: List[Message]) -> Message:
     else:
         # No previous segments - this is the first conversation
         # Show a generic message without specific end time
-        try:
-            user_tz = get_user_preferences().timezone
-        except Exception:
-            user_tz = 'UTC'
+        user_tz = get_user_preferences().timezone
 
         current_time_user_tz = convert_from_utc(current_time, user_tz)
         current_time_str = format_datetime(current_time_user_tz, "time_only", include_timezone=True)
 
         return Message(
-            content=f"NOTIFICATION: THIS CHAT SESSION BEGAN AT {current_time_str}",
+            content=f'<mira:notification type="session_break">This chat session began at {current_time_str}</mira:notification>',
             role="assistant",
             metadata={'system_notification': True, 'notification_type': 'session_break'}
         )
 
     # Convert times to user timezone
-    try:
-        user_tz = get_user_preferences().timezone
-    except Exception:
-        user_tz = 'UTC'
+    user_tz = get_user_preferences().timezone
 
     last_time_user_tz = convert_from_utc(last_session_end, user_tz)
     current_time_user_tz = convert_from_utc(current_time, user_tz)
@@ -328,9 +249,11 @@ def create_session_boundary_marker(segment_summaries: List[Message]) -> Message:
 
     # Create boundary message
     boundary_content = (
-        f"NOTIFICATION: LAST CHAT SESSION ENDED AT {last_time_str} | "
-        f"THIS CHAT SESSION BEGAN AT {current_time_str} | "
-        f"GAP OF {gap_str.upper()}"
+        f'<mira:notification type="session_break">'
+        f'Last chat session ended at {last_time_str}. '
+        f'This chat session began at {current_time_str}. '
+        f'Gap of {gap_str}.'
+        f'</mira:notification>'
     )
 
     return Message(

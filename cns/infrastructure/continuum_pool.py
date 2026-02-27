@@ -4,9 +4,9 @@ Continuum pool using Valkey for distributed caching.
 Provides session detection and automatic expiration for continuums,
 replacing the in-memory LRU pool with Valkey-based caching.
 """
+from __future__ import annotations
+
 import logging
-from typing import Dict, Optional, List, Any
-from collections import OrderedDict
 import threading
 
 from cns.core.continuum import Continuum
@@ -14,7 +14,6 @@ from cns.core.message import Message
 from cns.infrastructure.continuum_repository import ContinuumRepository
 from cns.infrastructure.valkey_message_cache import ValkeyMessageCache
 from cns.core.segment_cache_loader import SegmentCacheLoader
-from config import config
 from utils.user_context import get_current_user_id
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,7 @@ class UnitOfWork:
         """
         self.continuum = continuum
         self.pool = pool
-        self.pending_messages = []
+        self.pending_messages: list[Message] = []
         self.metadata_updated = False
         
     def add_messages(self, *messages: Message) -> None:
@@ -79,7 +78,7 @@ class UnitOfWork:
             self.pool.repository.update_continuum_metadata(self.continuum)
             logger.debug(f"Updated metadata for continuum {self.continuum.id}")
 
-    def _get_real_messages(self) -> List[Message]:
+    def _get_real_messages(self) -> list[Message]:
         """
         Get conversation messages, excluding summaries and boundaries.
 
@@ -173,41 +172,7 @@ class ContinuumPool:
             UnitOfWork instance for accumulating and committing changes
         """
         return UnitOfWork(continuum, self)
-    
-    def get_by_id(self, continuum_id: str, user_id: str) -> Optional[Continuum]:
-        """
-        Get continuum by ID, checking Valkey cache.
-        
-        Args:
-            continuum_id: Continuum identifier
-            user_id: User identifier for access verification
-            
-        Returns:
-            Continuum instance or None if not found
-        """
-        with self._lock:
-            # Load continuum from repository
-            continuum = self.repository.get_by_id(continuum_id, user_id)
 
-            if not continuum:
-                return None
-
-            # No callback needed - using Unit of Work pattern
-
-            # Check Valkey for cached messages
-            cached_messages = self.valkey_cache.get_continuum()
-
-            if cached_messages:
-                # Apply cached messages from cache
-                continuum.apply_cache(cached_messages)
-                logger.debug(f"Found cached messages for continuum {continuum_id}")
-            else:
-                # New session or cache expired
-                logger.debug(f"No cached messages for continuum {continuum_id}")
-                # Messages already loaded by repository
-
-            return continuum
-    
     def invalidate(self) -> None:
         """
         Remove continuum from Valkey cache.
@@ -223,7 +188,7 @@ class ContinuumPool:
         else:
             logger.debug(f"No cached continuum to invalidate for user {user_id}")
     
-    def update_cache(self, user_id: str, messages: List[Message]) -> None:
+    def update_cache(self, user_id: str, messages: list[Message]) -> None:
         """
         Update continuum cache in Valkey.
 
@@ -236,24 +201,10 @@ class ContinuumPool:
         self.valkey_cache.set_continuum(messages)
         logger.debug(f"Updated continuum cache for user {user_id}")
 
-    def get_session_info(self, user_id: str) -> Dict[str, Any]:
-        """
-        Get session information for a user.
-
-        Args:
-            user_id: User identifier
-
-        Returns:
-            Dict with session info (cached: bool)
-        """
-        cached_messages = self.valkey_cache.get_continuum()
-        return {
-            'cached': cached_messages is not None
-        }
 
 
 # Global continuum pool instance
-_continuum_pool: Optional[ContinuumPool] = None
+_continuum_pool: ContinuumPool | None = None
 
 
 def initialize_continuum_pool(repository: ContinuumRepository,
