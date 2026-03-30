@@ -59,7 +59,7 @@ class ToolCompletedEvent(StreamEvent):
     """Tool execution completed successfully."""
     tool_name: str
     tool_id: str
-    result: str
+    result: str | list[dict[str, object]]
     type: str = field(default="tool_completed", init=False)
     timestamp: float = field(default_factory=time.time, init=False)
 

@@ -30,6 +30,11 @@ from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
 
+# Matches all <mira:*> internal tags — both paired (<mira:my_emotion>…</mira:my_emotion>)
+# and self-closing (<mira:memory_ref="…" />). Stripped from conversation turns before
+# subcortical processing to avoid rare-token attention sinks.
+_MIRA_TAG_PATTERN = re.compile(r'<mira:[^>]*>.*?</mira:[^>]*>|<mira:[^/]*/\s*>', re.DOTALL)
+
 
 class SurfacedMemory(TypedDict):
     """Memory previously surfaced in conversation, evaluated for retention."""
@@ -58,8 +63,10 @@ class SubcorticalResult:
             return "medium"
         return "high"
 
-# Number of user/assistant pairs to include as context (6 pairs = 12 messages)
-CONTEXT_PAIRS = 6
+# Number of user/assistant pairs to include as context (3 pairs = 6 messages).
+# Reduced from 6 based on MI analysis: conv_turns token mass was 9.5x current_message,
+# driving 2.34x context bleed ratio. At 3 pairs the ratio drops to ~1.1x.
+CONTEXT_PAIRS = 3
 
 
 class SubcorticalLayer:
@@ -166,15 +173,20 @@ class SubcorticalLayer:
         # When under pressure, _format_previous_memories injects a pruning alert
         memories_block = self._format_previous_memories(previous_memories)
 
+        # Collapse newlines — template is single-line by design, so injected
+        # content must not reintroduce them.
+        def _collapse(text: str) -> str:
+            return " ".join(text.split())
+
         user_message = self.user_prompt_template.replace(
             "{conversation_turns}",
-            conversation_turns
+            _collapse(conversation_turns)
         ).replace(
             "{user_message}",
-            current_user_message
+            _collapse(current_user_message)
         ).replace(
             "{previous_memories}",
-            memories_block
+            _collapse(memories_block)
         )
 
         logger.debug(f"Generating query expansion for: {current_user_message[:100]}...")
@@ -226,6 +238,7 @@ class SubcorticalLayer:
             query_expansion=result.query_expansion,
             pinned_ids=result.pinned_memory_ids,
             entities=result.entities,
+            complexity=result.complexity,
             previous_memory_count=len(previous_memories) if previous_memories else 0
         )
 
@@ -237,6 +250,7 @@ class SubcorticalLayer:
         query_expansion: str,
         pinned_ids: Set[str],
         entities: List[str],
+        complexity: str,
         previous_memory_count: int
     ) -> None:
         """
@@ -262,6 +276,7 @@ class SubcorticalLayer:
                 "query_expansion": query_expansion,
                 "pinned_ids": list(pinned_ids),
                 "entities": entities,
+                "complexity": complexity,
                 "previous_memory_count": previous_memory_count
             }
 
@@ -343,12 +358,24 @@ class SubcorticalLayer:
                 f'reduces the budget for discovering new relevant ones.</mira:system_alert>'
             )
 
+        # Truncate passage text to reduce token mass competing with current_message.
+        # MI analysis (round 2) showed 15 words preserves enough context for relevance
+        # judgment while freeing ~60% of passage token budget. Per-token attention for
+        # current_message gained +18.1% with this truncation.
+        max_passage_words = 15
+
         for memory in memories:
             text = memory.get('text', '')
             memory_id = memory.get('id', '')
             importance = memory.get('importance_score', 0.5)
             formatted_id = format_memory_id(memory_id)
             dots = SubcorticalLayer._importance_to_dots(importance)
+
+            # Truncate to first N words — ID + topic is sufficient for relevance filtering
+            words = text.split()
+            if len(words) > max_passage_words:
+                text = " ".join(words[:max_passage_words]) + "..."
+
             if text and formatted_id:
                 lines.append(f"{formatted_id} [{dots}] - {text}")
             elif text:
@@ -423,8 +450,8 @@ class SubcorticalLayer:
 
         Expected format:
         <entities>
-        <named_entity>Annika</named_entity>
-        <named_entity>Mom</named_entity>
+        <ne>Annika</ne>
+        <ne>Mom</ne>
         </entities>
 
         Or for no entities:
@@ -454,16 +481,16 @@ class SubcorticalLayer:
         if entities_block.lower() == "none":
             return entities
 
-        # Parse <named_entity> tags
+        # Parse <ne> tags
         entity_matches = re.findall(
-            r'<named_entity>(.*?)</named_entity>',
+            r'<ne[^>]*>(.*?)</ne>',
             entities_block,
             re.DOTALL
         )
 
         for name in entity_matches:
             name = name.strip()
-            if name:
+            if name and name.lower() != "none":
                 entities.append(name)
 
         logger.debug(f"Parsed {len(entities)} entities from response")
@@ -551,9 +578,13 @@ class SubcorticalLayer:
             user_time = user_msg.created_at.strftime("%H:%M")
             assistant_time = assistant_msg.created_at.strftime("%H:%M")
 
-            # Prepend pair (we're walking backwards)
-            user_content = self._extract_text_content(user_msg.content)
-            lines.insert(0, f"<turn speaker=\"assistant\" time=\"{assistant_time}\">{assistant_msg.content}</turn>")
+            # Prepend pair (we're walking backwards), truncating long messages.
+            # Strip all <mira:*> internal tags (emotion emojis, memory refs, etc.)
+            # — rare-token attention sinks that waste budget without contributing
+            # to entity/expansion/passage tasks.
+            user_content = self._extract_text_content(user_msg.content)[:2000]
+            assistant_content = _MIRA_TAG_PATTERN.sub('', str(assistant_msg.content))[:2000]
+            lines.insert(0, f"<turn speaker=\"assistant\" time=\"{assistant_time}\">{assistant_content}</turn>")
             lines.insert(0, f"<turn speaker=\"user\" time=\"{user_time}\">{user_content}</turn>")
             pairs_found += 1
 

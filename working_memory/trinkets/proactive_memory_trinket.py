@@ -91,11 +91,9 @@ class ProactiveMemoryTrinket(EventAwareTrinket):
         if memory.get('source') == 'global':
             attrs.append('source="global"')
 
-        confidence = memory.get('confidence')
-        if confidence is None:
-            confidence = memory.get('similarity_score')
-        if confidence is not None and confidence > 0.75:
-            attrs.append(f'confidence="{int(confidence * 100)}"')
+        similarity = memory.get('similarity_score')
+        if similarity is not None and similarity > 0.75:
+            attrs.append(f'relevance="{int(similarity * 100)}"')
 
         parts = [f"<memory {' '.join(attrs)}>"]
         parts.append(f"<text>{text}</text>")
@@ -146,23 +144,21 @@ class ProactiveMemoryTrinket(EventAwareTrinket):
         """
         Format linked memories as compact inline context annotations.
 
-        Deduplicates by target ID (keeps highest-confidence link type per target).
+        Deduplicates by target ID (keeps first occurrence per target).
         Renders ~80 chars per line instead of ~200+ chars per full XML block.
         """
         if not linked_memories:
             return ""
 
-        # Dedup by target ID — keep highest confidence link type per target
+        # Dedup by target ID — keep first occurrence per target
         seen_ids: dict = {}
         for linked in linked_memories:
             target_id = linked.get('id', '')
-            link_meta = linked.get('link_metadata', {})
-            confidence = link_meta.get('confidence', 0)
-            if target_id not in seen_ids or confidence > seen_ids[target_id][1]:
-                seen_ids[target_id] = (linked, confidence)
+            if target_id not in seen_ids:
+                seen_ids[target_id] = linked
 
         lines = []
-        for linked, _ in seen_ids.values():
+        for linked in seen_ids.values():
             raw_id = linked.get('id', '')
             formatted_id = format_memory_id(raw_id) if raw_id else ''
             text = linked.get('text', '')

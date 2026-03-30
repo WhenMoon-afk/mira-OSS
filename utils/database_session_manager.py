@@ -125,8 +125,8 @@ class LTMemorySessionManager:
                     # Industry best practice: keep pools small, let them queue
                     pool = ConnectionPool(
                         conninfo=conninfo,
-                        min_size=1,
-                        max_size=10,  # Reduced from 50 - most apps need far fewer connections
+                        min_size=2,
+                        max_size=15,
                         timeout=30,
                         max_lifetime=3600,  # Recycle connections after 1 hour
                         max_idle=300,       # Close idle connections after 5 minutes
@@ -146,7 +146,7 @@ class LTMemorySessionManager:
         with self._lock:
             for db_name, pool in self._pools.items():
                 try:
-                    pool.close()
+                    pool.close(timeout=0)  # Workers are daemon threads — no need to wait
                 except Exception as e:
                     logger.error(f"Error closing pool for {db_name}: {e}")
 
@@ -361,13 +361,13 @@ class LTMemorySession:
                         return conn
                     elif conn and conn.closed:
                         # Return bad connection and try again
-                        self.pool.putconn(conn, close=True)
+                        self.pool.putconn(conn)
                 except PoolTimeout:
                     # Pool exhausted, wait and retry
                     pass
-                
+
                 time.sleep(retry_interval)
-            
+
             # Timeout reached
             logger.error(f"Database connection timeout after {timeout}s - pool may be exhausted")
             raise ValueError(f"Database connection timeout after {timeout}s - pool may be exhausted")
@@ -493,7 +493,7 @@ class AdminSession:
                     if conn and not conn.closed:
                         return conn
                     elif conn and conn.closed:
-                        self.pool.putconn(conn, close=True)
+                        self.pool.putconn(conn)
                 except PoolTimeout:
                     pass
 

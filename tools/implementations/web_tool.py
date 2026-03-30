@@ -45,7 +45,7 @@ class WebToolConfig(BaseModel):
     # LLM config for content extraction (self-contained - not database-backed)
     llm_model: str = Field(default="openai/gpt-oss-20b", description="Model for content extraction")
     llm_endpoint: str = Field(default="https://api.groq.com/openai/v1/chat/completions", description="LLM endpoint")
-    llm_api_key_name: Optional[str] = Field(default="provider_key", description="Vault key name for API key")
+    llm_api_key_name: Optional[str] = Field(default="subcortical_key", description="Vault key name for API key")
 
 
 registry.register("web_tool", WebToolConfig)
@@ -64,11 +64,11 @@ class SearchInput(BaseModel):
 class FetchInput(BaseModel):
     """Input for webpage fetch operation."""
     url: str = Field(..., description="URL to fetch")
-    prompt: str = Field(
+    instructions: str = Field(
         default="Extract the main content from this webpage. Focus on article text, headings, and important information.",
         description="Extraction prompt for LLM"
     )
-    format: Literal["text", "markdown", "html"] = Field(default="text", description="Output format")
+    extract_format: Literal["text", "markdown", "html"] = Field(default="text", description="Output format")
     include_metadata: bool = Field(default=False, description="Include page metadata")
     timeout: Optional[int] = Field(default=None, ge=1, description="Request timeout in seconds")
 
@@ -85,7 +85,7 @@ class HttpInput(BaseModel):
     """Input for HTTP request operation."""
     method: Literal["GET", "POST", "PUT", "DELETE"] = Field(..., description="HTTP method")
     url: str = Field(..., description="Request URL")
-    params: Optional[Dict[str, Any]] = Field(default=None, description="Query parameters")
+    query_params: Optional[Dict[str, Any]] = Field(default=None, description="Query parameters")
     headers: Optional[Dict[str, str]] = Field(default=None, description="HTTP headers")
     data: Optional[Dict[str, Any]] = Field(default=None, description="Form data")
     json_body: Optional[Dict[str, Any]] = Field(default=None, description="JSON body")
@@ -133,33 +133,31 @@ class WebTool(Tool):
 
     anthropic_schema = {
         "name": "web_tool",
-        "description": "Access the web: (1) search for current information via Kagi, (2) fetch and extract webpage content, (3) make HTTP requests to APIs",
+        "description": "Search the web, fetch and extract webpage content, make HTTP requests to APIs.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "operation": {
                     "type": "string",
                     "enum": ["search", "fetch", "http"],
-                    "description": "The operation to perform"
+                    "description": "'search' = web search, 'fetch' = extract webpage content via LLM, 'http' = direct HTTP API request"
                 },
-                "query": {"type": "string", "description": "Search query (for search operation)"},
-                "max_results": {"type": "integer", "description": "Max search results (default 5)"},
-                "url": {"type": "string", "description": "URL for fetch/http operations"},
-                "prompt": {"type": "string", "description": "Extraction prompt for fetch operation"},
-                "format": {"type": "string", "enum": ["text", "markdown", "html"], "description": "Output format for fetch"},
-                "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE"], "description": "HTTP method"},
-                "params": {"type": "object", "description": "Query parameters for http"},
-                "headers": {"type": "object", "description": "HTTP headers"},
-                "data": {"type": "object", "description": "Form data for http"},
-                "json_body": {"type": "object", "description": "JSON body for http"},
-                "timeout": {"type": "integer", "description": "Request timeout in seconds"},
-                "response_format": {"type": "string", "enum": ["json", "text", "full"], "description": "Response format for http"},
-                "allowed_domains": {"type": "array", "items": {"type": "string"}, "description": "Allowed domains filter"},
-                "blocked_domains": {"type": "array", "items": {"type": "string"}, "description": "Blocked domains filter"},
-                "include_metadata": {"type": "boolean", "description": "Include page metadata in fetch"},
-                "credential_name": {"type": "string", "description": "Name of stored credential for authentication"},
-                "credential_header": {"type": "string", "description": "Header name for credential (default: Authorization)"},
-                "credential_prefix": {"type": "string", "description": "Prefix for credential value (default: 'Bearer ')"}
+                "query": {"type": "string", "description": "Web search query. Only used with operation='search'. Min 1 character"},
+                "max_results": {"type": "integer", "description": "Number of search results to return (1-20, default 5). Ignored unless operation='search'"},
+                "url": {"type": "string", "description": "HTTP or HTTPS URL to request. Required for 'fetch' and 'http'. Private/internal network addresses are blocked"},
+                "instructions": {"type": "string", "description": "Tell the extraction LLM what to pull from the page. Defaults to extracting main article content. For 'fetch' only"},
+                "extract_format": {"type": "string", "enum": ["text", "markdown", "html"], "description": "How the LLM should format extracted content. 'text'=plain text, 'markdown'=Markdown, 'html'=filtered HTML. Default: 'text'. Fetch only"},
+                "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE"], "description": "HTTP verb: GET, POST, PUT, or DELETE. Required for 'http' operation"},
+                "query_params": {"type": "object", "description": "Key-value pairs appended as ?key=value query parameters. Only used with operation='http'"},
+                "headers": {"type": "object", "description": "Custom HTTP request headers as {name: value} pairs. For 'http' operation. Do not set auth headers here — use credential_name instead"},
+                "data": {"type": "object", "description": "Form-encoded request body (application/x-www-form-urlencoded). For 'http' only. Use json_body instead for JSON payloads"},
+                "json_body": {"type": "object", "description": "JSON request body (application/json). For 'http' only. Use data instead for form-encoded payloads"},
+                "timeout": {"type": "integer", "description": "Timeout in seconds (min 1, max 120, default 30). For 'fetch' and 'http' operations"},
+                "response_format": {"type": "string", "enum": ["json", "text", "full"], "description": "'json' (parse response as JSON, fall back to text), 'text' (raw response body), 'full' (body + sanitized headers + JSON if parseable). Default 'json'. For 'http' only"},
+                "allowed_domains": {"type": "array", "items": {"type": "string"}, "description": "If set, only these domains are allowed (exact match or subdomain). Takes precedence over blocked_domains if both provided. For 'search' and 'http'"},
+                "blocked_domains": {"type": "array", "items": {"type": "string"}, "description": "Domains to exclude (exact match or subdomain). Ignored if allowed_domains is also set. For 'search' and 'http'"},
+                "include_metadata": {"type": "boolean", "description": "When true, adds 'title' and 'metadata' keys (content_type, byte size) to the fetch result. Default false"},
+                "credential_name": {"type": "string", "description": "Name of a user-stored API credential to inject as an auth header. The credential value is retrieved server-side and never returned to you. For 'http' only"}
             },
             "required": ["operation"]
         }
@@ -273,7 +271,7 @@ class WebTool(Tool):
         cleaned_html = self._clean_html(html)
 
         # Extract content via LLM
-        extracted = self._extract_with_llm(cleaned_html, input.url, input.prompt, input.format)
+        extracted = self._extract_with_llm(cleaned_html, input.url, input.instructions, input.extract_format)
 
         result = {"success": True, "url": input.url, "content": extracted}
 
@@ -419,7 +417,7 @@ SOURCE: {url}"""
 
         credential_service = UserCredentialService()
         credential_value = credential_service.get_credential(
-            credential_type="http_credential",
+            credential_type="api_key",
             service_name=credential_name
         )
 
@@ -448,7 +446,7 @@ SOURCE: {url}"""
 
         # Build kwargs for the request
         kwargs = {
-            "params": input.params,
+            "params": input.query_params,
             "headers": headers,
             "timeout": timeout,
             "follow_redirects": True

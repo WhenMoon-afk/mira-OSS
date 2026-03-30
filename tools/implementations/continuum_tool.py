@@ -133,12 +133,7 @@ class ContinuumSearchTool(Tool):
 
     anthropic_schema = {
         "name": "continuum_tool",
-        "description": (
-            "Search conversation history using hybrid vector+BM25 search. "
-            "Start with 'search' on summaries (default) to find relevant segments. "
-            "Use 'search_within_segment' to explore a specific segment. "
-            "Extract entities/proper nouns from queries for better matching."
-        ),
+        "description": "Search past conversation history.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -147,107 +142,114 @@ class ContinuumSearchTool(Tool):
                     "enum": ["search", "search_within_segment", "expand_message"],
                     "default": "search",
                     "description": (
-                        "Operation: 'search' (default) for summaries/messages, 'search_within_segment' "
-                        "to explore a specific segment, 'expand_message' for full content"
+                        "'search' (default): query segment summaries or time-bounded messages. "
+                        "'search_within_segment': query messages inside a specific segment (requires segment_id, query). "
+                        "'expand_message': get full message text plus context (requires message_id)"
                     )
                 },
                 "search_mode": {
                     "type": "string",
                     "enum": ["summaries", "messages"],
                     "description": (
-                        "Search mode for 'search' operation. 'summaries' (default) searches "
-                        "segment summaries. 'messages' requires start_time and end_time."
+                        "For operation='search' only. 'summaries' (default): search segment summaries. "
+                        "'messages': search individual messages (start_time and end_time required). "
+                        "Ignored by other operations"
                     )
                 },
                 "query": {
                     "type": "string",
                     "description": (
-                        "Natural language search query. Required for 'search' operation. "
-                        "Example: 'Mark and his XFS system', 'database migration discussion'"
+                        "Natural language search query. Required for 'search' and 'search_within_segment' operations. "
+                        "Ignored by 'expand_message'. Example: 'database migration discussion'"
                     )
                 },
                 "entities": {
                     "type": "array",
                     "items": {"type": "string"},
                     "description": (
-                        "Important entities/proper nouns to boost in search. "
-                        "Example: ['Mark', 'XFS'] for 'Mark's XFS system'. "
-                        "Include: names, places, products, technical terms."
+                        "Proper nouns extracted from the query to boost in ranking. "
+                        "Case-insensitive substring match against results — matched entities increase confidence score. "
+                        "Example: ['Mark', 'XFS']. Used by 'search' operation only"
                     )
                 },
                 "start_time": {
                     "type": "string",
                     "description": (
-                        "ISO timestamp for search start boundary. REQUIRED when search_mode='messages'. "
-                        "Get from segment summary results. Example: '2024-10-15T14:00:00Z'"
+                        "ISO 8601 datetime for start of search window. Required with search_mode='messages'. "
+                        "Must be before end_time. Copy from segment summary time_boundaries.start. "
+                        "Example: '2024-10-15T14:00:00'"
                     )
                 },
                 "end_time": {
                     "type": "string",
                     "description": (
-                        "ISO timestamp for search end boundary. REQUIRED when search_mode='messages'. "
-                        "Get from segment summary results. Example: '2024-10-15T16:30:00Z'"
+                        "ISO 8601 datetime for end of search window. Required when search_mode='messages'. "
+                        "Must be after start_time. Copy from segment summary time_boundaries.end. "
+                        "Example: '2024-10-15T16:30:00'"
                     )
                 },
                 "temporal_direction": {
                     "type": "string",
                     "enum": ["before", "after", "around"],
                     "description": (
-                        "Temporal search direction relative to reference_time. 'before' finds earlier segments, "
-                        "'after' finds later segments, 'around' finds segments near the reference time. "
-                        "Use with reference_time to walk through conversation history."
+                        "Temporal filter for segment summary search. 'before': segments before reference_time. "
+                        "'after': segments after reference_time. 'around': segments within a window centered on reference_time. "
+                        "Ignored unless reference_time is also set"
                     )
                 },
                 "reference_time": {
                     "type": "string",
                     "description": (
-                        "ISO timestamp as anchor for temporal_direction search. "
-                        "Example: '2024-10-15T14:00:00Z'. When set, limits search relative to this time."
+                        "ISO 8601 datetime anchor for temporal_direction filtering. "
+                        "Ignored unless temporal_direction is also set. Only applies to search_mode='summaries'. "
+                        "Example: '2024-10-15T14:00:00'"
                     )
                 },
                 "segment_id": {
                     "type": "string",
                     "description": (
-                        "8-character segment ID from summary search results. Required for "
-                        "'search_within_segment' operation. Example: 'abc12345'"
+                        "First 8 characters of a segment UUID, as returned in segment_id from a prior summary search. "
+                        "Required for 'search_within_segment'. Example: 'abc12345'"
                     )
                 },
                 "max_results": {
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 20,
-                    "description": "Number of results per page (default: 10 for summaries, 20 for messages)"
+                    "description": "Results per page. Defaults to 10 (summaries) or 20 (messages/search_within_segment). Integer, 1-20"
                 },
                 "page": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Page number for pagination (default: 1)"
+                    "description": "Page number, starting from 1. Default: 1. Check has_more_pages in the response to determine if more pages exist"
                 },
                 "message_id": {
                     "type": "string",
                     "description": (
-                        "First 8 characters of message UUID. Required for 'expand_message'. "
-                        "Example: 'a7b3c4d5'"
+                        "message_id value from a prior search result (8-char UUID prefix). "
+                        "Required for 'expand_message'. Example: 'a7b3c4d5'"
                     )
                 },
                 "direction": {
                     "type": "string",
                     "enum": ["before", "after", "both"],
-                    "description": "Direction for context messages (default: 'both')"
+                    "description": (
+                        "For 'expand_message': which neighboring messages to include. "
+                        "'before': earlier messages only. 'after': later messages only. "
+                        "'both': messages in both directions. Default: 'both'"
+                    )
                 },
                 "context_count": {
                     "type": "integer",
                     "minimum": 0,
                     "maximum": 10,
-                    "description": "Number of context messages per direction (default: 2)"
+                    "description": "Messages to include per direction around the expanded message. 0 returns only the target message. Default: 2, max: 10. Only for 'expand_message'"
                 },
                 "include_thinking": {
                     "type": "boolean",
                     "description": (
-                        "Include your reasoning trace from the time of each retrieved message. "
-                        "Use this to understand what you were thinking and why you responded the way you did — "
-                        "helpful for self-reflection, correcting past reasoning, or understanding context "
-                        "that isn't visible in the response alone."
+                        "When true, assistant messages in results include a thinking_trace field containing "
+                        "the reasoning from when the response was generated. Default: false. Applies to all operations"
                     )
                 }
             },

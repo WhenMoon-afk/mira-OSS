@@ -318,8 +318,9 @@ class UserPreferences(BaseModel):
     first_name: Optional[str] = None
     last_name: Optional[str] = None
     timezone: str = Field(default="America/Chicago")
+    temperature_unit: str = Field(default="fahrenheit")
     memory_manipulation_enabled: bool = Field(default=True)
-    llm_tier: str = Field(default="gemini-low")
+    llm_tier: str = Field(default="primary")
     created_at: Optional[datetime] = None
 
 
@@ -351,7 +352,7 @@ def get_user_preferences() -> UserPreferences:
     # Cache miss - fetch from database
     db = PostgresClient('mira_service')
     result = db.execute_single(
-        """SELECT first_name, last_name, timezone, memory_manipulation_enabled, llm_tier, created_at
+        """SELECT first_name, last_name, timezone, temperature_unit, memory_manipulation_enabled, llm_tier, created_at
            FROM users WHERE id = %s""",
         (user_id,)
     )
@@ -360,8 +361,9 @@ def get_user_preferences() -> UserPreferences:
         first_name=result.get('first_name'),
         last_name=result.get('last_name'),
         timezone=result.get('timezone') or 'America/Chicago',
+        temperature_unit=result.get('temperature_unit') or 'fahrenheit',
         memory_manipulation_enabled=result.get('memory_manipulation_enabled', True),
-        llm_tier=result.get('llm_tier') or 'gemini-low',
+        llm_tier=result.get('llm_tier') or 'minimax',
         created_at=result.get('created_at'),
     )
 

@@ -107,7 +107,7 @@ def _generate_summary(header: str, content: str) -> str:
     llm = _get_llm_provider()
     response = llm.generate_response(
         messages=messages,
-        internal_llm='domaindoc_summary',
+        internal_llm='analysis',
         allow_negative=True  # System task — background summary generation
     )
 

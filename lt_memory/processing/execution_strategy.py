@@ -24,7 +24,7 @@ from lt_memory.linking import LinkingService
 from clients.llm_provider import LLMProvider, build_batch_params
 from config.config import BatchingConfig, ExtractionConfig
 from utils.timezone_utils import utc_now
-from utils.user_context import set_current_user_id, clear_user_context
+from utils.user_context import set_current_user_id, clear_user_context, get_internal_llm
 
 logger = logging.getLogger(__name__)
 
@@ -130,7 +130,6 @@ class ExecutionStrategy(ABC):
                             source_id=new_id,
                             target_id=related_id,
                             link_type="extraction_ref",
-                            confidence=0.9,
                             reasoning=bond if bond else "Referenced during conversation",
                             extraction_bond=bond,
                             created_at=utc_now()
@@ -506,7 +505,6 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
                         source_id=pair["new_memory_id"],
                         target_id=pair["similar_memory_id"],
                         link_type=rel_type,
-                        confidence=classification.get("confidence", 0.9),
                         reasoning=classification.get("reasoning", ""),
                         extraction_bond=pair.get("bond", "")
                     ):
@@ -555,8 +553,11 @@ def create_execution_strategy(
     Returns:
         Appropriate ExecutionStrategy (Batch or Immediate)
     """
-    # Check if failover mode active
-    if llm_provider._is_failover_active() or batch_coordinator is None:
+    # Check if failover mode active or non-Anthropic endpoint
+    # FROM TAYLOR: this fix was made during a time when Claude Code had heavy
+    # degradation. something about the fix doesn't sit right with me and I can't
+    # trust claude's answer fully. If something is fucked up later thats why.
+    if llm_provider._is_failover_active() or batch_coordinator is None or "api.anthropic.com" not in get_internal_llm('extraction').endpoint_url:
         if linking_service is None:
             raise ValueError(
                 "ImmediateExecutionStrategy requires linking_service "

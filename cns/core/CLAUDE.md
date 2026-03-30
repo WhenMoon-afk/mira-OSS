@@ -1,21 +1,30 @@
-# cns/core/
+# cns/core/ — Immutable domain model: no DB, no HTTP, no external dependencies
 
-Immutable domain model. No database access, no HTTP, no external dependencies.
-Downstream layers (services, infrastructure) consume these types.
+## Rules
+
+No database access, no HTTP calls, no infrastructure imports in this directory — except `segment_cache_loader.py`, which is the one permitted boundary crosser (it takes a `ContinuumRepository` as an injected dependency, not a direct import of infrastructure singletons).
+
+`Message` and `ContinuumState` are `frozen=True` dataclasses. Mutations produce new objects via `with_metadata()` or `from_dict()`. The `Continuum` aggregate itself is mutable (its `_message_cache` list is appended to), but its embedded `_state` is frozen.
+
+Domain events: subclass one of the four base categories (`MessageEvent`, `ToolEvent`, `WorkingMemoryEvent`, `ContinuumCheckpointEvent`), use `frozen=True, kw_only=True`, add a `.create()` classmethod that generates `event_id`/`occurred_at` and sources `user_id` from `get_current_user_id()`. Don't create new categories — adapt existing ones.
+
+Stream events: subclass `StreamEvent`, set a unique `type` string as a non-init field default. These are mutable (no `frozen=True`) for streaming performance.
+
+`ThinkingBlock` dicts must be passed to the API unmodified — the `signature` field is cryptographic and the API rejects tampered blocks.
+
+`preprocess_content_blocks()` in `message.py` is the single shared path for stripping media and truncating tool results across extraction, summarization, and peanut gallery. Don't duplicate that logic; call this function. Consumers that need custom block loops (e.g., `assessment_extractor`) import `TOOL_RESULT_TRUNCATION_LIMIT` and `_MEDIA_BLOCK_TYPES` directly.
 
 ## Files
 
-- `continuum.py` — Continuum aggregate root. Holds state + message cache. `get_messages_for_api()` handles all API formatting (timestamps, multimodal, tool calls, cache control). Messages loaded externally via `apply_cache()`.
-- `message.py` — Frozen Message dataclass. Value object with UUID identity, UTC timestamps, role validation. `to_db_tuple()` for DB insertion, `with_metadata()` for immutable updates. Exports `MessageMetadata` TypedDict (all known metadata keys, `total=False`), `ContentBlock` union type (`TextBlock | ImageBlock | DocumentBlock | ContainerUploadBlock`).
-- `state.py` — Minimal ContinuumState (id, user_id, metadata). Exports `ContinuumStateDict` TypedDict for `to_dict()`/`from_dict()` round-trips. Intentionally lightweight — real state lives in the message cache.
-- `events.py` — Domain event hierarchy. Four base categories: MessageEvent, ToolEvent, WorkingMemoryEvent, ContinuumCheckpointEvent. All frozen, all have `.create()` classmethods. `TurnCompletedEvent.continuum` is typed as `Continuum` via `TYPE_CHECKING` guard (circular import with continuum.py).
-- `stream_events.py` — Mutable dataclasses for LLM streaming: TextEvent, ThinkingEvent, ToolDetectedEvent/Executing/Completed/Error, CompleteEvent, ErrorEvent, CircuitBreakerEvent, RetryEvent, FileArtifactEvent (code execution file downloads). Type-discriminated via `type` field. `CompleteEvent.response` is typed as `anthropic.types.Message`.
-- `segment_cache_loader.py` — Reconstructs message history on cache miss. Loads collapsed summaries (complexity-scored selection), continuity messages, active segment. Uses `segment_helpers` for markers.
+- `continuum.py` — Continuum aggregate root. Owns message cache mutation (`apply_cache()`, `add_*_message()`, `add_tool_history()`), and API formatting via `get_messages_for_api()` (tool result buffering, thinking block prepending, timestamp injection, cache control annotation).
+- `message.py` — `Message` frozen dataclass (value object), `MessageMetadata` TypedDict (canonical list of all known metadata keys), `ContentBlock` union, `ThinkingBlock` TypedDict, and `preprocess_content_blocks()` shared preprocessing function.
+- `state.py` — `ContinuumState` frozen dataclass and `ContinuumStateDict` TypedDict for serialization round-trips. Intentionally minimal — real state lives in the message cache.
+- `events.py` — Domain event hierarchy. Four abstract base categories plus concrete event subclasses. `TurnCompletedEvent.continuum` is typed via `TYPE_CHECKING` guard to break the circular import with `continuum.py`.
+- `stream_events.py` — Mutable dataclasses for LLM streaming wire protocol. Type-discriminated via `type` field. `CompleteEvent.response` is typed as `anthropic.types.Message`.
+- `segment_cache_loader.py` — Reconstructs message history on Valkey cache miss. Selects collapsed segment summaries by accumulated `complexity_score`, loads continuity turns and active segment messages, assembles the ordered cache via `apply_cache()`. Loads behavioral primer dialogue from `config/prompts/behavioral_primer.txt` at init and injects between summaries and continuity turns when collapsed segments exist.
 
-## Patterns to Follow
+## Wiring
 
-- **New events**: Subclass one of the four base categories. Add a `.create()` classmethod that auto-generates event_id/occurred_at and pulls user_id from contextvar. Use `frozen=True, kw_only=True`.
-- **New stream events**: Subclass `StreamEvent`, set a unique `type` string default. These are mutable (streaming perf).
-- **Message creation**: Always use `Message(content=..., role=...)` — id and created_at auto-generate. Never construct raw dicts when a Message would do.
-- **Serialization**: Use `to_dict()` / `from_dict()` round-trip methods. UUIDs become strings, datetimes become ISO format at the boundary.
-- **Metadata keys**: All known keys are documented in `MessageMetadata` TypedDict in `message.py`. Common keys: `is_segment_boundary`, `status`, `segment_id`, `system_notification`, `has_tool_calls`, `tool_calls`, `tool_call_id`, `complexity_score`, `embedding_value`.
+`get_messages_for_api()` in `continuum.py` imports `format_segment_for_display` from `cns.services.segment_helpers` at call time (deferred import to avoid circular dependency). Any change to collapsed segment display format must be coordinated between those two files.
+
+`SegmentCacheLoader` is the only file in this directory that imports from `cns.infrastructure`. It receives `ContinuumRepository` via constructor injection — never create it with a direct infrastructure import.

@@ -149,9 +149,9 @@ class HybridSearcher:
                        m.created_at, m.updated_at, m.expires_at, m.access_count,
                        m.mention_count, m.last_accessed, m.happens_at,
                        m.inbound_links, m.outbound_links, m.entity_links,
-                       m.confidence, m.is_archived, m.archived_at,
+                       m.is_archived, m.archived_at,
                        m.activity_days_at_creation, m.activity_days_at_last_access,
-                       m.annotations,
+                       m.annotations, m.source_segment_id,
                        ts_rank(m.search_vector, plainto_tsquery('english', %(query)s)) as rank,
                        'personal' as source
                 FROM memories m
@@ -166,9 +166,10 @@ class HybridSearcher:
                        gm.created_at, gm.updated_at, NULL::timestamptz as expires_at, 0 as access_count,
                        0 as mention_count, NULL::timestamptz as last_accessed, gm.happens_at,
                        gm.inbound_links, gm.outbound_links, gm.entity_links,
-                       0.9 as confidence, gm.is_archived, gm.archived_at,
+                       gm.is_archived, gm.archived_at,
                        NULL::int as activity_days_at_creation, NULL::int as activity_days_at_last_access,
                        '[]'::jsonb as annotations,
+                       NULL::uuid as source_segment_id,
                        ts_rank(gm.search_vector, plainto_tsquery('english', %(query)s)) as rank,
                        'global' as source
                 FROM global_memories gm

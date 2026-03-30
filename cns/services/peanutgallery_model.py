@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 from uuid import UUID
 
-from cns.core.message import Message
+from cns.core.message import Message, preprocess_content_blocks
 from clients.llm_provider import LLMProvider
 from config.config import PeanutGalleryConfig
 from lt_memory.linking import LinkingService
@@ -411,8 +411,13 @@ class PeanutGalleryModel:
         for msg in messages:
             msg_id = str(msg.id)[:8]
 
-            # Truncate very long messages for the prompt
+            # Resolve multimodal content to text, then truncate
             content = msg.content
+            if isinstance(content, list):
+                preprocessed = preprocess_content_blocks(content)
+                content = " ".join(preprocessed.text_parts)
+                if preprocessed.image_count > 0:
+                    content = f"[{preprocessed.image_count} image(s) shared] {content}".strip()
             if isinstance(content, str) and len(content) > 500:
                 content = content[:500] + "... [truncated]"
 
@@ -428,6 +433,11 @@ class PeanutGalleryModel:
         lines = []
         for msg in recent:
             content = msg.content
+            if isinstance(content, list):
+                preprocessed = preprocess_content_blocks(content)
+                content = " ".join(preprocessed.text_parts)
+                if preprocessed.image_count > 0:
+                    content = f"[{preprocessed.image_count} image(s) shared] {content}".strip()
             if isinstance(content, str) and len(content) > 100:
                 content = content[:100] + "..."
             lines.append(f"{msg.role}: {content}")

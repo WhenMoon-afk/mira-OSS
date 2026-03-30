@@ -56,101 +56,78 @@ class ReminderTool(Tool):
 
     anthropic_schema = {
         "name": "reminder_tool",
-        "description": """Manages scheduled reminders with contact integration.
-
-OPERATIONS (use exactly one):
-
-• add_reminder - Create a new reminder
-  Required: title, date
-  Optional: description, contact_name, category, additional_notes
-
-• get_reminders - Query reminders by date
-  Required: date_type (today|tomorrow|upcoming|past|all|date|range|overdue)
-  If date_type='date': also requires specific_date
-  If date_type='range': also requires start_date, end_date
-
-• mark_completed - Mark ONE reminder as done
-  Required: reminder_id (single string like 'rem_a1b2c3d4')
-
-• update_reminder - Modify an existing reminder
-  Required: reminder_id
-  Optional: title, date, description, contact_name, additional_notes
-
-• delete_reminder - Delete ONE reminder
-  Required: reminder_id
-
-• batch - Perform action on MULTIPLE reminders at once
-  Required: batch_action (complete|delete), reminder_ids (array like ['rem_a1b2c3d4', 'rem_e5f6g7h8'])
-
-IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation with reminder_ids array for multiple.""",
+        "description": "Create and manage scheduled reminders with contact linking.",
         "input_schema": {
                 "type": "object",
                 "properties": {
                     "operation": {
                         "type": "string",
                         "enum": ["add_reminder", "get_reminders", "mark_completed", "update_reminder", "delete_reminder", "snooze_reminder", "batch"],
-                        "description": "The operation to perform. MUST be exactly one of: add_reminder, get_reminders, mark_completed, update_reminder, delete_reminder, snooze_reminder, batch. Do NOT abbreviate (e.g., use 'update_reminder' not 'update')."
+                        "description": "Which operation to execute. snooze_reminder pushes due time forward from now (default 1 hour, set snooze_duration for custom)"
                     },
                     "title": {
                         "type": "string",
-                        "description": "Brief title or subject of the reminder (required for add_reminder, optional for update_reminder)"
+                        "description": "Brief title for the reminder (required for add_reminder; if provided for update_reminder, replaces existing title)"
                     },
                     "date": {
                         "type": "string",
-                        "description": "When the reminder should occur in ISO 8601 format (YYYY-MM-DDTHH:MM:SS). Example: 2025-09-14T14:30:00. Time zone will be interpreted as user's local time. (required for add_reminder, optional for update_reminder)"
+                        "description": "Reminder datetime. Accepts ISO 8601 (YYYY-MM-DDTHH:MM:SS) or relative phrases like 'tomorrow', 'in 2 days', 'next week'. Required for add_reminder, optional for update_reminder"
                     },
                     "description": {
                         "type": "string",
-                        "description": "Detailed description of the reminder (optional)"
+                        "description": "Free-text description of the reminder (optional). If provided for update_reminder, replaces existing description"
                     },
                     "contact_name": {
                         "type": "string",
-                        "description": "Name of the contact to link with this reminder (optional - will search existing contacts)"
+                        "description": "Contact name to link. Performs case-insensitive substring match against user's contacts. If no match found, reminder is created without a contact link. Optional"
                     },
                     "category": {
                         "type": "string",
                         "enum": ["user", "internal"],
-                        "description": "Category of reminder: 'user' for user-facing reminders (default: 'user'). 'internal' — Simulate ambient social cognition across context gaps. When a friend mentions a job interview Thursday, you don't set a task, but Friday it's just there: \"how'd it go?\" That attentiveness-to-recall conversion is lost between segments. When you notice something with a future resolution point (something ordered, a result pending, a call to make, a decision deferred), create an internal reminder dated to when you'd naturally think of it again. Always set a date: the moment your future self should \"notice.\" Write brief notes with enough context to act on cold. Bias toward creation; an unnecessary reminder costs nothing, a lost observation can't be recovered."
+                        "description": "'user' = user-requested (default). 'internal' = proactive follow-up reminders YOU create when you notice something with a future resolution point: a pending result, something ordered, a decision deferred, a question you'd naturally circle back to — like a friend who just remembers to ask \"how'd it go?\" Set date to when your future self should notice. Write notes with enough context to act on cold. Bias toward creation; a false positive costs nothing, a missed observation is gone forever."
                     },
-                    "additional_notes": {
+                    "notes": {
                         "type": "string",
-                        "description": "Any additional information to store with the reminder (optional)"
+                        "description": "Extra context to store with the reminder. For 'internal' category reminders, include enough detail to act without conversation history. Optional"
                     },
                     "reminder_id": {
                         "type": "string",
-                        "description": "ID of the reminder to mark completed, update, delete, or snooze (required for mark_completed, update_reminder, delete_reminder; optional for snooze_reminder if reminder_ids provided)"
+                        "description": "Reminder ID (e.g., 'rem_a1b2c3d4'). Required for mark_completed, update_reminder, delete_reminder. For snooze_reminder, provide this, reminder_ids, or both — they are combined, not mutually exclusive"
                     },
                     "reminder_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "Array of reminder IDs to snooze (for snooze_reminder operation - use this for bulk snoozing)"
+                        "description": "List of reminder ID strings to process. Required when operation='batch'. Optional for snooze_reminder (can combine with reminder_id). Duplicates are deduplicated automatically"
                     },
-                    "date_type": {
+                    "date_filter": {
                         "type": "string",
                         "enum": ["today", "tomorrow", "upcoming", "past", "all", "date", "range", "overdue"],
-                        "description": "Type of date query for get_reminders operation (required for get_reminders)"
+                        "description": "Date filter mode for get_reminders (required). today/tomorrow/upcoming/overdue return active reminders only. past/all include completed. 'date' needs specific_date, 'range' needs start_date + end_date"
                     },
                     "specific_date": {
                         "type": "string",
-                        "description": "Specific date in ISO 8601 format (YYYY-MM-DDTHH:MM:SS) (required when date_type is 'date')"
+                        "description": "Target date for single-day query. Accepts ISO 8601 or relative phrases. Required when date_filter='date'. Matches reminders falling on that day (midnight to midnight)"
                     },
                     "start_date": {
                         "type": "string",
-                        "description": "Start date in ISO 8601 format (YYYY-MM-DDTHH:MM:SS) (required when date_type is 'range')"
+                        "description": "Range start (inclusive). Accepts ISO 8601 or relative phrases. Required when date_filter='range'"
                     },
                     "end_date": {
                         "type": "string",
-                        "description": "End date in ISO 8601 format (YYYY-MM-DDTHH:MM:SS) (required when date_type is 'range')"
+                        "description": "End of date range. Accepts ISO 8601 or relative phrases. Required when date_filter='range'. Inclusive — reminders on this date are returned"
                     },
                     "batch_action": {
                         "type": "string",
                         "enum": ["complete", "delete"],
-                        "description": "Action to perform on multiple reminders (required when operation='batch')"
+                        "description": "Action to apply to each reminder in reminder_ids. 'complete' = mark as completed, 'delete' = permanently remove. Required when operation='batch'"
                     },
-                    "reminder_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Array of reminder IDs for batch operation (required when operation='batch')"
+                    "snooze_duration": {
+                        "type": "string",
+                        "description": "How long to snooze forward from now. Accepts '30 minutes', '2 hours', '1 day', '1 week', or a plain number (interpreted as hours). Default: '1 hour'. For snooze_reminder only"
+                    },
+                    "resolution_note": {
+                        "type": "string",
+                        "description": "Brief note recorded at completion time describing the outcome or what happened. For mark_completed and batch (with batch_action='complete') only. Especially useful for 'internal' reminders to close the loop on what you learned when following up"
                     }
                 },
                 "required": ["operation"],
@@ -181,15 +158,22 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             completed_at TEXT,
             contact_uuid TEXT,
             encrypted__additional_notes TEXT,
-            category TEXT DEFAULT 'user'
+            category TEXT DEFAULT 'user',
+            encrypted__resolution_note TEXT
         """
         self.db.create_table('reminders', schema)
-        
+
         # Create indexes for faster queries
         self.db.execute("CREATE INDEX IF NOT EXISTS idx_reminders_date ON reminders(reminder_date)")
         self.db.execute("CREATE INDEX IF NOT EXISTS idx_reminders_completed ON reminders(completed)")
         self.db.execute("CREATE INDEX IF NOT EXISTS idx_reminders_contact ON reminders(contact_uuid)")
         self.db.execute("CREATE INDEX IF NOT EXISTS idx_reminders_category ON reminders(category)")
+
+        # Migrate: add resolution_note column for existing databases
+        try:
+            self.db.execute("ALTER TABLE reminders ADD COLUMN encrypted__resolution_note TEXT")
+        except Exception:
+            pass  # Column already exists
 
     def _load_reminders(self, include_completed: bool = False) -> List[Dict[str, Any]]:
         """Load reminders from SQLite database."""
@@ -294,18 +278,19 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
 
         1. add_reminder: Create a new reminder
            - Required: title, date
-           - Optional: description, contact_name, additional_notes
+           - Optional: description, contact_name, notes
            - Returns: Dict with created reminder
 
         2. get_reminders: Retrieve reminders
-           - Required: date_type ("today", "tomorrow", "upcoming", "past", "all", "date" or
+           - Required: date_filter ("today", "tomorrow", "upcoming", "past", "all", "date" or
             "range")
-           - If date_type is "date", requires specific_date parameter
-           - If date_type is "range", requires start_date and end_date parameters
+           - If date_filter is "date", requires specific_date parameter
+           - If date_filter is "range", requires start_date and end_date parameters
            - Returns: Dict with list of reminders
 
         3. mark_completed: Mark a reminder as completed
            - Required: reminder_id
+           - Optional: resolution_note
            - Returns: Dict with updated reminder
 
         4. update_reminder: Update an existing reminder
@@ -365,7 +350,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
         date: str,
         description: Optional[str] = None,
         contact_name: Optional[str] = None,
-        additional_notes: Optional[str] = None,
+        notes: Optional[str] = None,
         category: str = "user",
     ) -> Dict[str, Any]:
         """
@@ -377,7 +362,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
                 "tomorrow" or "in 3 weeks")
             description: Detailed description of the reminder
             contact_name: Name of the contact to link with this reminder
-            additional_notes: Any additional information to store with the reminder
+            notes: Any additional information to store with the reminder
             category: Category of reminder ('user' or 'internal', default 'user')
             
         Returns:
@@ -445,7 +430,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             "completed": 0,
             "completed_at": None,
             "contact_uuid": contact_uuid,
-            "encrypted__additional_notes": additional_notes,
+            "encrypted__additional_notes": notes,
             "category": category
         }
 
@@ -478,7 +463,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
 
     def _get_reminders(
         self,
-        date_type: str,
+        date_filter: str,
         specific_date: Optional[str] = None,
         start_date: Optional[str] = None,
         end_date: Optional[str] = None,
@@ -488,11 +473,11 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
         Get reminders based on date criteria.
         
         Args:
-            date_type: Type of date query ("today", "tomorrow", "upcoming", "past",
+            date_filter: Type of date query ("today", "tomorrow", "upcoming", "past",
                 "all", "date", "range")
-            specific_date: Specific date string (required if date_type is "date")
-            start_date: Start date string (required if date_type is "range")
-            end_date: End date string (required if date_type is "range")
+            specific_date: Specific date string (required if date_filter is "date")
+            start_date: Start date string (required if date_filter is "range")
+            end_date: End date string (required if date_filter is "range")
             category: Filter by category ("user", "internal", or "all", default "all")
             
         Returns:
@@ -502,11 +487,11 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             ValueError: If parameters are invalid or missing required fields
         """
         
-        # Validate date_type
-        valid_date_types = ["today", "tomorrow", "upcoming", "past", "all", "date", "range", "overdue"]
-        if date_type not in valid_date_types:
-            self.logger.error(f"Invalid date_type: {date_type}. Must be one of {valid_date_types}")
-            raise ValueError(f"Invalid date_type: {date_type}. Must be one of {valid_date_types}")
+        # Validate date_filter
+        valid_date_filters = ["today", "tomorrow", "upcoming", "past", "all", "date", "range", "overdue"]
+        if date_filter not in valid_date_filters:
+            self.logger.error(f"Invalid date_filter: {date_filter}. Must be one of {valid_date_filters}")
+            raise ValueError(f"Invalid date_filter: {date_filter}. Must be one of {valid_date_filters}")
             
         # Use user's local timezone for day boundaries, then convert to UTC
         user_tz = get_user_preferences().timezone
@@ -514,7 +499,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
         today = convert_to_timezone(today_local, "UTC")
         
         # Load reminders (include completed for "all" and "past")
-        include_completed = date_type in ["all", "past"]
+        include_completed = date_filter in ["all", "past"]
         reminders = self._load_reminders(include_completed)
         
         # Validate category parameter
@@ -527,7 +512,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
         if category != "all":
             reminders = [r for r in reminders if r.get("category", "user") == category]
         
-        # Filter based on date_type
+        # Filter based on date_filter
         filtered_reminders = []
         date_description = ""
         
@@ -538,45 +523,45 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             except (ValueError, KeyError):
                 continue  # Skip invalid reminders
             
-            # Apply date filters based on date_type
-            if date_type == "today":
+            # Apply date filters based on date_filter
+            if date_filter == "today":
                 tomorrow = today + timedelta(days=1)
                 if today <= reminder_date < tomorrow:
                     filtered_reminders.append(reminder)
                 date_description = "today"
                 
-            elif date_type == "tomorrow":
+            elif date_filter == "tomorrow":
                 tomorrow = today + timedelta(days=1)
                 day_after = tomorrow + timedelta(days=1)
                 if tomorrow <= reminder_date < day_after:
                     filtered_reminders.append(reminder)
                 date_description = "tomorrow"
                 
-            elif date_type == "upcoming":
+            elif date_filter == "upcoming":
                 if reminder_date >= today and not reminder.get("completed", False):
                     filtered_reminders.append(reminder)
                 date_description = "upcoming"
                 
-            elif date_type == "overdue":
+            elif date_filter == "overdue":
                 # Overdue reminders: past due date and not completed
                 if reminder_date < today and not reminder.get("completed", False):
                     filtered_reminders.append(reminder)
                 date_description = "overdue"
 
-            elif date_type == "past":
+            elif date_filter == "past":
                 if reminder_date < today:
                     filtered_reminders.append(reminder)
                 date_description = "past"
 
-            elif date_type == "all":
+            elif date_filter == "all":
                 # No filter needed
                 filtered_reminders.append(reminder)
                 date_description = "all"
                 
-            elif date_type == "date":
+            elif date_filter == "date":
                 if not specific_date:
-                    self.logger.error("specific_date is required when date_type is 'date'")
-                    raise ValueError("specific_date is required when date_type is 'date'")
+                    self.logger.error("specific_date is required when date_filter is 'date'")
+                    raise ValueError("specific_date is required when date_filter is 'date'")
                 
                 try:
                     # Use our timezone-aware date parser
@@ -590,10 +575,10 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
                     self.logger.error(f"Failed to parse specific_date '{specific_date}': {str(e)}")
                     raise ValueError(f"Failed to parse specific_date '{specific_date}': {str(e)}")
                 
-            elif date_type == "range":
+            elif date_filter == "range":
                 if not start_date or not end_date:
-                    self.logger.error("start_date and end_date are required when date_type is 'range'")
-                    raise ValueError("start_date and end_date are required when date_type is 'range'")
+                    self.logger.error("start_date and end_date are required when date_filter is 'range'")
+                    raise ValueError("start_date and end_date are required when date_filter is 'range'")
                 
                 try:
                     # Use our timezone-aware date parser for both dates
@@ -617,7 +602,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
         return {
             "reminders": reminder_list,
             "count": len(reminder_list),
-            "date_type": date_type,
+            "date_filter": date_filter,
             "message": f"Found {len(reminder_list)} reminder(s) {date_description}"
         }
 
@@ -653,12 +638,13 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
 
         return error_msg
 
-    def _mark_completed(self, reminder_id: str) -> Dict[str, Any]:
+    def _mark_completed(self, reminder_id: str, resolution_note: str | None = None) -> Dict[str, Any]:
         """
-        Mark a reminder as completed.
+        Mark a reminder as completed with an optional resolution note.
 
         Args:
             reminder_id: ID of the reminder to mark as completed
+            resolution_note: Brief note describing the outcome at completion time
 
         Returns:
             Dict containing the updated reminder
@@ -682,6 +668,8 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             'completed': 1,
             'completed_at': format_utc_iso(utc_now())
         }
+        if resolution_note:
+            update_data['encrypted__resolution_note'] = resolution_note
         
         rows_updated = self.db.update(
             'reminders',
@@ -730,18 +718,18 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
         date: Optional[str] = None,
         description: Optional[str] = None,
         contact_name: Optional[str] = None,
-        additional_notes: Optional[str] = None,
+        notes: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Update an existing reminder.
-        
+
         Args:
             reminder_id: ID of the reminder to update
             title: New title (optional)
             date: New date (optional)
             description: New description (optional)
             contact_name: New contact name to link (optional)
-            additional_notes: New additional notes (optional)
+            notes: New additional notes (optional)
             
         Returns:
             Dict containing the updated reminder
@@ -792,9 +780,9 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
                 update_data['contact_uuid'] = None
                 changes.append("contact_uuid (cleared)")
 
-        if additional_notes is not None:
-            update_data['encrypted__additional_notes'] = additional_notes
-            changes.append("additional_notes")
+        if notes is not None:
+            update_data['encrypted__additional_notes'] = notes
+            changes.append("notes")
         
         # Always bump updated_at to reflect modification
         update_data['updated_at'] = format_utc_iso(utc_now())
@@ -867,14 +855,17 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
     def _snooze_reminder(
         self,
         reminder_id: Optional[str] = None,
-        reminder_ids: Optional[List[str]] = None
+        reminder_ids: Optional[List[str]] = None,
+        snooze_duration: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Snooze one or more reminders by 1 hour.
+        Snooze one or more reminders by rescheduling forward from now.
 
         Args:
             reminder_id: Single reminder ID to snooze
             reminder_ids: List of reminder IDs to snooze (for bulk operations)
+            snooze_duration: How far forward from now. Accepts '1 hour',
+                '30 minutes', '2 days', '1 week'. Default: 1 hour.
 
         Returns:
             Dict containing the snoozed reminder(s) and new times
@@ -895,6 +886,10 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
         # Remove duplicates while preserving order
         ids_to_snooze = list(dict.fromkeys(ids_to_snooze))
 
+        # Parse snooze duration (default: 1 hour)
+        snooze_delta = self._parse_snooze_duration(snooze_duration)
+        duration_label = snooze_duration or "1 hour"
+
         snoozed = []
         not_found = []
 
@@ -907,9 +902,7 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
 
             reminder = reminders[0]
 
-            # Parse current reminder date and add 1 hour
-            current_date = parse_utc_time_string(reminder['reminder_date'])
-            new_date = current_date + timedelta(hours=1)
+            new_date = utc_now() + snooze_delta
 
             # Update the reminder
             update_data = {
@@ -939,9 +932,9 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
 
         if len(snoozed) == 1:
             new_time = convert_from_utc(parse_utc_time_string(snoozed[0]['reminder_date']), user_tz)
-            result["message"] = f"Reminder snoozed for 1 hour (new time: {format_datetime(new_time, 'date_time', include_timezone=True)})"
+            result["message"] = f"Reminder snoozed for {duration_label} (new time: {format_datetime(new_time, 'date_time', include_timezone=True)})"
         elif snoozed:
-            result["message"] = f"Snoozed {len(snoozed)} reminder(s) for 1 hour"
+            result["message"] = f"Snoozed {len(snoozed)} reminder(s) for {duration_label}"
         else:
             result["message"] = "No reminders were snoozed"
 
@@ -951,13 +944,14 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
 
         return result
 
-    def _batch(self, batch_action: str, reminder_ids: List[str]) -> Dict[str, Any]:
+    def _batch(self, batch_action: str, reminder_ids: List[str], resolution_note: str | None = None) -> Dict[str, Any]:
         """
         Perform batch action on multiple reminders.
 
         Args:
             batch_action: Action to perform - 'complete' or 'delete'
             reminder_ids: List of reminder IDs to process
+            resolution_note: Brief note describing the outcome (applied to all completed reminders)
 
         Returns:
             Dict with succeeded/not_found/failed lists and summary message
@@ -969,11 +963,13 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             raise ValueError("reminder_ids array cannot be empty")
 
         results: Dict[str, List] = {"succeeded": [], "not_found": [], "failed": []}
-        action_method = self._mark_completed if batch_action == "complete" else self._delete_reminder
 
         for rid in reminder_ids:
             try:
-                result = action_method(rid)
+                if batch_action == "complete":
+                    result = self._mark_completed(rid, resolution_note=resolution_note)
+                else:
+                    result = self._delete_reminder(rid)
                 if result.get("success") is False:
                     results["not_found"].append(rid)
                 else:
@@ -1024,7 +1020,8 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
             "completed": bool(reminder.get("completed", 0)),
             "completed_at": format_dt(reminder.get("completed_at")),
             "encrypted__additional_notes": reminder.get("encrypted__additional_notes"),
-            "category": reminder.get("category", "user")
+            "category": reminder.get("category", "user"),
+            "encrypted__resolution_note": reminder.get("encrypted__resolution_note")
         }
         
         # Add contact information if linked
@@ -1037,6 +1034,52 @@ IMPORTANT: Use singular reminder_id for single operations. Use 'batch' operation
                 formatted["contact_uuid"] = contact["id"]
         
         return formatted
+
+    def _parse_snooze_duration(self, duration_str: str | None) -> timedelta:
+        """
+        Parse a snooze duration string into a timedelta.
+
+        Accepts:
+        - None or empty → 1 hour (default)
+        - "N hour(s)", "N minute(s)", "N day(s)", "N week(s)"
+        - Plain number → interpreted as hours
+
+        Returns:
+            timedelta representing the snooze duration
+
+        Raises:
+            ValueError: If the duration string cannot be parsed
+        """
+        if not duration_str or not duration_str.strip():
+            return timedelta(hours=1)
+
+        import re
+        ds = duration_str.strip().lower()
+
+        # Match "N unit" pattern
+        m = re.match(r"^(\d+)\s*(hour|hours|minute|minutes|min|mins|day|days|week|weeks)$", ds)
+        if m:
+            qty = int(m.group(1))
+            unit = m.group(2)
+            if unit.startswith("hour"):
+                return timedelta(hours=qty)
+            elif unit.startswith("min"):
+                return timedelta(minutes=qty)
+            elif unit.startswith("day"):
+                return timedelta(days=qty)
+            elif unit.startswith("week"):
+                return timedelta(weeks=qty)
+
+        # Plain number → hours
+        try:
+            return timedelta(hours=int(ds))
+        except ValueError:
+            pass
+
+        raise ValueError(
+            f"Cannot parse snooze duration: '{duration_str}'. "
+            f"Use formats like '30 minutes', '2 hours', '1 day'."
+        )
 
     def _parse_date(self, date_str: str) -> datetime:
         """

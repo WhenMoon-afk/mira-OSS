@@ -1,125 +1,112 @@
-Classify the relationship between a newly extracted memory and an existing memory from the user's long-term memory system.
+Classify the relationship between two memories from a user's long-term memory system.
 
-These memories were identified as potentially related. Your job is to classify HOW they relate — not whether they do. The key question: would linking these memories enable useful reasoning about the user? If knowing one memory would change how you use the other, they should be linked.
+CRITICAL CONTEXT: These pairs were surfaced by similarity search. Every pair shares topic overlap. Topical similarity is the baseline, not a signal. Your job: determine whether the similarity constitutes a specific, actionable relationship — or whether it's just proximity that doesn't warrant a link. Most pairs should be null.
 
-RELATIONSHIP TYPES:
+RELATIONSHIP TYPES (mutually exclusive — exactly one applies):
 
-**supports** - Reinforces, corroborates, or provides context
-- Information that strengthens or validates the existing memory
-- Additional evidence for the same conclusion
-- Context that makes the existing memory more useful
-- Decision test: Does this make the other memory more credible or useful?
+**conflicts** — Direct logical contradiction
+One memory, if true, makes the other false. Different values for the same fact. Contradictory stated preferences.
+- NOT mere differences (two separate hobbies are different, not contradictory)
+- Test: Can both be true simultaneously? If yes → not conflicts.
 
-**conflicts** - Mutually exclusive or contradictory information
-- Different values for the same fact (e.g., "uses Python 3.9" vs "uses Python 3.11")
-- Temporal contradictions (same event, different dates/times)
-- Contradictory preferences or beliefs
-- Factual disagreements that cannot both be true
-- Decision test: If one is true, must the other be false?
+**supersedes** — Temporal replacement
+The newer memory explicitly replaces the older. "Switched from X to Y", "now uses Z instead", stated updates.
+- Requires explicit language of change or replacement, not just two snapshots at different times
+- Test: Does the newer memory make the older one no longer current?
 
-**supersedes** - Replaces due to temporal progression
-- Temporal progression ("switched from X to Y", "now uses Z instead")
-- Explicit updates ("changed preference", "moved from A to B")
-- New information that makes old information outdated
-- Must have clear temporal or progressive relationship
-- Decision test: Does temporal progression make the old memory no longer current?
+**corroborates** — Independent evidence for the same claim
+Memory A provides evidence that strengthens the credibility of memory B (or vice versa). The key word is EVIDENCE — observed outcomes, test results, third-party confirmation.
+- NOT "same topic" — two memories about cooking are not corroboration
+- NOT "identical" or "similar" — never use the word "identical" in your reasoning
+- NOT "consistent with" — consistency is the baseline for non-conflicting memories
+- Test: Does memory A make you MORE CONFIDENT that memory B is true? Not "more informed about the topic" — more confident in the specific claim.
 
-**refines** - Adds detail or nuance
-- More specific information about the same topic
-- Clarification or elaboration of existing knowledge
-- Precision improvements without contradiction
-- Decision test: Does this add granularity without changing the core meaning?
+**refines** — Actionable detail that changes use
+One memory adds specific detail that would change how you'd act on the other. The detail must be concrete enough to alter a decision or recommendation.
+- Same domain: general fact + specific implementation detail
+- NOT two memories that happen to cover the same topic at the same level of detail
+- Test: If you had only the general memory, would you act differently than if you had both? If the detail doesn't change any action → null.
 
-**precedes** - Temporal sequence without causation
-- Events that happened before, providing timeline context
-- Historical background relevant to understanding current state
-- Sequence matters but no direct cause-effect relationship
-- Decision test: Did this happen before and help explain the timeline?
+**precedes** — Temporal sequence (A happened before B)
+Events in a clear before/after order that establishes timeline context.
+- Must be sequential: A happened, THEN B happened
+- NOT co-temporal events (things that happened during the same period are not sequences)
+- NOT merely having different dates — timestamps alone don't make a sequence
+- Test: Did A finish before B started, AND does knowing the order matter?
 
-**contextualizes** - Background information that frames another memory
-- Domain knowledge that helps interpret specific memories
-- General principles that explain specific behaviors
-- Broader context that makes the specific memory more meaningful
-- Personal facts that inform decisions in seemingly unrelated areas
-- Decision test: Does knowing this memory change how you'd act on the other?
+**contextualizes** — Cross-domain framing
+A fact from one life domain that changes how you'd act on a memory from a DIFFERENT domain. The domains must be genuinely different (health/career, family/technology, hobby/finance).
+- "Annika is vegetarian" contextualizes "planning dinner for Annika" — dietary domain frames social planning
+- NOT two memories from the same domain. If both memories are about the same project, tool, person-in-the-same-context, or activity → use refines or null
+- NOT a general pattern with a specific instance of itself — that's exemplifies, not contextualizes
+- Test: Are the memories from different life domains, AND does one change actions on the other?
 
-**null** - Genuinely unrelated
-- Completely different topics with no conceptual bridge
-- No scenario where knowing one would affect use of the other
-- Decision test: Could you use each memory fully without ever knowing the other exists?
+**exemplifies** — Specific instance of a general pattern (or vice versa)
+One memory is a concrete case of what the other describes generally. The general memory is a principle, habit, or tendency; the specific memory is a single occurrence of it.
+- "Taylor does DIY maintenance" + "Replaced the Frog cartridge in the hot tub" — the replacement is an instance of the DIY pattern
+- NOT independent evidence for a claim — that's corroborates. Exemplifies is categorical containment (member of a class), not proof.
+- NOT same-domain detail that changes action — that's refines. Exemplifies connects across abstraction levels, not detail levels.
+- Test: Is one memory a class/pattern and the other a member/instance of that class?
 
-**Classification Criteria**:
+**null** — No actionable relationship
+These memories happen to be about similar topics but knowing one wouldn't change what you DO with the other.
+- Default for topical overlap without behavioral impact
+- Default for same-person or same-project memories that don't interact
+- Two memories can both be true, both be about the same thing, and still be null
+- Test: If you had to advise the user based on memory B, would knowing memory A change your advice? If no → null.
 
-1. **Conceptual Connection**: Do these memories share a person, place, topic, value, constraint, or implication — even across different life domains?
-2. **Temporal Analysis**: Check happens_at/expires_at fields for temporal progressions
-3. **Factual Consistency**: Identify if both can be simultaneously true
-4. **Specificity**: Prefer more specific relationship types over generic
-5. **User Perspective**: Would a thoughtful friend see these as connected?
+DECISION PROCESS:
+1. Check for contradiction → conflicts
+2. Check for explicit temporal replacement → supersedes
+3. Ask: "Would one change what I DO with the other?" If no → null (stop here — most pairs stop here)
+4. If yes — determine HOW it changes use:
+   a. Independent evidence for a claim → corroborates
+   b. Same-domain detail that alters action → refines
+   c. General pattern ↔ specific instance → exemplifies
+   d. Sequential events where order matters → precedes
+   e. Cross-domain fact that reframes action → contextualizes
+5. If the change in use doesn't fit a-e cleanly → null (don't force a type)
 
-**Decision Process**:
-
-1. If memories describe contradictory facts -> **conflicts**
-2. If new memory explicitly updates/replaces old due to temporal progression -> **supersedes**
-3. If new memory reinforces or provides evidence for existing -> **supports**
-4. If new memory adds detail/nuance to existing -> **refines**
-5. If new memory happened before and provides timeline context -> **precedes**
-6. If new memory provides background, constraint, or implication that frames existing -> **contextualizes**
-7. If genuinely unrelated with no conceptual bridge -> **null**
-
-**Output Format**:
-
-Respond with only a valid JSON object. No additional text, formatting, or markup.
-
-Start your response with { and end with }
-
-Format your response like this:
-{
-  "relationship_type": "conflicts",
-  "confidence": 0.91,
-  "reasoning": "Mutually exclusive approaches to TypeScript strictness"
-}
-
-Valid relationship_type values: "supports", "conflicts", "supersedes", "refines", "precedes", "contextualizes", "null"
+OUTPUT: Respond with only a valid JSON object. No other text.
+{"relationship_type": "null", "reasoning": "Both about home automation but knowing one doesn't change advice on the other"}
+Valid types: "corroborates", "conflicts", "supersedes", "refines", "precedes", "contextualizes", "exemplifies", "null"
 
 EXAMPLES:
 
 New: "Prefers TypeScript strict mode for all projects"
 Existing: "Disabled strict mode to ship faster"
--> {"relationship_type": "conflicts", "confidence": 0.91, "reasoning": "Mutually exclusive approaches to TypeScript strictness"}
+-> {"relationship_type": "conflicts", "reasoning": "Contradictory approaches — both cannot be the current preference"}
 
 New: "Now using PostgreSQL with pgvector for vector operations"
 Existing: "Using Pinecone for vector similarity search"
--> {"relationship_type": "supersedes", "confidence": 0.93, "reasoning": "Temporal progression from Pinecone to PostgreSQL"}
+-> {"relationship_type": "supersedes", "reasoning": "Explicit switch from Pinecone to pgvector — old memory no longer current"}
 
 New: "Confirmed FastAPI handles async well in production load tests"
 Existing: "Chose FastAPI for its async performance characteristics"
--> {"relationship_type": "supports", "confidence": 0.87, "reasoning": "Provides evidence that validates the original decision"}
+-> {"relationship_type": "corroborates", "reasoning": "Load test results provide independent evidence validating the original performance claim"}
 
 New: "Uses pytest-asyncio with auto mode for async test fixtures"
 Existing: "Uses pytest for testing Python code"
--> {"relationship_type": "refines", "confidence": 0.85, "reasoning": "Adds specific detail about async testing within pytest usage"}
+-> {"relationship_type": "refines", "reasoning": "Async fixture detail changes how you'd set up a test environment — you'd configure auto mode"}
 
 New: "Evaluated several vector databases in Q3 2024"
 Existing: "Selected pgvector for production deployment in Q4 2024"
--> {"relationship_type": "precedes", "confidence": 0.88, "reasoning": "Evaluation phase happened before selection, provides timeline"}
+-> {"relationship_type": "precedes", "reasoning": "Evaluation completed before selection — sequential decisions where order explains the outcome"}
 
 New: "Annika is vegetarian"
 Existing: "Planning birthday dinner at Nick's Cove for Annika"
--> {"relationship_type": "contextualizes", "confidence": 0.92, "reasoning": "Dietary restriction directly informs restaurant choice and menu planning for her birthday"}
+-> {"relationship_type": "contextualizes", "reasoning": "Health/dietary domain reframes social planning — changes restaurant and menu decisions"}
 
-New: "Gets anxious in crowded spaces"
-Existing: "Considering a concert venue for date night"
--> {"relationship_type": "contextualizes", "confidence": 0.88, "reasoning": "Crowd anxiety is a constraint that should inform venue selection for the date"}
+New: "Spent three weekends dialing in the hot tub water chemistry"
+Existing: "Values hands-on problem solving and doing things himself"
+-> {"relationship_type": "exemplifies", "reasoning": "Hot tub chemistry effort is a specific instance of the general DIY/hands-on pattern"}
+
+New: "Installed the Frog @ease sanitization system in the hot tub"
+Existing: "Hot tub uses Frog @ease sanitizer system with RO water fill"
+-> {"relationship_type": "null", "reasoning": "Same topic and same facts at same detail level — neither adds information that changes action on the other"}
 
 New: "Learning to play guitar"
 Existing: "Uses TypeScript for web development"
--> {"relationship_type": "null", "confidence": 0.95, "reasoning": "Completely different domains with no conceptual bridge — knowing one doesn't inform the other"}
+-> {"relationship_type": "null", "reasoning": "Different domains with no cross-domain framing — neither changes advice on the other"}
 
-**Important**:
-- **conflicts** should only be used for direct logical contradictions
-- **supersedes** requires temporal progression, not just correction
-- **supports** is for reinforcement and corroboration, not causation
-- **refines** adds detail without changing the core meaning
-- **contextualizes** is the broadest type — use it for cross-domain connections where one memory informs decisions about the other
-- Confidence should reflect your certainty in the classification
-- Think from the user's perspective: would linking these memories help an AI assistant serve them better?
+/nothink

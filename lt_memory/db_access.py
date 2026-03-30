@@ -171,13 +171,11 @@ class LTMemoryDB:
                     INSERT INTO memories (
                         user_id, text, embedding, importance_score,
                         expires_at, happens_at, created_at,
-                        confidence,
                         activity_days_at_creation, activity_days_at_last_access,
                         source_segment_id
                     ) VALUES (
                         %(user_id)s, %(text)s, %(embedding)s, %(importance_score)s,
                         %(expires_at)s, %(happens_at)s, %(created_at)s,
-                        %(confidence)s,
                         %(activity_days_at_creation)s, %(activity_days_at_last_access)s,
                         %(source_segment_id)s
                     ) RETURNING id
@@ -191,7 +189,6 @@ class LTMemoryDB:
                         'expires_at': memory.expires_at,
                         'happens_at': memory.happens_at,
                         'created_at': utc_now(),
-                        'confidence': memory.confidence,
                         'activity_days_at_creation': current_activity_days,
                         'activity_days_at_last_access': current_activity_days,
                         'source_segment_id': str(memory.source_segment_id) if memory.source_segment_id else None
@@ -266,6 +263,33 @@ class LTMemoryDB:
                 list(memory_ids),
             ))
 
+            return [Memory(**row) for row in results]
+
+    def get_memories_by_segment_id(
+        self,
+        segment_id: UUID,
+        user_id: Optional[str] = None
+    ) -> List[Memory]:
+        """
+        Fetch all memories extracted from a specific segment.
+
+        Args:
+            segment_id: Source segment UUID (message ID of segment boundary)
+            user_id: User ID (uses ambient context if None)
+
+        Returns:
+            List of Memory models ordered by creation time
+        """
+        resolved_user_id = self._resolve_user_id(user_id)
+
+        with self.session_manager.get_session(resolved_user_id) as session:
+            query = """
+            SELECT * FROM memories
+            WHERE source_segment_id = %(segment_id)s
+            ORDER BY created_at ASC
+            """
+
+            results = session.execute_query(query, {'segment_id': segment_id})
             return [Memory(**row) for row in results]
 
     def update_memory(
@@ -388,9 +412,9 @@ class LTMemoryDB:
                        m.created_at, m.updated_at, m.expires_at, m.access_count,
                        m.mention_count, m.last_accessed, m.happens_at,
                        m.inbound_links, m.outbound_links, m.entity_links,
-                       m.confidence, m.is_archived, m.archived_at,
+                       m.is_archived, m.archived_at,
                        m.activity_days_at_creation, m.activity_days_at_last_access,
-                       m.annotations,
+                       m.annotations, m.source_segment_id,
                        1 - (m.embedding <=> %(query_embedding)s::vector) as similarity_score,
                        'personal' as source
                 FROM memories m
@@ -406,9 +430,9 @@ class LTMemoryDB:
                        gm.created_at, gm.updated_at, NULL::timestamptz as expires_at, 0 as access_count,
                        0 as mention_count, NULL::timestamptz as last_accessed, gm.happens_at,
                        gm.inbound_links, gm.outbound_links, gm.entity_links,
-                       0.9 as confidence, gm.is_archived, gm.archived_at,
+                       gm.is_archived, gm.archived_at,
                        NULL::int as activity_days_at_creation, NULL::int as activity_days_at_last_access,
-                       '[]'::jsonb as annotations,
+                       '[]'::jsonb as annotations, NULL::uuid as source_segment_id,
                        1 - (gm.embedding <=> %(query_embedding)s::vector) as similarity_score,
                        'global' as source
                 FROM global_memories gm
@@ -846,7 +870,6 @@ class LTMemoryDB:
                     outbound_obj = {
                         'uuid': str(link.target_id),
                         'type': link.link_type,
-                        'confidence': link.confidence,
                         'reasoning': link.reasoning,
                         'created_at': format_utc_iso(link.created_at)
                     }
@@ -857,54 +880,43 @@ class LTMemoryDB:
                     inbound_obj = {
                         'uuid': str(link.source_id),
                         'type': link.link_type,
-                        'confidence': link.confidence,
                         'reasoning': link.reasoning,
                         'created_at': format_utc_iso(link.created_at)
                     }
                     if link.extraction_bond:
                         inbound_obj['extraction_bond'] = link.extraction_bond
 
-                    # Add outbound link to source (only if not already present)
+                    # Add or replace outbound link to source (one link per target UUID)
                     session.execute_update("""
                         UPDATE memories
-                        SET outbound_links = CASE
-                            WHEN NOT EXISTS (
-                                SELECT 1 FROM jsonb_array_elements(COALESCE(outbound_links, '[]'::jsonb)) AS elem
-                                WHERE elem->>'uuid' = %(target_id)s
-                                  AND elem->>'type' = %(link_type)s
-                            )
-                            THEN COALESCE(outbound_links, '[]'::jsonb) || %(outbound_obj)s::jsonb
-                            ELSE outbound_links
-                        END,
+                        SET outbound_links = (
+                            SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+                            FROM jsonb_array_elements(COALESCE(outbound_links, '[]'::jsonb)) AS elem
+                            WHERE elem->>'uuid' != %(target_id)s
+                        ) || %(outbound_obj)s::jsonb,
                         updated_at = NOW()
                         WHERE id = %(source_id)s
                           AND is_archived = FALSE
                     """, {
                         'source_id': str(link.source_id),
                         'target_id': str(link.target_id),
-                        'link_type': link.link_type,
                         'outbound_obj': json.dumps(outbound_obj)
                     })
 
-                    # Add inbound link to target (only if not already present)
+                    # Add or replace inbound link on target (one link per source UUID)
                     session.execute_update("""
                         UPDATE memories
-                        SET inbound_links = CASE
-                            WHEN NOT EXISTS (
-                                SELECT 1 FROM jsonb_array_elements(COALESCE(inbound_links, '[]'::jsonb)) AS elem
-                                WHERE elem->>'uuid' = %(source_id)s
-                                  AND elem->>'type' = %(link_type)s
-                            )
-                            THEN COALESCE(inbound_links, '[]'::jsonb) || %(inbound_obj)s::jsonb
-                            ELSE inbound_links
-                        END,
+                        SET inbound_links = (
+                            SELECT COALESCE(jsonb_agg(elem), '[]'::jsonb)
+                            FROM jsonb_array_elements(COALESCE(inbound_links, '[]'::jsonb)) AS elem
+                            WHERE elem->>'uuid' != %(source_id)s
+                        ) || %(inbound_obj)s::jsonb,
                         updated_at = NOW()
                         WHERE id = %(target_id)s
                           AND is_archived = FALSE
                     """, {
                         'target_id': str(link.target_id),
                         'source_id': str(link.source_id),
-                        'link_type': link.link_type,
                         'inbound_obj': json.dumps(inbound_obj)
                     })
 
@@ -1658,7 +1670,7 @@ class LTMemoryDB:
             user_id: User ID to check
 
         Returns:
-            List of batch models with status 'submitted' or 'processing'
+            List of batch models with status 'submitted', 'processing', or 'result_processing'
         """
         table = _BATCH_TABLES[kind]
         model_cls = _BATCH_MODELS[kind]
@@ -1667,12 +1679,40 @@ class LTMemoryDB:
             query = f"""
             SELECT * FROM {table}
             WHERE user_id = %(user_id)s
-            AND status IN ('submitted', 'processing')
+            AND status IN ('submitted', 'processing', 'result_processing')
             ORDER BY created_at ASC
             """
 
             results = session.execute_query(query, {'user_id': user_id})
             return [model_cls(**row) for row in results]
+
+    def claim_batch(self, kind: BatchKind, batch_id: UUID, user_id: str) -> bool:
+        """Atomically claim a batch for result processing.
+
+        Transitions status to 'result_processing' only if the batch is
+        currently 'submitted' or 'processing'. The atomic UPDATE...RETURNING
+        guarantees exactly one concurrent caller succeeds, preventing
+        duplicate processing when poll cycles overlap due to timeouts.
+
+        Args:
+            kind: Batch kind ("extraction" or "post_processing")
+            batch_id: Batch UUID to claim
+            user_id: User ID
+
+        Returns:
+            True if this caller claimed the batch, False if already claimed
+        """
+        table = _BATCH_TABLES[kind]
+        resolved_user_id = self._resolve_user_id(user_id)
+
+        with self.session_manager.get_session(resolved_user_id) as session:
+            result = session.execute_single(
+                f"UPDATE {table} SET status = 'result_processing' "
+                f"WHERE id = %(id)s AND status IN ('submitted', 'processing') "
+                f"RETURNING id",
+                {'id': batch_id}
+            )
+            return bool(result)
 
     def update_batch_status(
         self,

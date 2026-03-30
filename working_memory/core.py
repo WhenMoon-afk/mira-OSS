@@ -51,6 +51,7 @@ class WorkingMemory:
         self.composer = SystemPromptComposer()
         self._trinkets: Dict[str, EventAwareTrinket] = {}
         self._current_continuum_id: Optional[str] = None
+        self._portrait_cache: Optional[str] = None  # Loaded once per session on first compose
 
         # Subscribe to core events
         # System prompt composition request
@@ -96,7 +97,14 @@ class WorkingMemory:
         logger.debug(f"Personalizing system prompt for '{first_name}'")
 
         personalized_prompt = event.base_prompt.replace("{first_name}", first_name)
-        personalized_prompt = personalized_prompt.replace("{user_context}", "")
+
+        # Inject user portrait — read from DB, cached for the session.
+        # Portrait is synthesized by the segment collapse chain, not on-demand.
+        if self._portrait_cache is None:
+            from cns.services.portrait_service import read_portrait
+            self._portrait_cache = read_portrait(get_current_user_id())
+        portrait_text = f"\n{self._portrait_cache}" if self._portrait_cache else ""
+        personalized_prompt = personalized_prompt.replace("{user_context}", portrait_text)
 
         # Replace {relative time since account creation} with computed duration
         if prefs.created_at:
@@ -112,7 +120,7 @@ class WorkingMemory:
         
         # Clear previous sections except base
         self.composer.clear_sections(preserve_base=True)
-        
+
         # Request updates from all registered trinkets
         for trinket_name in self._trinkets.keys():
             self.event_bus.publish(UpdateTrinketEvent.create(

@@ -19,7 +19,7 @@ from lt_memory.entity_gc import EntityGCService
 from lt_memory.hub_discovery import HubDiscoveryService
 from lt_memory.processing.memory_processor import MemoryProcessor
 from lt_memory.processing.extraction_engine import ExtractionEngine
-from lt_memory.processing.execution_strategy import create_execution_strategy
+from lt_memory.processing.execution_strategy import create_execution_strategy, ImmediateExecutionStrategy
 from lt_memory.processing.orchestrator import ExtractionOrchestrator
 from lt_memory.processing.batch_coordinator import BatchCoordinator
 from lt_memory.processing.consolidation_handler import ConsolidationHandler
@@ -204,13 +204,27 @@ class LTMemoryFactory:
             )
             self._service_init_order.append(self.execution_strategy)
 
+            # Always create an ImmediateExecutionStrategy for manual collapse
+            # (bypasses batch so memories are ready before the user's next conversation)
+            logger.debug("Initializing ImmediateExecutionStrategy (for manual collapse)...")
+            self.immediate_strategy = ImmediateExecutionStrategy(
+                extraction_engine=self.extraction_engine,
+                memory_processor=self.memory_processor,
+                vector_ops=self.vector_ops,
+                db=self.db,
+                llm_provider=self._llm_provider,
+                linking_service=self.linking
+            )
+            self._service_init_order.append(self.immediate_strategy)
+
             logger.debug("Initializing ExtractionOrchestrator...")
             self.extraction_orchestrator = ExtractionOrchestrator(
                 config=self.config.batching,
                 extraction_engine=self.extraction_engine,
                 execution_strategy=self.execution_strategy,
                 continuum_repo=self._conversation_repo,
-                db=self.db
+                db=self.db,
+                immediate_strategy=self.immediate_strategy
             )
             self._service_init_order.append(self.extraction_orchestrator)
 

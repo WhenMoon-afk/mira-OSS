@@ -189,7 +189,7 @@ CONFIG_DB_PASSWORD="${CONFIG_DB_PASSWORD:-changethisifdeployingpwd}"
 if [ -f "${BACKUP_DIR}/vault_api_keys.json" ]; then
     CONFIG_ANTHROPIC_KEY=$(jq -r '.anthropic_key // empty' "${BACKUP_DIR}/vault_api_keys.json" 2>/dev/null || echo "")
     CONFIG_ANTHROPIC_BATCH_KEY=$(jq -r '.anthropic_batch_key // empty' "${BACKUP_DIR}/vault_api_keys.json" 2>/dev/null || echo "")
-    CONFIG_PROVIDER_KEY=$(jq -r '.provider_key // empty' "${BACKUP_DIR}/vault_api_keys.json" 2>/dev/null || echo "")
+    CONFIG_PROVIDER_KEY=$(jq -r '.openaicompat_key // .provider_key // empty' "${BACKUP_DIR}/vault_api_keys.json" 2>/dev/null || echo "")
     CONFIG_KAGI_KEY=$(jq -r '.kagi_api_key // empty' "${BACKUP_DIR}/vault_api_keys.json" 2>/dev/null || echo "")
 fi
 
@@ -209,9 +209,11 @@ CONFIG_START_MIRA_NOW="no"         # Don't auto-start until verified
 if [ "$CONFIG_ANTHROPIC_KEY" = "OFFLINE_MODE_PLACEHOLDER" ]; then
     CONFIG_OFFLINE_MODE="yes"
     CONFIG_OLLAMA_MODEL="qwen3:1.7b"  # Default offline model
+    CONFIG_OLLAMA_SUBCORTICAL_MODEL="$CONFIG_OLLAMA_MODEL"  # Same default for migration
 else
     CONFIG_OFFLINE_MODE="no"
     CONFIG_OLLAMA_MODEL=""
+    CONFIG_OLLAMA_SUBCORTICAL_MODEL=""
 fi
 
 echo -e "${CHECKMARK}"
@@ -355,6 +357,7 @@ else
     export CONFIG_INSTALL_SYSTEMD
     export CONFIG_OFFLINE_MODE
     export CONFIG_OLLAMA_MODEL
+    export CONFIG_OLLAMA_SUBCORTICAL_MODEL
 
     # Track installation progress for rollback
     PHASE6_FAILED=""

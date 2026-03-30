@@ -3,7 +3,7 @@
 # Source this file - do not execute directly
 #
 # Requires: lib/output.sh and lib/services.sh sourced first
-# Requires: OS, DISTRO, CONFIG_OFFLINE_MODE, CONFIG_OLLAMA_MODEL, LOUD_MODE variables set
+# Requires: OS, DISTRO, CONFIG_OFFLINE_MODE, CONFIG_OLLAMA_MODEL, CONFIG_OLLAMA_SUBCORTICAL_MODEL, LOUD_MODE variables set
 #
 # Sets: PYTHON_VER
 
@@ -224,7 +224,7 @@ print_success "System dependencies installed"
 
 # Ollama setup (only for offline mode)
 if [ "$CONFIG_OFFLINE_MODE" = "yes" ]; then
-    print_header "Step 1b: Ollama Setup (Offline Mode)"
+    print_header "Step 1b: Ollama Setup"
 
     # Install Ollama if not present
     echo -ne "${DIM}${ARROW}${RESET} Checking for Ollama... "
@@ -290,7 +290,7 @@ if [ "$CONFIG_OFFLINE_MODE" = "yes" ]; then
             fi
         fi
 
-        # Pull the model if server is ready
+        # Pull the model(s) if server is ready
         if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
             if [ "$LOUD_MODE" = true ]; then
                 print_step "Pulling model ${CONFIG_OLLAMA_MODEL}..."
@@ -310,6 +310,25 @@ if [ "$CONFIG_OFFLINE_MODE" = "yes" ]; then
                     print_info "  1. On a connected machine: ollama pull ${CONFIG_OLLAMA_MODEL}"
                     print_info "  2. Export: ~/.ollama/models -> transfer to this machine"
                     print_info "  3. Or use: ollama create ${CONFIG_OLLAMA_MODEL} -f Modelfile"
+                fi
+            fi
+
+            # Pull subcortical model if it differs from the main model
+            if [ -n "$CONFIG_OLLAMA_SUBCORTICAL_MODEL" ] && [ "$CONFIG_OLLAMA_SUBCORTICAL_MODEL" != "$CONFIG_OLLAMA_MODEL" ]; then
+                if [ "$LOUD_MODE" = true ]; then
+                    print_step "Pulling subcortical model ${CONFIG_OLLAMA_SUBCORTICAL_MODEL}..."
+                    if ollama pull "$CONFIG_OLLAMA_SUBCORTICAL_MODEL"; then
+                        print_success "Model ${CONFIG_OLLAMA_SUBCORTICAL_MODEL} ready"
+                    else
+                        print_warning "Could not pull subcortical model (network unavailable)"
+                    fi
+                else
+                    (ollama pull "$CONFIG_OLLAMA_SUBCORTICAL_MODEL" > /dev/null 2>&1) &
+                    if show_progress $! "Pulling subcortical model ${CONFIG_OLLAMA_SUBCORTICAL_MODEL}"; then
+                        print_success "Model ${CONFIG_OLLAMA_SUBCORTICAL_MODEL} ready"
+                    else
+                        print_warning "Could not pull subcortical model (network unavailable)"
+                    fi
                 fi
             fi
         fi

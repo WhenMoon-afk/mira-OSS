@@ -1,0 +1,5 @@
+## Segment Summaries
+{segment_summaries}
+
+Produce a portrait of this user. Orient Mira's understanding of who they are, not what
+they're currently working on.

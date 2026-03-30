@@ -57,7 +57,7 @@ class ToolConfig(BaseModel):
     """Tool-related configuration settings."""
 
     essential_tools: List[str] = Field(
-        default=["web_tool", "invokeother_tool", "continuum_tool", "reminder_tool", "memory_tool"],
+        default=["web_tool", "invokeother_tool", "continuum_tool", "reminder_tool", "memory_tool", "domaindoc_tool", "forage_tool"],
         description="List of essential tools (warns if disabled)"
     )
 
@@ -96,7 +96,7 @@ class SystemConfig(BaseModel):
         description="Maximum total complexity score for loaded segment summaries (accumulates until limit reached)"
     )
     session_summary_max_count: int = Field(
-        default=5,
+        default=4,
         description="Maximum number of segment summaries to load regardless of complexity"
     )
     session_summary_query_window: int = Field(
@@ -156,6 +156,10 @@ class BatchingConfig(BaseModel):
         default=300,
         description="Maximum seconds to spend processing a single batch result (5 minutes)"
     )
+    max_batches_per_poll: int = Field(
+        default=3,
+        description="Maximum Anthropic batch IDs to process per poll cycle (prevents timeout when many batches accumulate)"
+    )
 
 
 class LinkingConfig(BaseModel):
@@ -174,12 +178,6 @@ class LinkingConfig(BaseModel):
         default=20,
         description="Maximum candidate memories to evaluate for links"
     )
-    link_confidence_threshold: float = Field(
-        default=0.7,
-        ge=0.0,
-        le=1.0,
-        description="Minimum confidence to create a link"
-    )
     max_link_traversal_depth: int = Field(
         default=3,
         description="Maximum depth for link traversal when navigating memory graph"
@@ -187,6 +185,22 @@ class LinkingConfig(BaseModel):
     classification_max_tokens: int = Field(
         default=500,
         description="Maximum tokens for relationship classification LLM calls"
+    )
+    entity_similarity_floor: float = Field(
+        default=0.55,
+        ge=0.0,
+        le=1.0,
+        description="Minimum embedding cosine similarity for entity co-occurrence candidates (filters O(N²) entity noise)"
+    )
+    tfidf_similarity_threshold: float = Field(
+        default=0.20,
+        ge=0.0,
+        le=1.0,
+        description="Minimum TF-IDF cosine similarity for term-based candidate discovery (rescues orphan memories with no entities)"
+    )
+    tfidf_max_candidates: int = Field(
+        default=10,
+        description="Maximum candidates returned by TF-IDF discovery axis per source memory"
     )
 
 
@@ -285,20 +299,14 @@ class ProactiveConfig(BaseModel):
 
     # Link type weights for reranking (higher = more important)
     link_weight_conflicts: float = Field(default=1.0, description="Weight for 'conflicts' links")
-    link_weight_supports: float = Field(default=0.9, description="Weight for 'supports' links")
+    link_weight_corroborates: float = Field(default=0.9, description="Weight for 'corroborates' links")
     link_weight_supersedes: float = Field(default=0.9, description="Weight for 'supersedes' links")
     link_weight_refines: float = Field(default=0.8, description="Weight for 'refines' links")
     link_weight_precedes: float = Field(default=0.7, description="Weight for 'precedes' links")
     link_weight_contextualizes: float = Field(default=0.7, description="Weight for 'contextualizes' links")
+    link_weight_exemplifies: float = Field(default=0.75, description="Weight for 'exemplifies' links")
     link_weight_shares_entity: float = Field(default=0.4, description="Weight for 'shares_entity' links")
     link_weight_default: float = Field(default=0.5, description="Weight for unknown link types")
-    link_min_confidence: float = Field(
-        default=0.6,
-        ge=0.0,
-        le=1.0,
-        description="Minimum confidence score for link-based reranking"
-    )
-
     # Importance inheritance formula: (linked * weight) + (primary * (1-weight))
     link_importance_inheritance_weight: float = Field(
         default=0.7,
@@ -411,12 +419,16 @@ class ScheduledJobsConfig(BaseModel):
         description="Use-days between entity garbage collection (runs when MOD(cumulative_activity_days, interval) = 0)"
     )
     job_timeout_seconds: int = Field(
-        default=45,
+        default=120,
         description="Timeout for batch polling job monitors"
     )
     batch_cleanup_use_days: int = Field(
         default=1,
         description="Use-days between batch cleanup (runs when MOD(cumulative_activity_days, interval) = 0)"
+    )
+    portrait_synthesis_use_days: int = Field(
+        default=10,
+        description="Use-days between portrait synthesis (runs in segment collapse chain when MOD(cumulative_activity_days, interval) = 0)"
     )
 
 
@@ -495,6 +507,19 @@ class ContextConfig(BaseModel):
     )
 
 
+class ToolResultDisplayConfig(BaseModel):
+    """
+    Tool result persistence configuration.
+
+    Controls whether tool use/result messages are persisted to the continuum
+    for cross-turn visibility.
+    """
+    tombstone_mode: bool = Field(
+        default=False,
+        description="When True, tool results are NOT persisted to conversation history (tombstone = discard)"
+    )
+
+
 class PeanutGalleryConfig(BaseModel):
     """
     Peanut Gallery metacognitive observer configuration.
@@ -502,7 +527,7 @@ class PeanutGalleryConfig(BaseModel):
     Controls the async observer that monitors conversation from above, providing:
     - Compaction: Collapsing confusing, low-information sequences
     - Concern detection: Identifying unhealthy loops or emotional escalation
-    - Coaching: Suggesting actions like getcontext_tool calls
+    - Coaching: Suggesting actions like forage_tool calls
 
     Runs every N turns as fire-and-forget background processing.
     """

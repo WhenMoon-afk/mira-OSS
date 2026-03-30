@@ -1,5 +1,5 @@
 # deploy/finalize.sh
-# MIRA CLI setup, systemd service, cleanup, and success message
+# Systemd service, cleanup, and success message
 # Source this file - do not execute directly
 #
 # Requires: lib/output.sh and lib/services.sh sourced first
@@ -9,114 +9,9 @@
 : "${OS:?Error: OS must be set}"
 : "${MIRA_USER:?Error: MIRA_USER must be set}"
 
-print_header "Step 15: MIRA CLI Setup"
-
-echo -ne "${DIM}${ARROW}${RESET} Creating mira wrapper script... "
-
-# Create mira wrapper script that sets Vault environment variables
-# Note: We use HEREDOC without quotes for the start so we can interpolate CONFIG_UPDATE_CHECK
-cat > /opt/mira/mira.sh <<WRAPPER_EOF
-#!/bin/bash
-# MIRA CLI wrapper - sets Vault environment variables for talkto_mira.py
-
-# Save original directory
-ORIGINAL_DIR="\$(pwd)"
-
-# Set Vault address
-export VAULT_ADDR='http://127.0.0.1:8200'
-
-# Check if Vault is running and accessible
-if ! curl -s http://127.0.0.1:8200/v1/sys/health > /dev/null 2>&1; then
-    echo "Error: Vault is not running at \$VAULT_ADDR"
-    echo "Start Vault first:"
-    echo "  Linux: sudo systemctl start vault"
-    echo "  macOS: vault server -config=/opt/vault/config/vault.hcl &"
-    exit 1
-fi
-
-# Check if Vault is sealed and auto-unseal if needed
-# vault status exit codes: 0=unsealed, 2=sealed, 1=error
-vault status > /dev/null 2>&1
-VAULT_STATUS=\$?
-
-if [ \$VAULT_STATUS -eq 2 ]; then
-    echo "Vault is sealed. Attempting to unseal..."
-    if [ -f /opt/vault/init-keys.txt ]; then
-        UNSEAL_KEY=\$(grep 'Unseal Key 1:' /opt/vault/init-keys.txt | awk '{print \$NF}')
-        if [ -n "\$UNSEAL_KEY" ]; then
-            if vault operator unseal "\$UNSEAL_KEY" > /dev/null 2>&1; then
-                echo "Vault unsealed successfully."
-            else
-                echo "Error: Failed to unseal Vault"
-                exit 1
-            fi
-        else
-            echo "Error: Could not extract unseal key from /opt/vault/init-keys.txt"
-            exit 1
-        fi
-    else
-        echo "Error: Vault init-keys.txt not found at /opt/vault/init-keys.txt"
-        echo "Run /opt/vault/unseal.sh manually or check Vault configuration."
-        exit 1
-    fi
-elif [ \$VAULT_STATUS -eq 1 ]; then
-    echo "Error: Could not determine Vault status"
-    exit 1
-fi
-
-# Set Vault credentials (files contain just the raw value)
-export VAULT_ROLE_ID=\$(cat /opt/vault/role-id.txt)
-export VAULT_SECRET_ID=\$(cat /opt/vault/secret-id.txt)
-
-# Change to MIRA app directory
-cd /opt/mira/app
-
-# Launch MIRA CLI
-/opt/mira/app/venv/bin/python3 /opt/mira/app/talkto_mira.py "\$@"
-
-# Return to original directory
-cd "\$ORIGINAL_DIR"
-WRAPPER_EOF
-echo -e "${CHECKMARK}"
-
-run_quiet chmod +x /opt/mira/mira.sh
-
-# Apply update check preference to talkto_mira.py
-if [ "${CONFIG_UPDATE_CHECK}" = "no" ]; then
-    echo -ne "${DIM}${ARROW}${RESET} Disabling update check in talkto_mira.py... "
-    if [ "$OS" = "macos" ]; then
-        sudo sed -i '' 's/^UPDATE_CHECK_ENABLED = True$/UPDATE_CHECK_ENABLED = False/' /opt/mira/app/talkto_mira.py
-    else
-        sudo sed -i 's/^UPDATE_CHECK_ENABLED = True$/UPDATE_CHECK_ENABLED = False/' /opt/mira/app/talkto_mira.py
-    fi
-    echo -e "${CHECKMARK}"
-fi
-
-# Add alias to shell RC
-if [ "$OS" = "linux" ]; then
-    SHELL_RC="$HOME/.bashrc"
-elif [ "$OS" = "macos" ]; then
-    # macOS typically uses zsh
-    if [ -n "$ZSH_VERSION" ] || [ "$SHELL" = "/bin/zsh" ]; then
-        SHELL_RC="$HOME/.zshrc"
-    else
-        SHELL_RC="$HOME/.bash_profile"
-    fi
-fi
-
-echo -ne "${DIM}${ARROW}${RESET} Adding 'mira' alias to $SHELL_RC... "
-if ! grep -q "alias mira=" "$SHELL_RC" 2>/dev/null; then
-    echo "alias mira='/opt/mira/mira.sh'" >> "$SHELL_RC"
-    echo -e "${CHECKMARK}"
-else
-    echo -e "${DIM}(already exists)${RESET}"
-fi
-
-print_success "MIRA CLI configured"
-
 # Systemd service installation (Linux only, if user opted in)
 if [ "${CONFIG_INSTALL_SYSTEMD}" = "yes" ] && [ "$OS" = "linux" ]; then
-    print_header "Step 16: Systemd Service Configuration"
+    print_header "Step 15: Systemd Service Configuration"
 
     # Extract Vault credentials from files
     echo -ne "${DIM}${ARROW}${RESET} Reading Vault credentials... "
@@ -207,11 +102,11 @@ EOF
         fi
     fi
 elif [ "${CONFIG_INSTALL_SYSTEMD}" = "no" ]; then
-    print_header "Step 16: Systemd Service Configuration"
+    print_header "Step 15: Systemd Service Configuration"
     print_info "Skipping systemd service installation (user opted out)"
 fi
 
-print_header "Step 17: Cleanup"
+print_header "Step 16: Cleanup"
 
 if [ "$LOUD_MODE" = true ]; then
     print_step "Flushing pip cache..."
@@ -254,34 +149,47 @@ fi
 
 echo ""
 if [ "$CONFIG_OFFLINE_MODE" = "yes" ]; then
-    echo -e "${BOLD}${BLUE}Offline Mode Configuration${RESET}"
-    echo -e "  Mode:   ${CYAN}Offline (local Ollama)${RESET}"
-    echo -e "  Model:  ${CONFIG_OLLAMA_MODEL}"
+    echo -e "${BOLD}${BLUE}LLM Provider${RESET}"
+    echo -e "  Provider:     ${CYAN}Local Ollama${RESET}"
+    if [ "$CONFIG_OLLAMA_MODEL" = "$CONFIG_OLLAMA_SUBCORTICAL_MODEL" ]; then
+        echo -e "  Model:        ${CONFIG_OLLAMA_MODEL}"
+    else
+        echo -e "  Main Model:   ${CONFIG_OLLAMA_MODEL}"
+        echo -e "  Subcortical:  ${CONFIG_OLLAMA_SUBCORTICAL_MODEL}"
+    fi
     echo ""
     print_info "Ensure Ollama is running: ollama serve"
-    print_info "To switch to online mode, add API keys to Vault"
 else
-    echo -e "${BOLD}${BLUE}API Key Configuration${RESET}"
-    echo -e "  Anthropic:       ${STATUS_ANTHROPIC}"
-    echo -e "  Anthropic Batch: ${STATUS_ANTHROPIC_BATCH}"
-    echo -e "  Provider:        ${STATUS_PROVIDER}"
-    echo -e "  Provider Key:    ${STATUS_PROVIDER_KEY}"
-    if [ -n "$CONFIG_PROVIDER_MODEL" ]; then
-        echo -e "  Provider Model:  ${CYAN}${CONFIG_PROVIDER_MODEL}${RESET}"
+    echo -e "${BOLD}${BLUE}Provider Configuration${RESET}"
+    echo -e "  Chat Provider:   ${STATUS_CHAT_PROVIDER}"
+    echo -e "  Chat Model:      ${CYAN}${CONFIG_CHAT_MODEL}${RESET}"
+    echo -e "  Chat Key:        ${STATUS_CHAT_KEY}"
+    if [ "$CONFIG_CHAT_PROVIDER_TYPE" = "anthropic" ]; then
+        if [ "$CONFIG_ANTHROPIC_BATCH_KEY" = "$CONFIG_ANTHROPIC_KEY" ]; then
+            echo -e "  Batch Key:       ${DIM}Using main key${RESET}"
+        else
+            echo -e "  Batch Key:       ${CHECKMARK} Separate key"
+        fi
+    else
+        echo -e "  Batch Key:       ${DIM}Not set (generic chat mode)${RESET}"
     fi
+    echo -e "  Subcortical:     ${STATUS_SUBCORTICAL}"
+    echo -e "  Subcortical Mdl: ${CYAN}${CONFIG_SUBCORTICAL_MODEL}${RESET}"
+    echo -e "  Subcortical Key: ${STATUS_SUBCORTICAL_KEY}"
     echo -e "  Kagi:            ${STATUS_KAGI}"
 
-    if [ "${CONFIG_ANTHROPIC_KEY}" = "PLACEHOLDER_SET_THIS_LATER" ] || [ "${CONFIG_PROVIDER_KEY}" = "PLACEHOLDER_SET_THIS_LATER" ]; then
+    if [ "${CONFIG_CHAT_API_KEY}" = "PLACEHOLDER_SET_THIS_LATER" ] || [ "${CONFIG_CHAT_API_KEY}" = "PLACEHOLDER_NOT_CONFIGURED" ] || [ "${CONFIG_SUBCORTICAL_API_KEY}" = "PLACEHOLDER_SET_THIS_LATER" ]; then
         echo ""
         print_warning "Required API keys not configured!"
-        print_info "MIRA will not work until you set both API keys."
+        print_info "MIRA will not work until you set the missing API keys."
         print_info "To configure later, use Vault CLI:"
         echo -e "${DIM}    export VAULT_ADDR='http://127.0.0.1:8200'${RESET}"
         echo -e "${DIM}    vault login <root-token-from-init-keys.txt>${RESET}"
         echo -e "${DIM}    vault kv put secret/mira/api_keys \\${RESET}"
         echo -e "${DIM}      anthropic_key=\"sk-ant-your-key\" \\${RESET}"
         echo -e "${DIM}      anthropic_batch_key=\"sk-ant-your-key\" \\${RESET}"
-        echo -e "${DIM}      provider_key=\"your-provider-api-key\" \\${RESET}"
+        echo -e "${DIM}      subcortical_key=\"gsk_your-groq-key\" \\${RESET}"
+        echo -e "${DIM}      openaicompat_key=\"your-chat-provider-key\" \\${RESET}"
         echo -e "${DIM}      kagi_api_key=\"your-kagi-key\"${RESET}"
     fi
 fi
@@ -306,6 +214,7 @@ echo -e "${BOLD}${GREEN}Next Steps${RESET}"
 if [ "${CONFIG_INSTALL_SYSTEMD}" = "yes" ] && [ "$OS" = "linux" ]; then
     if [[ "${STATUS_MIRA_SERVICE}" == *"Running"* ]]; then
         echo -e "  ${CYAN}→${RESET} MIRA is running at: ${BOLD}http://localhost:1993${RESET}"
+        echo -e "  ${CYAN}→${RESET} Open the web UI: ${BOLD}http://localhost:1993/chat${RESET}"
         echo -e "  ${CYAN}→${RESET} Check status: ${BOLD}systemctl status mira${RESET}"
         echo -e "  ${CYAN}→${RESET} View logs: ${BOLD}journalctl -u mira -f${RESET}"
         echo -e "  ${CYAN}→${RESET} Stop MIRA: ${BOLD}sudo systemctl stop mira${RESET}"
@@ -315,15 +224,14 @@ if [ "${CONFIG_INSTALL_SYSTEMD}" = "yes" ] && [ "$OS" = "linux" ]; then
         echo -e "  ${CYAN}→${RESET} Try starting: ${BOLD}sudo systemctl start mira${RESET}"
     else
         echo -e "  ${CYAN}→${RESET} Start MIRA: ${BOLD}sudo systemctl start mira${RESET}"
-        echo -e "  ${CYAN}→${RESET} Check status: ${BOLD}systemctl status mira${RESET}"
+        echo -e "  ${CYAN}→${RESET} Open the web UI: ${BOLD}http://localhost:1993/chat${RESET}"
         echo -e "  ${CYAN}→${RESET} View logs: ${BOLD}journalctl -u mira -f${RESET}"
     fi
     echo ""
     print_info "MIRA will auto-start on system boot (systemd enabled)"
-elif [ "$OS" = "linux" ]; then
-    echo -e "  ${CYAN}→${RESET} Run: ${BOLD}source ~/.bashrc && mira${RESET}"
-elif [ "$OS" = "macos" ]; then
-    echo -e "  ${CYAN}→${RESET} Run: ${BOLD}source $SHELL_RC && mira${RESET}"
+else
+    echo -e "  ${CYAN}→${RESET} Start the server: ${BOLD}cd /opt/mira/app && venv/bin/python3 main.py${RESET}"
+    echo -e "  ${CYAN}→${RESET} Open the web UI: ${BOLD}http://localhost:1993/chat${RESET}"
 fi
 
 echo ""
@@ -337,24 +245,6 @@ if [ "$OS" = "macos" ]; then
     print_info "After system restart, manually start Vault and unseal:"
     echo -e "${DIM}    /opt/vault/unseal.sh${RESET}"
     print_info "PostgreSQL and Valkey are managed by brew services"
-fi
-
-# Prompt to launch MIRA CLI immediately
-echo ""
-echo -e "${BOLD}${CYAN}Launch MIRA CLI Now?${RESET}"
-print_info "MIRA CLI will auto-start the API server and open an interactive chat."
-echo ""
-read -p "$(echo -e ${CYAN}Start MIRA CLI now?${RESET}) (yes/no): " LAUNCH_MIRA
-if [[ "$LAUNCH_MIRA" =~ ^[Yy](es)?$ ]]; then
-    echo ""
-    print_success "Launching MIRA CLI..."
-    echo ""
-    # Set up Vault environment and launch
-    export VAULT_ADDR='http://127.0.0.1:8200'
-    export VAULT_ROLE_ID=$(cat /opt/vault/role-id.txt)
-    export VAULT_SECRET_ID=$(cat /opt/vault/secret-id.txt)
-    cd /opt/mira/app
-    exec venv/bin/python3 talkto_mira.py
 fi
 
 echo ""

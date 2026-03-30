@@ -1,61 +1,26 @@
-# cns/api/
+# cns/api/ — FastAPI routing layer: auth gate, input validation, delegate to services
 
-FastAPI endpoints. Thin routing layer — validates input, sets user context, delegates to services.
+## Rules
+
+- Every protected route uses `Depends(get_current_user)` from `auth.api`. Set `set_current_user_id(user_id)` immediately inside the handler — before any service call. No exceptions.
+- No business logic here. Handlers validate input, acquire the distributed lock if needed, call `orchestrator.process_message()` or a repository, then return. Logic belongs in `cns/services/` or tools.
+- All responses go through `create_success_response()` / `create_error_response()` from `base.py`. HTTP status codes map: 400 → `ValidationError`, 402 → `InsufficientBalanceError`, 404 → `NotFoundError`, 503 → `ServiceUnavailableError`, 500 → unhandled.
+- `UserRequestLock(ttl=60)` is module-level in both `chat.py` and `websocket_chat.py` — one lock instance per file, shared across requests. Do not instantiate per-request.
+- WebSocket sync calls run via `run_in_threadpool(ctx.run, ...)` where `ctx = contextvars.copy_context()`. The `ctx.run` wrapper is required — threadpool drops contextvars otherwise.
+- `InsufficientBalanceError` is conditionally imported (`try/except ImportError` → `None`) for OSS compatibility. Always guard with `if InsufficientBalanceError is not None and isinstance(e, InsufficientBalanceError)`.
 
 ## Files
 
-- `chat.py` — `POST /chat`. Non-streaming chat. Handles image compression (two tiers: 1200px inference, 512px storage), document processing (PDF/DOCX/XLSX/TXT/CSV/JSON), per-user distributed request lock (60s TTL). Supports `include_thinking` flag to include thinking trace in response. Delegates to `orchestrator.process_message()`.
-- `websocket_chat.py` — `WebSocket /ws/chat`. Real-time bidirectional chat with custom auth protocol (first message = auth token). Queue-based streaming: orchestrator pushes events via callback, async loop consumes and sends. Thinking events gated behind per-message `include_thinking` flag (default false). Thread context propagation via `run_in_threadpool()`.
-- `actions.py` — `POST /actions`. Domain-routed state mutations (~2200 lines). Domains: REMINDER, MEMORY, CONTACTS, USER, DOMAIN_KNOWLEDGE, CONTINUUM, LORA. Schema-based validation per action. Also `GET /tools/{tool_name}/query` for direct tool polling.
-- `data.py` — `GET /data?type=...`. Unified read endpoint. Types: HISTORY, MEMORIES, DASHBOARD, USER, DOMAINDOCS, WORKING_MEMORY, LORA. Pagination via offset/limit.
-- `health.py` — `GET /health`, `/health/threads`, `/health/thread-dump`. No auth required.
-- `tool_config.py` — CRUD for per-user tool configuration. Lists configurable tools, gets/sets config via `UserCredentialService`, validates against Pydantic schemas.
-- `update.py` — `GET /check_update`. Version comparison against `/VERSION` file. No auth required.
-- `demo.py` — `POST /demo/session`, `POST /demo/chat`. Ephemeral demo sessions in Valkey (15 min TTL, 5 msg/min rate limit). Supports account conversion flow.
-- `files.py` — `GET /files/{file_id}`. Serves code execution file artifacts from `data/users/{user_id}/tmp/`. Security: auth gate, file_id regex validation, path traversal guard, forced-download headers (`Content-Disposition: attachment`, `application/octet-stream`).
-- `federation.py` — `POST /federation/deliver`. Server-to-server webhook for Lattice federation. Receives inbound federated messages and delivers to local users via `PagerTool`. No user auth (Lattice handles verification).
-- `base.py` — Response types (`SuccessResponse`, `ErrorResponse` frozen dataclasses), `ErrorDetail`/`ResponseMeta` TypedDicts, `APIResponse = SuccessResponse | ErrorResponse` union alias, error hierarchy (`APIError`, `ValidationError`, `NotFoundError`, `ServiceUnavailableError`), `BaseHandler` template method pattern.
-
-## Patterns to Follow
-
-### Endpoint Structure
-- Protected routes use `Depends(get_current_user)` from `auth.api`.
-- Set user context immediately: `set_current_user_id(user_id)` at the top of the handler.
-- Use `BaseHandler` for request processing with automatic error handling and request IDs.
-- Return responses via `create_success_response()` / `create_error_response()`.
-
-### Response Types
-`base.py` defines two frozen dataclasses for API responses:
-- `SuccessResponse(data: dict[str, Any], meta: ResponseMeta)` — `.to_dict()` hardcodes `"success": True`
-- `ErrorResponse(error: ErrorDetail, meta: ResponseMeta)` — `.to_dict()` hardcodes `"success": False`
-- `APIResponse = SuccessResponse | ErrorResponse` — union alias (cannot be used with `isinstance`; use the concrete types)
-- `ErrorDetail(TypedDict)` — `{code: str, message: str, details: dict[str, Any]}`
-- `ResponseMeta(TypedDict, total=False)` — `{timestamp: str, request_id: str}`
-- Both are frozen; use `dataclasses.replace()` for mutation (see `auth/api.py` for pattern)
-- Construct via `create_success_response(data, meta)` / `create_error_response(exception, request_id)`
-
-Wire format (unchanged):
-```json
-{"success": true, "data": {...}, "meta": {"request_id": "..."}}
-{"success": false, "error": {"code": "...", "message": "...", "details": {...}}, "meta": {"request_id": "..."}}
-```
-
-### Actions Domain Routing
-- Each domain has a handler class extending `BaseDomainHandler`.
-- Actions define validation schemas: `required`, `optional`, `types` fields.
-- Domain handlers validate, then delegate to tools or repositories.
-- New domains: add handler class, add to domain router in `ActionsEndpoint`.
-
-### Concurrency
-- `UserRequestLock` ensures one active request per user (distributed via Valkey, 60s TTL).
-- WebSocket uses `run_in_threadpool()` with context propagation for sync orchestrator code.
-
-### Error Handling
-- All errors extend `APIError(Exception)` with `message: str`, `code: str`, `details: dict[str, Any]`
-- `create_error_response(exception, request_id)` maps any `APIError` subclass to `ErrorResponse` with the correct `ErrorDetail`
-- HTTP 400: `ValidationError` (bad input, schema violations)
-- HTTP 402: `InsufficientBalanceError` (billing)
-- HTTP 404: `NotFoundError` (resource not found)
-- HTTP 500: Unhandled exceptions (logged, generic message to client)
-- HTTP 503: `ServiceUnavailableError` (infrastructure down)
-- Infrastructure failures propagate (no catch-and-return-None). Only `except` for adding context before re-raising.
+- `base.py` — Owns `SuccessResponse`, `ErrorResponse`, `APIResponse`, `ErrorDetail`, `ResponseMeta`, the `APIError` hierarchy, `BaseHandler`, `create_success_response()`, and `create_error_response()`. All other files in this directory import from here.
+- `chat.py` — `POST /chat`. Non-streaming HTTP chat. Owns two-tier image compression (1200px inference / 512px WebP storage) and document-to-`ContentBlock` assembly before handing to `orchestrator.process_message()`.
+- `websocket_chat.py` — `WebSocket /ws/chat`. Streaming chat. Auth protocol: first message must be `{"type": "auth", "token": "..."}`. Owns partial-response persistence: if the orchestrator raises after text was already sent, the handler commits user + partial assistant messages with `metadata={"partial_response": True}`.
+- `actions.py` — `POST /actions`. Domain-routed mutations via `DomainType` enum and `BaseDomainHandler` subclasses. Also owns `GET /tools/{tool_name}/query`. New domains require a handler class extending `BaseDomainHandler` and registration in `ActionsEndpoint`.
+- `data.py` — `GET /data?type=...`. Read-only access routed by `DataType` enum (HISTORY, MEMORIES, DASHBOARD, USER, DOMAINDOCS, WORKING_MEMORY, LORA). Pagination via `offset`/`limit` query params.
+- `files.py` — `GET /files/{file_id}` (download) and `GET /images/{file_id}` (inline). Serves `data/users/{user_id}/tmp/{file_id}/`. Security: `FILE_ID_PATTERN` regex + resolved-path-must-stay-within-base-dir check. `.meta` sidecar provides filename and media type.
+- `health.py` — `GET /health`, `/health/threads`, `/health/thread-dump`. No auth. Owned by `ThreadMonitor` and `ScheduledTaskMonitor`.
+- `tool_config.py` — CRUD for per-user tool configuration. Discovers configurable tools via `registry._registry`, stores config via `UserCredentialService`, validates against each tool's registered Pydantic schema.
+- `location.py` — `POST /location`. Reverse geocodes via Nominatim, fetches 2-hour forecast from Open-Meteo, caches at `location:{user_id}` in Valkey (24h TTL). Also back-fills weather for gap days since last conversation.
+- `demo.py` — `POST /demo/session`, `POST /demo/chat`. Ephemeral demo sessions in Valkey (15 min TTL, 5 msg/min rate limit). Self-contained — excluded from OSS builds via `makeoss.sh`.
+- `federation.py` — `POST /federation/deliver`. Lattice server-to-server webhook. No user auth (Lattice handles verification). Delivers inbound federated messages via `PagerTool`.
+- `update.py` — `GET /check_update`. No auth. Compares semver against `/VERSION` file; logs checks to `data/update_checks.log`.
+- `oss_ui.py` — `GET /chat`, `GET /`, `GET /oss-assets/*`. Self-contained minimal chat UI for OSS builds. Reads HTML and vendored JS from `deploy/oss_ui/` at import time, serves from memory. Only mounted when `web/chat/` is absent (conditional in `main.py`). No auth dependency — the HTML handles Bearer token via localStorage.

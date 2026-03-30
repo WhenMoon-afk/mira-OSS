@@ -17,8 +17,9 @@ class ManifestTrinket(EventAwareTrinket):
     Displays conversation manifest in working memory.
 
     This trinket formats the segment-based conversation manifest
-    into a structured XML section for the notification center, showing recent
-    conversation segments organized by time.
+    into a structured XML section for the system prompt, showing recent
+    conversation segments organized by time. Placed with stable orientation
+    content rather than the HUD since it rarely changes mid-turn.
     """
 
     variable_name = "conversation_manifest"

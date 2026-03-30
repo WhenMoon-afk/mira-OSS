@@ -17,6 +17,7 @@ from json_repair import repair_json
 
 from clients.llm_provider import LLMProvider, build_batch_params
 from config.config import BatchingConfig
+from utils.user_context import get_internal_llm
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.models import PostProcessingBatch, ConsolidationCluster
 from lt_memory.processing.batch_coordinator import BatchCoordinator
@@ -86,8 +87,8 @@ class PostProcessingOrchestrator:
             logger.info(f"No consolidation clusters found for user {user_id}")
             return None
 
-        # Immediate mode: Anthropic failover active
-        if self.llm_provider._is_failover_active():
+        # Immediate mode: Anthropic failover active or non-Anthropic endpoint
+        if self.llm_provider._is_failover_active() or "api.anthropic.com" not in get_internal_llm('consolidation').endpoint_url:
             logger.warning(
                 f"Bypassing consolidation batch for user {user_id} - "
                 f"executing {len(clusters)} clusters immediately"

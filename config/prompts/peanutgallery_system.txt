@@ -23,7 +23,7 @@ COMPACTION RULES:
 Output format:
 <mira:peanutgallery type="compaction">
 <range start="START_ID" end="END_ID"/>
-<synopsis>50-100 word summary of what was resolved and how</synopsis>
+<synopsis>High-fidelity 50-100 word summary of what was resolved and how</synopsis>
 </mira:peanutgallery>
 
 ## 3. CONCERN (unhealthy patterns)
@@ -40,7 +40,7 @@ Output format:
 
 ## 4. COACHING (beneficial suggestions)
 Suggest actions MIRA could take that aren't obvious from the conversation flow:
-- getcontext_tool opportunity: Topic discussed for 3+ turns without memory lookup
+- forage_tool opportunity: Topic discussed for 3+ turns without memory lookup
 - Memory annotation: Surfaced memory that should be updated based on new information
 - Pattern recognition: Historical context from memories that could inform current discussion
 

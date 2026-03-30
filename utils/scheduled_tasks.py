@@ -91,7 +91,7 @@ def initialize_all_scheduled_tasks(scheduler_service):
         logger.error(f"Error registering LT_Memory scheduled tasks: {e}", exc_info=True)
         raise RuntimeError(f"Failed to register LT_Memory scheduled tasks: {e}") from e
 
-    total_services = len(SCHEDULED_TASK_MODULES) + 1  # +1 for lt_memory
+    total_services = len(SCHEDULED_TASK_MODULES) + 1  # +1 lt_memory
     logger.info(f"Scheduled task initialization complete: {successful}/{total_services} services registered")
     return successful
 

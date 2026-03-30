@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 from uuid import UUID
 
-from cns.core.message import Message
+from cns.core.message import Message, TOOL_RESULT_TRUNCATION_LIMIT, _MEDIA_BLOCK_TYPES
 from cns.services.system_prompt_parser import (
     anonymize_prompt,
     format_section_list,
@@ -188,6 +188,7 @@ class AssessmentExtractor:
                 # Structured content (multimodal)
                 text_parts = []
                 thinking_parts = []
+                media_count = 0
                 for block in content:
                     if isinstance(block, dict):
                         block_type = block.get('type', '')
@@ -197,6 +198,16 @@ class AssessmentExtractor:
                             thinking_parts.append(block.get('thinking', ''))
                         elif block_type == 'tool_use':
                             text_parts.append(f"[Used tool: {block.get('name', 'unknown')}]")
+                        elif block_type == 'tool_result':
+                            result = block.get('content', '')
+                            if isinstance(result, str) and len(result) > TOOL_RESULT_TRUNCATION_LIMIT:
+                                result = result[:TOOL_RESULT_TRUNCATION_LIMIT] + '...'
+                            text_parts.append(f"[Tool result: {result}]")
+                        elif block_type in _MEDIA_BLOCK_TYPES:
+                            media_count += 1
+
+                if media_count > 0:
+                    text_parts.insert(0, f"[{media_count} image(s) shared]")
 
                 if msg.role == "assistant":
                     if thinking_parts:

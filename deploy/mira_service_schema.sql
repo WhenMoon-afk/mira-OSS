@@ -1,6 +1,6 @@
 -- MIRA Service Database Schema
 -- Unified schema combining all application and memory tables
--- Updated: 2025-10-19
+-- Updated: 2026-03-24
 --
 -- Run this to create a fresh mira_service database:
 -- psql -U mira_admin -h localhost -f deploy/mira_service_schema.sql
@@ -112,13 +112,7 @@ CREATE TABLE IF NOT EXISTS account_tiers (
 );
 
 INSERT INTO account_tiers (name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, hidden) VALUES
-    ('gemini-low', 'google/gemini-3-flash-preview', 0, 'Gemini 3 Flash', 1, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
-    ('gemini-deep', 'google/gemini-3-pro-preview', 0, 'Gemini 3 Pro', 2, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
-    ('minimax', 'minimax/minimax-m2.5', 0, 'MiniMax M2.5', 3, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
-    ('claude-high', 'claude-opus-4-6', 1024, 'Opus 4.6', 4, 'anthropic', NULL, NULL, FALSE),
-    ('experimental', 'z-ai/glm-5', 0, 'GLM-5 (Experimental)', 5, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
-    ('gpt-legacy', 'openai/gpt-4o-2024-11-20', 0, 'GPT-4o', 6, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE),
-    ('qwen', 'qwen/qwen3.5-plus-02-15', 0, 'Qwen3.5 Plus', 8, 'generic', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', FALSE)
+    ('primary', 'claude-sonnet-4-6', 0, 'Primary', 1, 'anthropic', NULL, NULL, FALSE)
 ON CONFLICT (name) DO NOTHING;
 
 -- Internal LLM configurations for system operations (not user-facing)
@@ -147,25 +141,9 @@ INSERT INTO internal_llm (name, tier, model, endpoint_url, api_key_name, descrip
     ('tidyup', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Context tidyup', 10000, NULL),
     ('relationship', 'cof', 'claude-haiku-4-5-20251001', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Relationship classification', 500, NULL),
     ('entity_gc', 'cof', 'claude-haiku-4-5', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Entity garbage collection', 2048, 'high'),
-    ('critic', 'cof', 'claude-haiku-4-5', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'User model critic', 10000, NULL),
-    -- COF configs: third-party models via OpenRouter
-    ('injection_defense', 'cof', 'meta-llama/llama-3.1-8b-instruct', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Prompt injection detection', 10000, NULL),
-    ('domaindoc_summary', 'cof', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'DomainDoc section summaries', 10000, NULL),
-    -- Free configs: Gemini Flash via OpenRouter for everything except subcortical
-    ('summary', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Segment summary generation', 10000, NULL),
-    ('assessment', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Assessment extraction', 10000, NULL),
-    ('synthesis', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'User model synthesis', 10000, NULL),
-    ('extraction', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Memory extraction', 16000, NULL),
-    ('relationship', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Relationship classification', 500, NULL),
-    ('consolidation', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Memory consolidation', 4096, NULL),
-    ('entity_gc', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Entity garbage collection', 2048, NULL),
-    ('tidyup', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Context tidyup', 10000, NULL),
-    ('critic', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'User model critic', 10000, NULL),
-    ('injection_defense', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'Prompt injection detection', 10000, NULL),
-    ('domaindoc_summary', 'free', 'google/gemini-3-flash-preview', 'https://openrouter.ai/api/v1/chat/completions', 'openrouter_key', 'DomainDoc section summaries', 10000, NULL),
+    ('critic', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'User model critic', 10000, NULL),
     -- Subcortical: same model for both tiers via Groq
-    ('analysis', 'cof', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'provider_key', 'Subcortical analysis', 3072, NULL),
-    ('analysis', 'free', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'provider_key', 'Subcortical analysis', 3072, NULL)
+    ('analysis', 'cof', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'subcortical_key', 'Subcortical analysis', 3072, NULL)
 ON CONFLICT (name, tier) DO NOTHING;
 
 GRANT SELECT ON internal_llm TO mira_dbuser;
@@ -182,22 +160,18 @@ CREATE TABLE IF NOT EXISTS usage_pricing (
 );
 
 INSERT INTO usage_pricing (name) VALUES
-    -- Account tiers (one model per tier)
-    ('gemini-low'), ('gemini-deep'), ('minimax'), ('claude-high'),
-    ('experimental'), ('gpt-legacy'), ('qwen'), ('demo'),
+    -- Account tier
+    ('primary'),
     -- Internal LLM configs (tier-qualified: different models per free/cof)
     ('analysis:cof'), ('analysis:free'),
     ('consolidation:cof'), ('consolidation:free'),
-    ('domaindoc_summary:cof'), ('domaindoc_summary:free'),
     ('entity_gc:cof'), ('entity_gc:free'),
     ('extraction:cof'), ('extraction:free'),
-    ('injection_defense:cof'), ('injection_defense:free'),
     ('relationship:cof'), ('relationship:free'),
     ('summary:cof'), ('summary:free'),
     ('tidyup:cof'), ('tidyup:free')
 ON CONFLICT (name) DO NOTHING;
 
-UPDATE usage_pricing SET input_price_per_mtok = 5.000000, output_price_per_mtok = 20.000000 WHERE name = 'gpt-legacy';
 
 GRANT SELECT ON usage_pricing TO mira_dbuser;
 
@@ -213,13 +187,29 @@ CREATE TABLE IF NOT EXISTS users (
     memory_manipulation_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     daily_manipulation_last_run TIMESTAMP WITH TIME ZONE,
     timezone VARCHAR(100) NOT NULL DEFAULT 'America/Chicago',
+    temperature_unit VARCHAR(20) NOT NULL DEFAULT 'fahrenheit' CHECK (temperature_unit IN ('fahrenheit', 'celsius')),
 
     -- Activity-based time tracking (vacation-proof scoring)
     cumulative_activity_days INT DEFAULT 0,
     last_activity_date DATE,
 
     -- LLM tier preference
-    llm_tier VARCHAR(20) DEFAULT 'claude-high' REFERENCES account_tiers(name)
+    llm_tier VARCHAR(20) DEFAULT 'primary' REFERENCES account_tiers(name),
+
+    -- Balance in USD (OSS: seeded high since user brings own API key)
+    balance_usd DECIMAL(12,6) NOT NULL DEFAULT 0.00,
+
+    -- Stripe billing
+    stripe_customer_id VARCHAR(255),
+    stripe_payment_method_id VARCHAR(255),
+    auto_recharge_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    auto_recharge_amount_usd DECIMAL(10,6) NOT NULL DEFAULT 10.00,
+    auto_recharge_acknowledged_at TIMESTAMP WITH TIME ZONE,
+    last_drip_applied_at DATE,
+
+    -- User portrait (synthesized from segment summaries every 14 activity days)
+    portrait TEXT,
+    portrait_generated_at TIMESTAMP WITH TIME ZONE
 );
 
 -- Grant SELECT on account_tiers to application user
@@ -381,6 +371,21 @@ CREATE INDEX IF NOT EXISTS idx_messages_continuum_id ON messages(continuum_id);
 -- Created timestamp index for temporal queries
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
 
+-- Unique partial index: at most one active segment sentinel per continuum
+-- Prevents TOCTOU race in _ensure_active_segment from creating duplicate sentinels
+CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_active_segment_unique ON messages (continuum_id)
+    WHERE metadata->>'is_segment_boundary' = 'true'
+      AND metadata->>'status' = 'active';
+
+-- Composite index for active segment queries (continuum + temporal ordering)
+CREATE INDEX IF NOT EXISTS idx_messages_active_segments ON messages (continuum_id, created_at)
+    WHERE metadata->>'is_segment_boundary' = 'true'
+      AND metadata->>'status' = 'active';
+
+-- GIN index on metadata for segment boundary queries
+CREATE INDEX IF NOT EXISTS idx_messages_segment_metadata ON messages USING gin (metadata)
+    WHERE metadata->>'is_segment_boundary' = 'true';
+
 -- HNSW vector index for segment embedding similarity search
 -- Partial index: only segment boundaries with embeddings
 CREATE INDEX IF NOT EXISTS idx_messages_segment_embedding ON messages
@@ -411,12 +416,11 @@ CREATE TABLE IF NOT EXISTS memories (
     happens_at TIMESTAMP WITH TIME ZONE,
 
     -- Link tracking arrays for efficient hub scoring
-    inbound_links JSONB DEFAULT '[]'::jsonb,  -- Array of {source_id, link_type, confidence, reasoning, created_at}
-    outbound_links JSONB DEFAULT '[]'::jsonb, -- Array of {target_id, link_type, confidence, reasoning, created_at}
+    inbound_links JSONB DEFAULT '[]'::jsonb,  -- Array of {source_id, link_type, reasoning, created_at}
+    outbound_links JSONB DEFAULT '[]'::jsonb, -- Array of {target_id, link_type, reasoning, created_at}
     entity_links JSONB DEFAULT '[]'::jsonb,   -- Array of {uuid, type, name}
 
     -- Metadata
-    confidence NUMERIC(3,2) DEFAULT 0.9 CHECK (confidence >= 0 AND confidence <= 1),
     is_archived BOOLEAN DEFAULT FALSE,
     archived_at TIMESTAMP WITH TIME ZONE,
 
@@ -467,9 +471,15 @@ CREATE INDEX IF NOT EXISTS idx_memories_embedding_ivfflat
     ON memories USING ivfflat (embedding vector_cosine_ops)
     WITH (lists = 100);
 
+-- Partial index on source_segment_id for segment-to-memory tracing
+CREATE INDEX IF NOT EXISTS idx_memories_source_segment_id
+    ON memories(source_segment_id)
+    WHERE source_segment_id IS NOT NULL;
+
 COMMENT ON INDEX idx_memories_user_id IS 'B-tree index for RLS policy filtering - essential for multi-user performance';
 COMMENT ON INDEX idx_memories_search_vector IS 'GIN index for full-text search operations';
 COMMENT ON INDEX idx_memories_embedding_ivfflat IS 'IVFFlat index for fast cosine similarity search - prevents O(n) sequential scans during deduplication and retrieval';
+COMMENT ON INDEX idx_memories_source_segment_id IS 'Partial B-tree index for tracing memories back to source segments';
 
 -- Trigger function to maintain search vectors
 CREATE OR REPLACE FUNCTION update_memories_search_vector() RETURNS trigger AS $$
@@ -561,6 +571,7 @@ CREATE TABLE IF NOT EXISTS entities (
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     entity_type TEXT NOT NULL,  -- PERSON, ORG, GPE, PRODUCT, EVENT, WORK_OF_ART, LAW, LANGUAGE, NORP, FAC
+    embedding vector(300),  -- spaCy word vector for semantic similarity (300d from en_core_web_lg)
     link_count INTEGER DEFAULT 0,
     last_linked_at TIMESTAMP WITH TIME ZONE,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
@@ -568,17 +579,15 @@ CREATE TABLE IF NOT EXISTS entities (
     is_archived BOOLEAN DEFAULT FALSE,
     archived_at TIMESTAMP WITH TIME ZONE,
 
-    CONSTRAINT entities_user_name_unique UNIQUE (user_id, name)
+    CONSTRAINT entities_user_name_type_unique UNIQUE (user_id, name, entity_type)
 );
 
 COMMENT ON TABLE entities IS 'Persistent knowledge anchors (people, organizations, products, etc.) that memories link to';
 COMMENT ON COLUMN entities.name IS 'Canonical normalized entity name';
-COMMENT ON COLUMN entities.entity_type IS 'LLM-extracted entity type (PERSON, ORG, GPE, PRODUCT, etc.)';
+COMMENT ON COLUMN entities.entity_type IS 'spaCy NER entity type (PERSON, ORG, GPE, PRODUCT, etc.)';
+COMMENT ON COLUMN entities.embedding IS 'spaCy word vector for semantic similarity (300d from en_core_web_lg)';
 COMMENT ON COLUMN entities.link_count IS 'Number of memories linking to this entity';
 COMMENT ON COLUMN entities.last_linked_at IS 'Timestamp of most recent memory link (for dormancy detection)';
-
--- Trigram index for fuzzy name matching (handles LLM naming variations)
-CREATE INDEX IF NOT EXISTS idx_entities_name_trgm ON entities USING gin (name gin_trgm_ops);
 
 -- =====================================================================
 -- EXTRACTION BATCHES (async memory extraction tracking)
@@ -593,7 +602,7 @@ CREATE TABLE IF NOT EXISTS extraction_batches (
     request_payload JSONB NOT NULL,
     chunk_metadata JSONB,
     memory_context JSONB,
-    status TEXT NOT NULL CHECK (status IN ('submitted', 'processing', 'completed', 'failed', 'expired', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('submitted', 'processing', 'result_processing', 'completed', 'failed', 'expired', 'cancelled')),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     submitted_at TIMESTAMP WITH TIME ZONE NOT NULL,
     completed_at TIMESTAMP WITH TIME ZONE,
@@ -628,7 +637,7 @@ CREATE TABLE IF NOT EXISTS post_processing_batches (
     items_submitted INTEGER NOT NULL,
     items_completed INTEGER DEFAULT 0,
     items_failed INTEGER DEFAULT 0,
-    status TEXT NOT NULL CHECK (status IN ('submitted', 'processing', 'completed', 'failed', 'expired', 'cancelled')),
+    status TEXT NOT NULL CHECK (status IN ('submitted', 'processing', 'result_processing', 'completed', 'failed', 'expired', 'cancelled')),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
     submitted_at TIMESTAMP WITH TIME ZONE NOT NULL,
     completed_at TIMESTAMP WITH TIME ZONE,
@@ -711,13 +720,52 @@ CREATE TABLE IF NOT EXISTS feedback_synthesis_tracking (
     activity_days_at_last_synthesis INTEGER NOT NULL DEFAULT 0,
     last_synthesis_at TIMESTAMP WITH TIME ZONE,
     last_synthesis_output TEXT,
-    needs_checkin BOOLEAN NOT NULL DEFAULT FALSE
+    needs_checkin BOOLEAN NOT NULL DEFAULT FALSE,
+    checkin_response TEXT
 );
 
 COMMENT ON TABLE feedback_synthesis_tracking IS 'Tracks synthesis state for the user model pipeline (modular arithmetic on cumulative_activity_days)';
 COMMENT ON COLUMN feedback_synthesis_tracking.activity_days_at_last_synthesis IS 'Snapshot of users.cumulative_activity_days when synthesis last ran (modular arithmetic base)';
 COMMENT ON COLUMN feedback_synthesis_tracking.last_synthesis_output IS 'User model XML from previous synthesis for evolutionary refinement';
 COMMENT ON COLUMN feedback_synthesis_tracking.needs_checkin IS 'True when user model contains check-in topics for behavioral debrief';
+
+-- =====================================================================
+-- BILLING & STRIPE TABLES
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS billing_transactions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    transaction_type VARCHAR(20) NOT NULL,
+    amount_usd DECIMAL(12,6) NOT NULL,
+    balance_after DECIMAL(12,6) NOT NULL,
+    model_name VARCHAR(100),
+    input_tokens INTEGER,
+    output_tokens INTEGER,
+    cache_read_tokens INTEGER,
+    cache_write_tokens INTEGER,
+    stripe_payment_intent_id VARCHAR(255),
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+COMMENT ON TABLE billing_transactions IS 'Audit log of all billing events: usage charges, deposits, drips, refunds';
+
+CREATE INDEX IF NOT EXISTS idx_billing_txn_user_created ON billing_transactions(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_billing_txn_type ON billing_transactions(transaction_type)
+    WHERE transaction_type IN ('recharge_failed', 'deposit');
+
+CREATE TABLE IF NOT EXISTS stripe_webhook_events (
+    event_id VARCHAR(255) PRIMARY KEY,
+    event_type VARCHAR(100) NOT NULL,
+    processed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    processed_successfully BOOLEAN NOT NULL DEFAULT FALSE,
+    payload JSONB NOT NULL
+);
+
+COMMENT ON TABLE stripe_webhook_events IS 'Idempotency tracking for Stripe webhooks - prevents double-processing';
+
+CREATE INDEX IF NOT EXISTS idx_stripe_webhook_processed ON stripe_webhook_events(processed_at);
 
 -- =====================================================================
 -- PERMISSIONS
@@ -731,8 +779,10 @@ BEGIN
             user_activity_days, domain_knowledge_blocks, domain_knowledge_block_content,
             continuums, messages,
             memories, entities, extraction_batches, post_processing_batches,
-            feedback_signals, feedback_synthesis_tracking
+            feedback_signals, feedback_synthesis_tracking,
+            billing_transactions
         TO mira_dbuser;
+        GRANT SELECT, INSERT, UPDATE ON stripe_webhook_events TO mira_dbuser;
         GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO mira_dbuser;
     END IF;
 END
@@ -810,6 +860,11 @@ ALTER TABLE feedback_synthesis_tracking ENABLE ROW LEVEL SECURITY;
 CREATE POLICY feedback_synthesis_tracking_user_policy ON feedback_synthesis_tracking
     FOR ALL TO PUBLIC
     USING (user_id = current_setting('app.current_user_id')::uuid);
+
+ALTER TABLE billing_transactions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY billing_transactions_user_policy ON billing_transactions
+    FOR ALL TO PUBLIC
+    USING (user_id = current_setting('app.current_user_id', true)::uuid);
 
 -- Note: extraction_batches and post_processing_batches do NOT have RLS
 -- These are system tracking tables accessed by admin polling jobs

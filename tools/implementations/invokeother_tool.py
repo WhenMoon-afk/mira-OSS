@@ -79,7 +79,7 @@ class InvokeOtherTool(Tool):
         tool_names = sorted(catalog.keys())
 
         # Build description with inline catalog
-        desc_parts = ["Load tools on demand.\n\nAvailable tools:"]
+        desc_parts = ["Load additional tools on demand.\n\nAvailable tools:"]
         for name in tool_names:
             summary = catalog[name].split('\n')[0]
             desc_parts.append(f"- {name}: {summary}")
@@ -95,12 +95,12 @@ class InvokeOtherTool(Tool):
                     "load": {
                         "type": "array",
                         "items": enum_schema,
-                        "description": "Tools to load for this turn only. Auto-unloaded after."
+                        "description": "Tool names to make available for this turn only. Automatically removed from the tool list after the current response completes"
                     },
                     "load_for_rest_of_session": {
                         "type": "array",
                         "items": enum_schema,
-                        "description": "Tools to load permanently for this session. Use when you'll need a tool across multiple turns."
+                        "description": "Tool names to make available for the remainder of this conversation session. Use when the same tool is needed across multiple turns to avoid repeated loading"
                     }
                 },
                 "additionalProperties": False

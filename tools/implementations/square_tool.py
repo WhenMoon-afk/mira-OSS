@@ -228,9 +228,10 @@ SUPPORT OPERATIONS:
 
     def run(self, operation: str, **kwargs) -> Dict[str, Any]:
         """Execute a Square operation."""
-        # Check OAuth connection first (fail fast if not connected)
+        # Capture user_id for thread context propagation in run_in_executor()
         user_id = get_current_user_id()
-        credential_service = UserCredentialService(user_id)
+        # Check OAuth connection first (fail fast if not connected)
+        credential_service = UserCredentialService()
         oauth_token = credential_service.get_credential("oauth_token", "square")
 
         if not oauth_token:
@@ -241,7 +242,7 @@ SUPPORT OPERATIONS:
             }
 
         # Get client_id from tool config (needed by mcp_client to trigger OAuth)
-        config = self._get_tool_config(user_id)
+        config = self._get_tool_config()
         client_id = config.get("client_id")
 
         if not client_id:
@@ -416,8 +417,7 @@ SUPPORT OPERATIONS:
         **kwargs
     ) -> Dict[str, Any]:
         """Search customers by name, email, or phone."""
-        user_id = get_current_user_id()
-        config = self._get_tool_config(user_id)
+        config = self._get_tool_config()
 
         request: Dict[str, Any] = {
             "limit": limit or config.get("customer_search_limit", 50)
@@ -709,8 +709,7 @@ SUPPORT OPERATIONS:
         **kwargs
     ) -> Dict[str, Any]:
         """List customers with pagination."""
-        user_id = get_current_user_id()
-        config = self._get_tool_config(user_id)
+        config = self._get_tool_config()
 
         request: Dict[str, Any] = {
             "limit": min(limit or config.get("customer_search_limit", 50), 100)
@@ -843,8 +842,7 @@ SUPPORT OPERATIONS:
         if not start_at:
             raise ValueError("start_at is required")
 
-        user_id = get_current_user_id()
-        config = self._get_tool_config(user_id)
+        config = self._get_tool_config()
 
         # Default end time to 7 days from start
         if not end_at:
@@ -908,8 +906,7 @@ SUPPORT OPERATIONS:
         if not customer_id:
             raise ValueError("customer_id is required")
 
-        user_id = get_current_user_id()
-        config = self._get_tool_config(user_id)
+        config = self._get_tool_config()
 
         # Resolve customer ID if it's a name
         get_result = await self._get_customer(session, customer_id)
@@ -1078,8 +1075,7 @@ SUPPORT OPERATIONS:
         **kwargs
     ) -> Dict[str, Any]:
         """List bookings with filters."""
-        user_id = get_current_user_id()
-        config = self._get_tool_config(user_id)
+        config = self._get_tool_config()
 
         request: Dict[str, Any] = {
             "limit": min(limit or config.get("booking_fetch_limit", 100), 100)
@@ -1174,8 +1170,7 @@ SUPPORT OPERATIONS:
         **kwargs
     ) -> Dict[str, Any]:
         """List bookable team members."""
-        user_id = get_current_user_id()
-        config = self._get_tool_config(user_id)
+        config = self._get_tool_config()
 
         request: Dict[str, Any] = {}
 
@@ -1244,9 +1239,9 @@ SUPPORT OPERATIONS:
 
     # -------------------- HELPER METHODS --------------------
 
-    def _get_tool_config(self, user_id: str) -> Dict[str, Any]:
+    def _get_tool_config(self) -> Dict[str, Any]:
         """Get user's tool configuration."""
-        credential_service = UserCredentialService(user_id)
+        credential_service = UserCredentialService()
         config_json = credential_service.get_credential("tool_config", "square_tool")
 
         if not config_json:

@@ -1,0 +1,170 @@
+# MIRA Base Image
+# Heavy, stable dependencies that rarely change: system packages, Python libs,
+# ML models, Playwright. Rebuild only when requirements.txt changes.
+#
+# Build: docker build -t mira-base:latest -f deploy/docker/Dockerfile.base .
+# Then:  docker build -t mira:latest -f deploy/docker/Dockerfile .
+
+ARG VAULT_VERSION=1.18.3
+ARG S6_OVERLAY_VERSION=3.2.0.0
+
+# =============================================================================
+# Stage 1: Builder - Compile Python dependencies
+# =============================================================================
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3.12-venv \
+    python3.12-dev \
+    build-essential \
+    libpq-dev \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python3.12 -m venv /opt/mira/venv
+ENV PATH="/opt/mira/venv/bin:$PATH"
+
+# Upgrade pip
+RUN pip install --no-cache-dir --upgrade pip wheel setuptools
+
+# Copy requirements first for better cache utilization
+COPY requirements.txt /tmp/requirements.txt
+
+# Install PyTorch CPU-only (smaller than CUDA version)
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu
+
+# Install remaining dependencies
+RUN pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Install sentence-transformers separately (dependency resolution)
+RUN pip install --no-cache-dir sentence-transformers
+
+# Download spaCy model
+RUN python -m spacy download en_core_web_lg
+
+# Install TOAST log level into venv site-packages (.pth runs at interpreter startup)
+COPY deploy/_mira_log_levels.py /tmp/_mira_log_levels.py
+RUN SITE_PKG=$(python -c "import sysconfig; print(sysconfig.get_path('purelib'))") \
+    && cp /tmp/_mira_log_levels.py "$SITE_PKG/" \
+    && echo "import _mira_log_levels" > "$SITE_PKG/mira-log-levels.pth"
+
+# Pre-download embedding model to cache
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('MongoDB/mdbr-leaf-ir-asym')"
+
+
+# =============================================================================
+# Stage 2: Runtime - Base image with all services and dependencies
+# =============================================================================
+FROM ubuntu:24.04 AS runtime
+
+ARG VAULT_VERSION
+ARG S6_OVERLAY_VERSION
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# Labels
+LABEL org.opencontainers.image.title="MIRA Base"
+LABEL org.opencontainers.image.description="MIRA base image - system packages, Python deps, ML models"
+LABEL org.opencontainers.image.source="https://github.com/taylorsatula/botwithmemory"
+
+# Install runtime dependencies and services
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # PostgreSQL 17 repository setup
+    gnupg2 \
+    lsb-release \
+    wget \
+    curl \
+    ca-certificates \
+    xz-utils \
+    unzip \
+    sudo \
+    && echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add - \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    # Python runtime (no dev packages)
+    python3.12 \
+    python3.12-venv \
+    libpq5 \
+    # PostgreSQL 17 with pgvector
+    postgresql-17 \
+    postgresql-17-pgvector \
+    postgresql-contrib-17 \
+    # Valkey (Redis-compatible)
+    valkey \
+    # Playwright dependencies (subset needed for Chromium)
+    libnss3 \
+    libnspr4 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libcups2 \
+    libdrm2 \
+    libxkbcommon0 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxfixes3 \
+    libxrandr2 \
+    libgbm1 \
+    libpango-1.0-0 \
+    libcairo2 \
+    libasound2t64 \
+    libatspi2.0-0 \
+    # Utilities
+    jq \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /etc/valkey
+
+# Install s6-overlay for process supervision
+RUN case "${TARGETARCH}" in \
+        amd64) S6_ARCH="x86_64" ;; \
+        arm64) S6_ARCH="aarch64" ;; \
+        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac \
+    && curl -L "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz" | tar -Jxp -C / \
+    && curl -L "https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-${S6_ARCH}.tar.xz" | tar -Jxp -C /
+
+# Install HashiCorp Vault
+RUN case "${TARGETARCH}" in \
+        amd64) VAULT_ARCH="amd64" ;; \
+        arm64) VAULT_ARCH="arm64" ;; \
+        *) echo "Unsupported architecture: ${TARGETARCH}" && exit 1 ;; \
+    esac \
+    && curl -L "https://releases.hashicorp.com/vault/${VAULT_VERSION}/vault_${VAULT_VERSION}_linux_${VAULT_ARCH}.zip" -o /tmp/vault.zip \
+    && cd /tmp && unzip vault.zip && mv vault /usr/local/bin/ && rm vault.zip \
+    && chmod +x /usr/local/bin/vault
+
+# Create mira user for running application (let system assign UID)
+RUN useradd -m -s /bin/bash mira \
+    && mkdir -p /opt/mira/app /opt/mira/venv /opt/vault/data /opt/vault/config /var/lib/valkey \
+    && chown -R mira:mira /opt/mira /opt/vault /var/lib/valkey
+
+# Copy virtual environment from builder
+COPY --from=builder /opt/mira/venv /opt/mira/venv
+
+# Copy embedding model cache from builder
+COPY --from=builder /root/.cache/huggingface /home/mira/.cache/huggingface
+RUN chown -R mira:mira /home/mira/.cache
+
+# Install Playwright browser
+RUN /opt/mira/venv/bin/playwright install chromium \
+    && chown -R mira:mira /home/mira/.cache
+
+# Set up PostgreSQL data directory permissions
+RUN mkdir -p /var/lib/postgresql/17/main \
+    && chown -R postgres:postgres /var/lib/postgresql \
+    && chmod 700 /var/lib/postgresql/17/main
+
+# Environment variables
+ENV PATH="/opt/mira/venv/bin:$PATH"
+ENV VAULT_ADDR="http://127.0.0.1:8200"
+ENV S6_KEEP_ENV=1
+ENV S6_BEHAVIOUR_IF_STAGE2_FAILS=2

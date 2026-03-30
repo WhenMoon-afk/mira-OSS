@@ -9,13 +9,12 @@ import asyncio
 import logging
 import sys
 import os
-import signal
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from utils.logging_config import setup_colored_root_logging, setup_anthropic_sdk_logging
 setup_colored_root_logging(log_level=logging.WARNING, fmt='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-setup_anthropic_sdk_logging(log_dir="logs")
+setup_anthropic_sdk_logging(log_dir="/opt/mira/logs")
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +27,7 @@ from config.announcement import load_announcement
 from cns.api import data, actions, health, tool_config, update
 from cns.api import chat as chat_api
 from cns.api import files as files_api
+from cns.api import location
 from cns.api.base import APIError, create_error_response, generate_request_id
 from utils.scheduler_service import scheduler_service
 from utils.scheduled_tasks import initialize_all_scheduled_tasks
@@ -35,6 +35,7 @@ from utils.scheduled_tasks import initialize_all_scheduled_tasks
 # Set APScheduler loggers to DEBUG to suppress routine job execution logs
 logging.getLogger('apscheduler.executors.default').setLevel(logging.DEBUG)
 logging.getLogger('apscheduler.scheduler').setLevel(logging.DEBUG)
+# logging.getLogger('tools.implementations.imagegen_tool').setLevel(logging.DEBUG)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,12 @@ def ensure_single_user(app: FastAPI) -> None:
         result = session.execute_single("SELECT COUNT(*) as count FROM users")
         user_count = result['count']
 
+        # Detect offline tier (created by deploy when user chose offline mode)
+        offline_tier = session.execute_single(
+            "SELECT name FROM account_tiers WHERE name = 'offline'"
+        )
+        oss_default_tier = 'offline' if offline_tier else 'primary'
+
         if user_count > 1:
             print(f"\nERROR: Found {user_count} users")
             print("MIRA OSS operates in single-user mode only.")
@@ -64,6 +71,14 @@ def ensure_single_user(app: FastAPI) -> None:
             user = session.execute_single("SELECT id, email FROM users LIMIT 1")
             app.state.single_user_id = str(user['id'])
             app.state.user_email = user['email']
+
+            # OSS: user brings own API key, set balance high and default to correct tier
+            session.execute_update(
+                """UPDATE users SET balance_usd = 999999.00,
+                   llm_tier = CASE WHEN llm_tier NOT IN (SELECT name FROM account_tiers) THEN %(tier)s ELSE llm_tier END
+                   WHERE id = %(id)s""",
+                {'id': str(user['id']), 'tier': oss_default_tier}
+            )
 
             try:
                 from clients.vault_client import _ensure_vault_client
@@ -87,9 +102,9 @@ def ensure_single_user(app: FastAPI) -> None:
         user_id = str(uuid.uuid4())
 
         session.execute_update("""
-            INSERT INTO users (id, email, is_active, memory_manipulation_enabled)
-            VALUES (%(id)s, %(email)s, true, true)
-        """, {'id': user_id, 'email': default_email})
+            INSERT INTO users (id, email, is_active, memory_manipulation_enabled, balance_usd, llm_tier)
+            VALUES (%(id)s, %(email)s, true, true, 999999.00, %(tier)s)
+        """, {'id': user_id, 'email': default_email, 'tier': oss_default_tier})
 
         # Create the continuum (normally done during signup flow)
         continuum_id = str(uuid.uuid4())
@@ -148,18 +163,13 @@ def ensure_single_user(app: FastAPI) -> None:
     seed_lora_postgres(user_id)
     logger.info(f"Initialized feedback tracking for user {user_id}")
 
-    # Strip 'free' tier from internal_llm (OSS uses COF configs)
-    with session_manager.get_admin_session() as session:
-        session.execute_update("DELETE FROM internal_llm WHERE tier = 'free'")
-    logger.info("Stripped 'free' tier from internal_llm (OSS uses COF configs)")
-
     import secrets
     api_key = f"mira_{secrets.token_urlsafe(32)}"
 
     try:
         from clients.vault_client import _ensure_vault_client
         vault_client = _ensure_vault_client()
-        # Use patch to add mira_api without overwriting anthropic_key/provider_key
+        # Use patch to add mira_api without overwriting anthropic_key/openaicompat_key
         vault_client.client.secrets.kv.v2.patch(
             path='mira/api_keys',
             secret=dict(mira_api=api_key)
@@ -224,7 +234,7 @@ async def lifespan(app: FastAPI):
 
     # Load billing pricing cache and validate prices (skipped in OSS mode)
     try:
-        from billing.pricing import load_pricing_cache, build_config_lookup, ensure_internal_pricing_keys
+        from billing.pricing import load_pricing_cache, build_config_lookup, ensure_internal_pricing_keys, get_pricing_cache
 
         # 1. Seed: ensure internal_llm keys exist in usage_pricing (NULL prices)
         ensure_internal_pricing_keys()
@@ -238,15 +248,14 @@ async def lifespan(app: FastAPI):
         except ImportError:
             pass  # OSS mode
         except Exception as e:
-            from billing.pricing import get_pricing_cache
-            null_keys = get_pricing_cache().has_null_prices()
-            if null_keys:
-                raise RuntimeError(
-                    f"Price validation failed AND {len(null_keys)} pricing entries still have NULL prices: "
-                    f"{null_keys}. Billing cannot function. Either set manual overrides in usage_pricing "
-                    f"or ensure OpenRouter is reachable at startup."
-                ) from e
-            logger.warning(f"Price validation failed (non-fatal, all entries have overrides): {e}")
+            logger.warning(f"Price validation failed (non-fatal, billing will reject unpriced models at call time): {e}")
+        # Warn about any remaining NULL-priced entries (they'll fail-fast at billing time)
+        null_keys = get_pricing_cache().has_null_prices()
+        if null_keys:
+            logger.warning(
+                f"{len(null_keys)} pricing entries have NULL prices and will reject usage at call time: "
+                f"{null_keys}. Set manual overrides in usage_pricing or ensure OpenRouter is reachable."
+            )
         # 4. Lookup: build reverse map for runtime pricing_key resolution
         build_config_lookup()
     except ImportError:
@@ -545,6 +554,12 @@ def create_app() -> FastAPI:
     app.include_router(actions.router, prefix="/v0/api", tags=["actions"])
     app.include_router(tool_config.router, prefix="/v0/api", tags=["tool_config"])
     app.include_router(files_api.router, prefix="/v0/api", tags=["files"])
+    app.include_router(location.router, prefix="/v0/api", tags=["location"])
+
+    # OSS simple chat UI (activates when full web UI is absent)
+    if not Path("web/chat").exists():
+        from cns.api import oss_ui
+        app.include_router(oss_ui.router, tags=["oss-ui"])
 
     # Billing routes (skipped in OSS mode)
     try:
@@ -564,27 +579,6 @@ def create_app() -> FastAPI:
     return app
 
 
-async def shutdown_handler(loop, signal=None):
-    """Handle shutdown gracefully."""
-    if signal:
-        logger.info(f"Received exit signal {signal.name}...")
-    else:
-        logger.info("Shutdown requested...")
-    
-    # Cancel all running tasks
-    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-    logger.info(f"Cancelling {len(tasks)} outstanding tasks")
-    
-    for task in tasks:
-        task.cancel()
-    
-    # Wait for all tasks to complete with timeout
-    await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Stop the event loop
-    loop.stop()
-
-
 def main():
     """Main entry point."""
 
@@ -594,10 +588,10 @@ def main():
                        help='Enable firehose mode: log all LLM API calls to firehose_output.json for debugging')
     args = parser.parse_args()
 
-    # Store firehose flag in config for LLMProvider to access
-    config.system._firehose_enabled = args.firehose
+    # Firehose: toggle live with kill -USR1 $(systemctl show mira -p MainPID --value)
     if args.firehose:
-        logger.info("Firehose mode enabled - LLM API calls will be logged to firehose_output.json")
+        from clients.llm_provider import _toggle_firehose
+        _toggle_firehose(None, None)
 
     try:
         # Set logging level
@@ -631,25 +625,8 @@ def main():
         else:
             hypercorn_config.workers = config.api_server.workers
         
-        # Create event loop and set up signal handlers
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
-        # Install signal handlers for graceful shutdown
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            loop.add_signal_handler(
-                sig, 
-                lambda s=sig: asyncio.create_task(shutdown_handler(loop, signal=s))
-            )
-        
-        # Run the server
-        try:
-            loop.run_until_complete(hypercorn.asyncio.serve(create_app(), hypercorn_config))
-        except asyncio.CancelledError:
-            logger.info("Server task cancelled")
-        finally:
-            loop.close()
-            logger.info("Event loop closed")
+        # Run the server — Hypercorn manages SIGTERM/SIGINT natively
+        asyncio.run(hypercorn.asyncio.serve(create_app(), hypercorn_config))
         
     except Exception as e:
         logger.error(f"Failed to start: {e}")

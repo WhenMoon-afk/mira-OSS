@@ -1,4 +1,4 @@
-Generate a first-person memory trace of the following conversation segment using the designated three-component format.
+Generate a first-person memory trace of the following conversation segment.
 
 ## Recent Memory Traces (for narrative continuity):
 {previous_summaries}
@@ -8,17 +8,6 @@ Generate a first-person memory trace of the following conversation segment using
 
 ## Tools Used:
 {tools_used}
-
-Generate your response in exactly this format:
-
-```
-[2-3 sentence first-person memory trace. Use "I" and "we". Capture the logic of decisions, not just outcomes. Use absolute dates (Jan 8).]
-
-<mira:display_title>[Your 8-word or shorter telegraphic title here]</mira:display_title>
-<mira:complexity>[0.5, 1, 2, or 3 based on cognitive complexity]</mira:complexity>
-```
-
-Remember:
 
 Remember:
 - **Voice**: Collaborative/Intersubjective ("Taylor identified X, so we pivoted to Y").

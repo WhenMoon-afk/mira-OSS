@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Tuple, TypedDict
 from uuid import UUID
 
+from cns.core.message import preprocess_content_blocks
 from lt_memory.models import ProcessingChunk, MemoryContext
 from lt_memory.db_access import LTMemoryDB
 from config.config import ExtractionConfig
@@ -337,30 +338,11 @@ class ExtractionEngine:
 
             content = getattr(msg, "content", "")
 
-            # Handle structured content (list of content blocks)
-            if isinstance(content, list):
-                text_parts = []
-                for item in content:
-                    if isinstance(item, dict):
-                        item_type = item.get("type")
-
-                        if item_type == "text":
-                            text_parts.append(item.get("text", ""))
-
-                        elif item_type == "image_url":
-                            # Skip images (too expensive for memory extraction)
-                            continue
-
-                        elif item_type == "tool_result":
-                            # Include tool results for context
-                            tool_name = item.get("tool_name", "tool")
-                            result = item.get("content", "")
-                            text_parts.append(f"[{tool_name} result: {result}]")
-
-                    elif isinstance(item, str):
-                        text_parts.append(item)
-
-                content = " ".join(text_parts)
+            # Preprocess structured content (strips media, truncates tool results)
+            preprocessed = preprocess_content_blocks(content)
+            content = " ".join(preprocessed.text_parts)
+            if preprocessed.image_count > 0:
+                content = f"[{preprocessed.image_count} image(s) shared] {content}".strip()
 
             # Format with XML tags matching system prompt style
             if role == "user":

@@ -10,7 +10,6 @@
 # Initialize configuration state (using simple variables for Bash 3.x compatibility)
 CONFIG_ANTHROPIC_KEY=""
 CONFIG_ANTHROPIC_BATCH_KEY=""
-CONFIG_PROVIDER_KEY=""
 CONFIG_KAGI_KEY=""
 CONFIG_DB_PASSWORD=""
 CONFIG_INSTALL_PLAYWRIGHT=""
@@ -18,21 +17,23 @@ CONFIG_INSTALL_SYSTEMD=""
 CONFIG_START_MIRA_NOW=""
 CONFIG_OFFLINE_MODE=""
 CONFIG_OLLAMA_MODEL=""
-STATUS_ANTHROPIC=""
-STATUS_ANTHROPIC_BATCH=""
-STATUS_PROVIDER_KEY=""
+CONFIG_OLLAMA_SUBCORTICAL_MODEL=""
+CONFIG_CHAT_PROVIDER_TYPE=""
+CONFIG_CHAT_ENDPOINT=""
+CONFIG_CHAT_API_KEY=""
+CONFIG_CHAT_MODEL=""
+CONFIG_SUBCORTICAL_ENDPOINT=""
+CONFIG_SUBCORTICAL_API_KEY=""
+CONFIG_SUBCORTICAL_MODEL=""
+STATUS_CHAT_PROVIDER=""
+STATUS_CHAT_KEY=""
+STATUS_SUBCORTICAL=""
+STATUS_SUBCORTICAL_KEY=""
 STATUS_KAGI=""
 STATUS_DB_PASSWORD=""
 STATUS_PLAYWRIGHT=""
 STATUS_SYSTEMD=""
 STATUS_MIRA_SERVICE=""
-CONFIG_PROVIDER_NAME=""
-CONFIG_PROVIDER_ENDPOINT=""
-CONFIG_PROVIDER_KEY_PREFIX=""
-CONFIG_PROVIDER_MODEL=""
-STATUS_PROVIDER=""
-CONFIG_UPDATE_CHECK=""
-STATUS_UPDATE_CHECK=""
 
 clear
 echo -e "${BOLD}${CYAN}"
@@ -234,275 +235,210 @@ fi
 
 print_success "Port check passed"
 
-print_header "API Key Configuration"
+print_header "LLM Provider Configuration"
 
-# Offline mode option
-echo -e "${BOLD}${BLUE}Run Mode${RESET}"
-print_info "MIRA can run offline using local Ollama - no API keys needed."
-print_info "To switch to online mode later, just add API keys to Vault."
-read -p "$(echo -e ${CYAN}Run offline only?${RESET}) (y/n, default=n): " OFFLINE_MODE_INPUT
-if [[ "$OFFLINE_MODE_INPUT" =~ ^[Yy](es)?$ ]]; then
+echo -e "${BOLD}${BLUE}LLM Provider${RESET}"
+read -p "$(echo -e ${CYAN}Use local Ollama?${RESET}) (y/n, default=n): " USE_OLLAMA_INPUT
+if [[ "$USE_OLLAMA_INPUT" =~ ^[Yy](es)?$ ]]; then
     CONFIG_OFFLINE_MODE="yes"
-    # Use placeholder keys so Vault validation passes - these won't actually work
+    # Placeholder keys so Vault validation passes
     CONFIG_ANTHROPIC_KEY="OFFLINE_MODE_PLACEHOLDER"
     CONFIG_ANTHROPIC_BATCH_KEY="OFFLINE_MODE_PLACEHOLDER"
-    CONFIG_PROVIDER_KEY="OFFLINE_MODE_PLACEHOLDER"
-    CONFIG_KAGI_KEY=""
-    STATUS_ANTHROPIC="${DIM}Offline mode${RESET}"
-    STATUS_ANTHROPIC_BATCH="${DIM}Offline mode${RESET}"
-    STATUS_PROVIDER_KEY="${DIM}Offline mode${RESET}"
-    STATUS_KAGI="${DIM}Offline mode${RESET}"
+    STATUS_CHAT_PROVIDER="${CHECKMARK} Local Ollama"
+    STATUS_CHAT_KEY="${DIM}N/A (Ollama)${RESET}"
+    STATUS_SUBCORTICAL="${DIM}N/A (Ollama)${RESET}"
+    STATUS_SUBCORTICAL_KEY="${DIM}N/A (Ollama)${RESET}"
 
-    # Ask for model name
-    read -p "$(echo -e ${CYAN}Ollama model to use${RESET}) (default: qwen3:1.7b): " OLLAMA_MODEL_INPUT
+    # Main model
+    echo ""
+    echo -e "${DIM}   The main model handles chat responses and background processing${RESET}"
+    echo -e "${DIM}   (memory extraction, summarization, synthesis).${RESET}"
+    read -p "$(echo -e ${CYAN}Main Ollama model${RESET}) (default: qwen3:1.7b): " OLLAMA_MODEL_INPUT
     if [ -z "$OLLAMA_MODEL_INPUT" ]; then
         CONFIG_OLLAMA_MODEL="qwen3:1.7b"
     else
         CONFIG_OLLAMA_MODEL="$OLLAMA_MODEL_INPUT"
     fi
 
-    # Store model name for later config patching (after files are copied)
+    # Subcortical model (runs on every message, benefits from speed)
+    echo ""
+    echo -e "${DIM}   The subcortical model runs on every message for query expansion${RESET}"
+    echo -e "${DIM}   and memory retrieval. A smaller/faster model works well here.${RESET}"
+    read -p "$(echo -e ${CYAN}Subcortical Ollama model${RESET}) (default: same as main): " OLLAMA_SUBCORTICAL_INPUT
+    if [ -z "$OLLAMA_SUBCORTICAL_INPUT" ]; then
+        CONFIG_OLLAMA_SUBCORTICAL_MODEL="$CONFIG_OLLAMA_MODEL"
+    else
+        CONFIG_OLLAMA_SUBCORTICAL_MODEL="$OLLAMA_SUBCORTICAL_INPUT"
+    fi
+
     CONFIG_PATCH_OLLAMA_MODEL="$CONFIG_OLLAMA_MODEL"
 else
     CONFIG_OFFLINE_MODE="no"
 
-    # Anthropic API Key (required for online mode)
-    echo -e "${BOLD}${BLUE}1. Anthropic API Key${RESET} ${DIM}(REQUIRED - console.anthropic.com/settings/keys)${RESET}"
-    while true; do
-        read -p "$(echo -e ${CYAN}Enter key${RESET}) (or Enter to skip): " ANTHROPIC_KEY_INPUT
-        if [ -z "$ANTHROPIC_KEY_INPUT" ]; then
-            CONFIG_ANTHROPIC_KEY="PLACEHOLDER_SET_THIS_LATER"
-            STATUS_ANTHROPIC="${WARNING} NOT SET - You must configure this before using MIRA"
-            break
-        fi
-        # Basic validation - check if it looks like an Anthropic key
-        if [[ $ANTHROPIC_KEY_INPUT =~ ^sk-ant- ]]; then
-            CONFIG_ANTHROPIC_KEY="$ANTHROPIC_KEY_INPUT"
-            STATUS_ANTHROPIC="${CHECKMARK} Configured"
-            break
-        else
-            print_warning "This doesn't look like a valid Anthropic API key (should start with 'sk-ant-')"
-            read -p "$(echo -e ${YELLOW}Continue anyway?${RESET}) (y=yes, n=exit, t=try again): " CONFIRM
-            if [[ "$CONFIRM" =~ ^[Yy](es)?$ ]]; then
-                CONFIG_ANTHROPIC_KEY="$ANTHROPIC_KEY_INPUT"
-                STATUS_ANTHROPIC="${CHECKMARK} Configured (unvalidated)"
-                break
-            elif [[ "$CONFIRM" =~ ^[Tt](ry)?$ ]]; then
-                continue
-            else
-                CONFIG_ANTHROPIC_KEY="PLACEHOLDER_SET_THIS_LATER"
-                STATUS_ANTHROPIC="${WARNING} NOT SET"
-                break
-            fi
-        fi
-    done
+    # Chat Provider
+    echo -e "${BOLD}${BLUE}1. Chat Provider${RESET}"
+    echo -e "${DIM}   Pick your main chat provider:${RESET}"
+    echo "     1. Anthropic (default)"
+    echo "     2. Other (OpenAI-compatible endpoint)"
+    read -p "$(echo -e ${CYAN}Select provider${RESET}) [1-2, default=1]: " CHAT_PROVIDER_CHOICE
 
-    # Anthropic Batch API Key (optional - for background memory processing)
-    echo -e "${BOLD}${BLUE}1b. Anthropic Batch API Key${RESET} ${DIM}(OPTIONAL - separate key for batch operations)${RESET}"
-    echo -e "${DIM}    Leave blank to use the same key as above. Separate keys allow independent rate limits and cost tracking.${RESET}"
-    while true; do
-        read -p "$(echo -e ${CYAN}Enter batch key${RESET}) (or Enter to use main key): " ANTHROPIC_BATCH_KEY_INPUT
-        if [ -z "$ANTHROPIC_BATCH_KEY_INPUT" ]; then
-            # Use same key as main Anthropic key
-            CONFIG_ANTHROPIC_BATCH_KEY="$CONFIG_ANTHROPIC_KEY"
-            STATUS_ANTHROPIC_BATCH="${DIM}Using main Anthropic key${RESET}"
-            break
-        fi
-        # Basic validation - check if it looks like an Anthropic key
-        if [[ $ANTHROPIC_BATCH_KEY_INPUT =~ ^sk-ant- ]]; then
-            CONFIG_ANTHROPIC_BATCH_KEY="$ANTHROPIC_BATCH_KEY_INPUT"
-            STATUS_ANTHROPIC_BATCH="${CHECKMARK} Configured (separate key)"
-            break
-        else
-            print_warning "This doesn't look like a valid Anthropic API key (should start with 'sk-ant-')"
-            read -p "$(echo -e ${YELLOW}Continue anyway?${RESET}) (y=yes, n=use main key, t=try again): " CONFIRM
-            if [[ "$CONFIRM" =~ ^[Yy](es)?$ ]]; then
-                CONFIG_ANTHROPIC_BATCH_KEY="$ANTHROPIC_BATCH_KEY_INPUT"
-                STATUS_ANTHROPIC_BATCH="${CHECKMARK} Configured (unvalidated)"
-                break
-            elif [[ "$CONFIRM" =~ ^[Tt](ry)?$ ]]; then
-                continue
-            else
-                CONFIG_ANTHROPIC_BATCH_KEY="$CONFIG_ANTHROPIC_KEY"
-                STATUS_ANTHROPIC_BATCH="${DIM}Using main Anthropic key${RESET}"
-                break
-            fi
-        fi
-    done
-
-    # Generic Provider Selection (for fast inference - OpenAI-compatible)
-    echo -e "${BOLD}${BLUE}2. Generic Provider${RESET} ${DIM}(for fast inference - OpenAI-compatible)${RESET}"
-    echo ""
-    echo -e "${DIM}   ╭─────────────────────────────────────────────────────────────────────╮${RESET}"
-    echo -e "${DIM}   │${RESET} ${YELLOW}⚡ PERFORMANCE NOTE:${RESET} This provider handles internal LLM tasks     ${DIM}│${RESET}"
-    echo -e "${DIM}   │${RESET}    (fingerprinting, memory extraction) that run frequently.         ${DIM}│${RESET}"
-    echo -e "${DIM}   │${RESET}                                                                     ${DIM}│${RESET}"
-    echo -e "${DIM}   │${RESET}    Groq is recommended for its ${BOLD}ultra-low latency${RESET} and ${BOLD}high tokens${RESET}   ${DIM}│${RESET}"
-    echo -e "${DIM}   │${RESET}    ${BOLD}per second${RESET}. Choose a provider optimized for speed, not just     ${DIM}│${RESET}"
-    echo -e "${DIM}   │${RESET}    model quality—these tasks benefit more from fast inference.      ${DIM}│${RESET}"
-    echo -e "${DIM}   ╰─────────────────────────────────────────────────────────────────────╯${RESET}"
-    echo ""
-    echo -e "${DIM}   Select your preferred provider:${RESET}"
-    echo "     1. Groq (default, recommended for speed)"
-    echo "     2. OpenRouter"
-    echo "     3. Together AI"
-    echo "     4. Fireworks AI"
-    echo "     5. Cerebras"
-    echo "     6. SambaNova"
-    echo "     7. Other (custom endpoint)"
-    read -p "$(echo -e ${CYAN}Select provider${RESET}) [1-7, default=1]: " PROVIDER_CHOICE
-
-    # Set provider-specific values based on selection
-    case "${PROVIDER_CHOICE:-1}" in
-        1)
-            CONFIG_PROVIDER_NAME="Groq"
-            CONFIG_PROVIDER_ENDPOINT="https://api.groq.com/openai/v1/chat/completions"
-            CONFIG_PROVIDER_KEY_PREFIX="gsk_"
-            ;;
+    case "${CHAT_PROVIDER_CHOICE:-1}" in
         2)
-            CONFIG_PROVIDER_NAME="OpenRouter"
-            CONFIG_PROVIDER_ENDPOINT="https://openrouter.ai/api/v1/chat/completions"
-            CONFIG_PROVIDER_KEY_PREFIX="sk-or-"
-            ;;
-        3)
-            CONFIG_PROVIDER_NAME="Together AI"
-            CONFIG_PROVIDER_ENDPOINT="https://api.together.xyz/v1/chat/completions"
-            CONFIG_PROVIDER_KEY_PREFIX=""
-            ;;
-        4)
-            CONFIG_PROVIDER_NAME="Fireworks AI"
-            CONFIG_PROVIDER_ENDPOINT="https://api.fireworks.ai/inference/v1/chat/completions"
-            CONFIG_PROVIDER_KEY_PREFIX=""
-            ;;
-        5)
-            CONFIG_PROVIDER_NAME="Cerebras"
-            CONFIG_PROVIDER_ENDPOINT="https://api.cerebras.ai/v1/chat/completions"
-            CONFIG_PROVIDER_KEY_PREFIX=""
-            ;;
-        6)
-            CONFIG_PROVIDER_NAME="SambaNova"
-            CONFIG_PROVIDER_ENDPOINT="https://api.sambanova.ai/v1/chat/completions"
-            CONFIG_PROVIDER_KEY_PREFIX=""
-            ;;
-        7)
-            CONFIG_PROVIDER_NAME="Custom"
-            read -p "$(echo -e ${CYAN}Enter custom endpoint URL${RESET}): " CONFIG_PROVIDER_ENDPOINT
-            CONFIG_PROVIDER_KEY_PREFIX=""
+            CONFIG_CHAT_PROVIDER_TYPE="generic"
+
+            # Generic endpoint URL
+            echo ""
+            read -p "$(echo -e ${CYAN}Endpoint URL${RESET}) [default: https://openrouter.ai/api/v1/chat/completions]: " CHAT_ENDPOINT_INPUT
+            CONFIG_CHAT_ENDPOINT="${CHAT_ENDPOINT_INPUT:-https://openrouter.ai/api/v1/chat/completions}"
+
+            # API key
+            echo -e "${BOLD}${BLUE}   Chat API Key${RESET}"
+            while true; do
+                read -p "$(echo -e ${CYAN}Enter key${RESET}) (or Enter to skip): " CHAT_KEY_INPUT
+                if [ -z "$CHAT_KEY_INPUT" ]; then
+                    CONFIG_CHAT_API_KEY="PLACEHOLDER_SET_THIS_LATER"
+                    STATUS_CHAT_KEY="${WARNING} NOT SET - You must configure this before using MIRA"
+                    break
+                fi
+                CONFIG_CHAT_API_KEY="$CHAT_KEY_INPUT"
+                STATUS_CHAT_KEY="${CHECKMARK} Configured"
+                break
+            done
+
+            # Model
+            read -p "$(echo -e ${CYAN}Model name${RESET}) [default: qwen/qwen3.5-397b-a17b]: " CHAT_MODEL_INPUT
+            CONFIG_CHAT_MODEL="${CHAT_MODEL_INPUT:-qwen/qwen3.5-397b-a17b}"
+
+            # Anthropic placeholders (background tasks won't work without real keys)
+            CONFIG_ANTHROPIC_KEY="PLACEHOLDER_NOT_CONFIGURED"
+            CONFIG_ANTHROPIC_BATCH_KEY="PLACEHOLDER_NOT_CONFIGURED"
+
+            STATUS_CHAT_PROVIDER="${CHECKMARK} Generic (${CONFIG_CHAT_ENDPOINT})"
+
             ;;
         *)
-            # Invalid selection - default to Groq
-            CONFIG_PROVIDER_NAME="Groq"
-            CONFIG_PROVIDER_ENDPOINT="https://api.groq.com/openai/v1/chat/completions"
-            CONFIG_PROVIDER_KEY_PREFIX="gsk_"
+            CONFIG_CHAT_PROVIDER_TYPE="anthropic"
+
+            # Anthropic API Key
+            echo ""
+            echo -e "${BOLD}${BLUE}   Anthropic API Key${RESET} ${DIM}(console.anthropic.com/settings/keys)${RESET}"
+            while true; do
+                read -p "$(echo -e ${CYAN}Enter key${RESET}) (or Enter to skip): " ANTHROPIC_KEY_INPUT
+                if [ -z "$ANTHROPIC_KEY_INPUT" ]; then
+                    CONFIG_ANTHROPIC_KEY="PLACEHOLDER_SET_THIS_LATER"
+                    CONFIG_CHAT_API_KEY=""
+                    STATUS_CHAT_KEY="${WARNING} NOT SET - You must configure this before using MIRA"
+                    break
+                fi
+                if [[ $ANTHROPIC_KEY_INPUT =~ ^sk-ant- ]]; then
+                    CONFIG_ANTHROPIC_KEY="$ANTHROPIC_KEY_INPUT"
+                    CONFIG_CHAT_API_KEY="$ANTHROPIC_KEY_INPUT"
+                    STATUS_CHAT_KEY="${CHECKMARK} Configured"
+                    break
+                else
+                    print_warning "This doesn't look like a valid Anthropic API key (should start with 'sk-ant-')"
+                    read -p "$(echo -e ${YELLOW}Continue anyway?${RESET}) (y=yes, n=exit, t=try again): " CONFIRM
+                    if [[ "$CONFIRM" =~ ^[Yy](es)?$ ]]; then
+                        CONFIG_ANTHROPIC_KEY="$ANTHROPIC_KEY_INPUT"
+                        CONFIG_CHAT_API_KEY="$ANTHROPIC_KEY_INPUT"
+                        STATUS_CHAT_KEY="${CHECKMARK} Configured (unvalidated)"
+                        break
+                    elif [[ "$CONFIRM" =~ ^[Tt](ry)?$ ]]; then
+                        continue
+                    else
+                        CONFIG_ANTHROPIC_KEY="PLACEHOLDER_SET_THIS_LATER"
+                        CONFIG_CHAT_API_KEY=""
+                        STATUS_CHAT_KEY="${WARNING} NOT SET"
+                        break
+                    fi
+                fi
+            done
+
+            # Model (default: claude-opus-4-6)
+            read -p "$(echo -e ${CYAN}Model${RESET}) [default: claude-opus-4-6]: " CHAT_MODEL_INPUT
+            CONFIG_CHAT_MODEL="${CHAT_MODEL_INPUT:-claude-opus-4-6}"
+
+            # Batch API Key (optional)
+            echo -e "${BOLD}${BLUE}   Batch API Key${RESET} ${DIM}(OPTIONAL - separate key for batch operations)${RESET}"
+            echo -e "${DIM}    Leave blank to use the same key. Separate keys allow independent rate limits.${RESET}"
+            while true; do
+                read -p "$(echo -e ${CYAN}Enter batch key${RESET}) (or Enter to use main key): " ANTHROPIC_BATCH_KEY_INPUT
+                if [ -z "$ANTHROPIC_BATCH_KEY_INPUT" ]; then
+                    CONFIG_ANTHROPIC_BATCH_KEY="$CONFIG_ANTHROPIC_KEY"
+                    break
+                fi
+                if [[ $ANTHROPIC_BATCH_KEY_INPUT =~ ^sk-ant- ]]; then
+                    CONFIG_ANTHROPIC_BATCH_KEY="$ANTHROPIC_BATCH_KEY_INPUT"
+                    break
+                else
+                    print_warning "This doesn't look like a valid Anthropic API key (should start with 'sk-ant-')"
+                    read -p "$(echo -e ${YELLOW}Continue anyway?${RESET}) (y=yes, n=use main key, t=try again): " CONFIRM
+                    if [[ "$CONFIRM" =~ ^[Yy](es)?$ ]]; then
+                        CONFIG_ANTHROPIC_BATCH_KEY="$ANTHROPIC_BATCH_KEY_INPUT"
+                        break
+                    elif [[ "$CONFIRM" =~ ^[Tt](ry)?$ ]]; then
+                        continue
+                    else
+                        CONFIG_ANTHROPIC_BATCH_KEY="$CONFIG_ANTHROPIC_KEY"
+                        break
+                    fi
+                fi
+            done
+
+            STATUS_CHAT_PROVIDER="${CHECKMARK} Anthropic"
             ;;
     esac
 
-    STATUS_PROVIDER="${CHECKMARK} ${CONFIG_PROVIDER_NAME}"
+    # Subcortical
+    echo -e "${BOLD}${BLUE}2. Subcortical${RESET}"
+    echo -e "${DIM}   Runs on every message for memory retrieval (query expansion, entity extraction).${RESET}"
+    echo -e "${DIM}   A fast inference provider like Groq works best here.${RESET}"
+    echo ""
+    read -p "$(echo -e ${CYAN}Endpoint URL${RESET}) [default: https://api.groq.com/openai/v1/chat/completions]: " SUBCORTICAL_ENDPOINT_INPUT
+    CONFIG_SUBCORTICAL_ENDPOINT="${SUBCORTICAL_ENDPOINT_INPUT:-https://api.groq.com/openai/v1/chat/completions}"
+    STATUS_SUBCORTICAL="${CHECKMARK} ${CONFIG_SUBCORTICAL_ENDPOINT}"
 
-    # For non-Groq providers, prompt for model name
-    if [ "$CONFIG_PROVIDER_NAME" != "Groq" ]; then
-        echo ""
-        print_info "MIRA needs a model name compatible with ${CONFIG_PROVIDER_NAME}."
-        print_info ""
-        # Show provider-specific examples
-        case "$CONFIG_PROVIDER_NAME" in
-            "OpenRouter")
-                print_info "OpenRouter free models (append :free for free tier):"
-                print_info "  - meta-llama/llama-3.3-70b-instruct:free"
-                print_info "  - qwen/qwen-2.5-72b-instruct:free"
-                print_info "  - deepseek/deepseek-chat-v3-0324:free"
-                print_info "  See: https://openrouter.ai/models?q=free"
-                DEFAULT_MODEL="meta-llama/llama-3.3-70b-instruct:free"
-                ;;
-            "Together AI")
-                print_info "Together AI models:"
-                print_info "  - meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
-                print_info "  - Qwen/Qwen2.5-72B-Instruct-Turbo"
-                print_info "  See: https://docs.together.ai/docs/chat-models"
-                DEFAULT_MODEL="meta-llama/Meta-Llama-3.1-70B-Instruct-Turbo"
-                ;;
-            "Fireworks AI")
-                print_info "Fireworks AI models:"
-                print_info "  - accounts/fireworks/models/llama-v3p1-70b-instruct"
-                print_info "  - accounts/fireworks/models/qwen2p5-72b-instruct"
-                print_info "  See: https://fireworks.ai/models"
-                DEFAULT_MODEL="accounts/fireworks/models/llama-v3p1-70b-instruct"
-                ;;
-            "Cerebras")
-                print_info "Cerebras models:"
-                print_info "  - llama-3.3-70b"
-                print_info "  See: https://cerebras.ai/inference"
-                DEFAULT_MODEL="llama-3.3-70b"
-                ;;
-            "SambaNova")
-                print_info "SambaNova models:"
-                print_info "  - Meta-Llama-3.1-70B-Instruct"
-                print_info "  See: https://community.sambanova.ai/docs"
-                DEFAULT_MODEL="Meta-Llama-3.1-70B-Instruct"
-                ;;
-            *)
-                print_info "Enter your provider's model name."
-                DEFAULT_MODEL=""
-                ;;
-        esac
-        echo ""
-        if [ -n "$DEFAULT_MODEL" ]; then
-            read -p "$(echo -e ${CYAN}Model name${RESET}) [default: ${DEFAULT_MODEL}]: " MODEL_INPUT
-            CONFIG_PROVIDER_MODEL="${MODEL_INPUT:-$DEFAULT_MODEL}"
-        else
-            read -p "$(echo -e ${CYAN}Model name${RESET}): " CONFIG_PROVIDER_MODEL
-        fi
-        echo ""
-    fi
-
-    # Generic Provider API Key (required for online mode)
-    echo -e "${BOLD}${BLUE}2b. ${CONFIG_PROVIDER_NAME} API Key${RESET} ${DIM}(REQUIRED)${RESET}"
+    # Subcortical API Key
+    echo -e "${BOLD}${BLUE}   Subcortical API Key${RESET}"
     while true; do
-        read -p "$(echo -e ${CYAN}Enter key${RESET}) (or Enter to skip): " GROQ_KEY_INPUT
-        if [ -z "$GROQ_KEY_INPUT" ]; then
-            CONFIG_PROVIDER_KEY="PLACEHOLDER_SET_THIS_LATER"
-            STATUS_PROVIDER_KEY="${WARNING} NOT SET - You must configure this before using MIRA"
+        read -p "$(echo -e ${CYAN}Enter key${RESET}) (or Enter to skip): " SUBCORTICAL_KEY_INPUT
+        if [ -z "$SUBCORTICAL_KEY_INPUT" ]; then
+            CONFIG_SUBCORTICAL_API_KEY="PLACEHOLDER_SET_THIS_LATER"
+            STATUS_SUBCORTICAL_KEY="${WARNING} NOT SET - You must configure this before using MIRA"
             break
         fi
-        # Validate key prefix if provider has one
-        if [ -n "$CONFIG_PROVIDER_KEY_PREFIX" ]; then
-            if [[ $GROQ_KEY_INPUT =~ ^${CONFIG_PROVIDER_KEY_PREFIX} ]]; then
-                CONFIG_PROVIDER_KEY="$GROQ_KEY_INPUT"
-                STATUS_PROVIDER_KEY="${CHECKMARK} Configured"
+        # Validate gsk_ prefix if Groq endpoint detected
+        if [[ "$CONFIG_SUBCORTICAL_ENDPOINT" == *"groq.com"* ]] && [[ ! $SUBCORTICAL_KEY_INPUT =~ ^gsk_ ]]; then
+            print_warning "This doesn't look like a valid Groq API key (should start with 'gsk_')"
+            read -p "$(echo -e ${YELLOW}Continue anyway?${RESET}) (y=yes, t=try again): " CONFIRM
+            if [[ "$CONFIRM" =~ ^[Yy](es)?$ ]]; then
+                CONFIG_SUBCORTICAL_API_KEY="$SUBCORTICAL_KEY_INPUT"
+                STATUS_SUBCORTICAL_KEY="${CHECKMARK} Configured (unvalidated)"
                 break
-            else
-                print_warning "This doesn't look like a valid ${CONFIG_PROVIDER_NAME} API key (should start with '${CONFIG_PROVIDER_KEY_PREFIX}')"
-                read -p "$(echo -e ${YELLOW}Continue anyway?${RESET}) (y=yes, n=exit, t=try again): " CONFIRM
-                if [[ "$CONFIRM" =~ ^[Yy](es)?$ ]]; then
-                    CONFIG_PROVIDER_KEY="$GROQ_KEY_INPUT"
-                    STATUS_PROVIDER_KEY="${CHECKMARK} Configured (unvalidated)"
-                    break
-                elif [[ "$CONFIRM" =~ ^[Tt](ry)?$ ]]; then
-                    continue
-                else
-                    CONFIG_PROVIDER_KEY="PLACEHOLDER_SET_THIS_LATER"
-                    STATUS_PROVIDER_KEY="${WARNING} NOT SET"
-                    break
-                fi
+            elif [[ "$CONFIRM" =~ ^[Tt](ry)?$ ]]; then
+                continue
             fi
         else
-            # No key prefix validation for this provider
-            CONFIG_PROVIDER_KEY="$GROQ_KEY_INPUT"
-            STATUS_PROVIDER_KEY="${CHECKMARK} Configured"
+            CONFIG_SUBCORTICAL_API_KEY="$SUBCORTICAL_KEY_INPUT"
+            STATUS_SUBCORTICAL_KEY="${CHECKMARK} Configured"
             break
         fi
     done
 
-    # Kagi API Key (optional - for web search)
-    echo -e "${BOLD}${BLUE}3. Kagi Search API Key${RESET} ${DIM}(OPTIONAL - kagi.com/settings?p=api)${RESET}"
-    read -p "$(echo -e ${CYAN}Enter key${RESET}) (or Enter to skip): " KAGI_KEY_INPUT
-    if [ -z "$KAGI_KEY_INPUT" ]; then
-        CONFIG_KAGI_KEY=""
-        STATUS_KAGI="${DIM}Skipped${RESET}"
-    else
-        CONFIG_KAGI_KEY="$KAGI_KEY_INPUT"
-        STATUS_KAGI="${CHECKMARK} Configured"
-    fi
+    # Subcortical Model
+    read -p "$(echo -e ${CYAN}Model${RESET}) [default: qwen/qwen3-32b]: " SUBCORTICAL_MODEL_INPUT
+    CONFIG_SUBCORTICAL_MODEL="${SUBCORTICAL_MODEL_INPUT:-qwen/qwen3-32b}"
+fi
+
+# Kagi Search API Key (optional — works with any provider)
+echo -e "${BOLD}${BLUE}3. Kagi Search API Key${RESET} ${DIM}(OPTIONAL - kagi.com/settings?p=api)${RESET}"
+read -p "$(echo -e ${CYAN}Enter key${RESET}) (or Enter to skip): " KAGI_KEY_INPUT
+if [ -z "$KAGI_KEY_INPUT" ]; then
+    CONFIG_KAGI_KEY=""
+    STATUS_KAGI="${DIM}Skipped${RESET}"
+else
+    CONFIG_KAGI_KEY="$KAGI_KEY_INPUT"
+    STATUS_KAGI="${CHECKMARK} Configured"
 fi
 
 # Database Password (optional - defaults to changethisifdeployingpwd)
@@ -556,39 +492,26 @@ elif [ "$OS" = "macos" ]; then
     STATUS_SYSTEMD="${DIM}N/A (macOS)${RESET}"
 fi
 
-# Update check option
-echo -e "${BOLD}${BLUE}7. Update Notifications${RESET} ${DIM}(OPTIONAL - check for new versions on startup)${RESET}"
-echo -e "${DIM}   Privacy: Only the installed version number is sent to check for updates.${RESET}"
-echo -e "${DIM}   No other information about your installation is transmitted.${RESET}"
-read -p "$(echo -e ${CYAN}Enable update check?${RESET}) (y/n, default=y): " UPDATE_CHECK_INPUT
-# Default to yes if user just presses Enter
-if [ -z "$UPDATE_CHECK_INPUT" ]; then
-    UPDATE_CHECK_INPUT="y"
-fi
-if [[ "$UPDATE_CHECK_INPUT" =~ ^[Yy](es)?$ ]]; then
-    CONFIG_UPDATE_CHECK="yes"
-    STATUS_UPDATE_CHECK="${CHECKMARK} Enabled"
-else
-    CONFIG_UPDATE_CHECK="no"
-    STATUS_UPDATE_CHECK="${DIM}Disabled${RESET}"
-fi
-
 echo ""
 echo -e "${BOLD}Configuration Summary:${RESET}"
 if [ "$CONFIG_OFFLINE_MODE" = "yes" ]; then
-    echo -e "  Mode:            ${CYAN}Offline (Ollama: ${CONFIG_OLLAMA_MODEL})${RESET}"
-else
-    echo -e "  Anthropic:       ${STATUS_ANTHROPIC}"
-    echo -e "  Anthropic Batch: ${STATUS_ANTHROPIC_BATCH}"
-    echo -e "  Provider:        ${STATUS_PROVIDER}"
-    echo -e "  Provider Key:    ${STATUS_PROVIDER_KEY}"
-    if [ -n "$CONFIG_PROVIDER_MODEL" ]; then
-        echo -e "  Provider Model:  ${CYAN}${CONFIG_PROVIDER_MODEL}${RESET}"
+    if [ "$CONFIG_OLLAMA_MODEL" = "$CONFIG_OLLAMA_SUBCORTICAL_MODEL" ]; then
+        echo -e "  LLM Provider:    ${CYAN}Local Ollama (${CONFIG_OLLAMA_MODEL})${RESET}"
+    else
+        echo -e "  LLM Provider:    ${CYAN}Local Ollama${RESET}"
+        echo -e "  Main Model:      ${CYAN}${CONFIG_OLLAMA_MODEL}${RESET}"
+        echo -e "  Subcortical:     ${CYAN}${CONFIG_OLLAMA_SUBCORTICAL_MODEL}${RESET}"
     fi
-    echo -e "  Kagi:            ${STATUS_KAGI}"
+else
+    echo -e "  Chat Provider:   ${STATUS_CHAT_PROVIDER}"
+    echo -e "  Chat Model:      ${CYAN}${CONFIG_CHAT_MODEL}${RESET}"
+    echo -e "  Chat Key:        ${STATUS_CHAT_KEY}"
+    echo -e "  Subcortical:     ${STATUS_SUBCORTICAL}"
+    echo -e "  Subcortical Key: ${STATUS_SUBCORTICAL_KEY}"
+    echo -e "  Subcortical Mdl: ${CYAN}${CONFIG_SUBCORTICAL_MODEL}${RESET}"
 fi
+echo -e "  Kagi:            ${STATUS_KAGI}"
 echo -e "  DB Password:     ${STATUS_DB_PASSWORD}"
 echo -e "  Playwright:      ${STATUS_PLAYWRIGHT}"
 echo -e "  Systemd Service: ${STATUS_SYSTEMD}"
-echo -e "  Update Check:    ${STATUS_UPDATE_CHECK}"
 echo ""

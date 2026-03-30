@@ -282,8 +282,8 @@ class ContinuumRepository:
                     logger.info(f"[SINGLE] Activity day incremented successfully for user {user_id}, result: {result}")
                 except Exception as e:
                     logger.error(f"[SINGLE] Failed to increment activity day for user {user_id}: {e}", exc_info=True)
-                # Note: virtual_last_message_time is cleared in increment_segment_turn()
-                # which is called at the API entry point before message save
+                # Note: if segment was paused, increment_segment_turn() (called at
+                # API entry before message save) auto-resumes it to 'active'
 
         except Exception as e:
             logger.error(f"Failed to save message to continuum {continuum_id}: {str(e)}")
@@ -366,8 +366,22 @@ class ContinuumRepository:
                 continuum_id=str(continuum_id)
             )
 
-            # Save sentinel (recursive call, but sentinel has is_segment_boundary=True so won't recurse into _ensure_active_segment)
-            self.save_message(sentinel, continuum_id, user_id)
+            # Direct INSERT with conflict on the unique partial index
+            # (idx_messages_active_segment_unique). If a concurrent call already
+            # created an active sentinel for this continuum, DO NOTHING — the
+            # race loser silently no-ops instead of creating a duplicate.
+            base_tuple = sentinel.to_db_tuple(continuum_id, user_id)
+            db.execute_query(
+                """
+                INSERT INTO messages (id, continuum_id, user_id, role, content, metadata, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (continuum_id)
+                    WHERE metadata->>'is_segment_boundary' = 'true'
+                      AND metadata->>'status' = 'active'
+                DO NOTHING
+                """,
+                base_tuple
+            )
 
             logger.info(f"Created segment boundary sentinel for continuum {continuum_id}")
     
@@ -855,14 +869,19 @@ class ContinuumRepository:
 
     def find_active_segment(self, continuum_id: str | UUID, user_id: str) -> Message | None:
         """
-        Find active segment sentinel for a continuum.
+        Find non-collapsed segment sentinel for a continuum.
+
+        Matches both 'active' and 'paused' segments — from the caller's
+        perspective, a paused segment is still the current segment. The only
+        consumer that distinguishes active from paused is the timeout service,
+        which uses find_all_active_segments_admin() with its own filter.
 
         Args:
             continuum_id: Continuum ID
             user_id: User ID
 
         Returns:
-            Active segment sentinel or None
+            Active or paused segment sentinel, or None
         """
         db = self._get_client(user_id)
 
@@ -870,7 +889,7 @@ class ContinuumRepository:
             SELECT * FROM messages
             WHERE continuum_id = %s
                 AND metadata->>'is_segment_boundary' = 'true'
-                AND metadata->>'status' = 'active'
+                AND metadata->>'status' IN ('active', 'paused')
             ORDER BY created_at DESC
             LIMIT 1
         """
@@ -882,33 +901,37 @@ class ContinuumRepository:
 
     def increment_segment_turn(self, continuum_id: str | UUID, user_id: str) -> int:
         """
-        Increment segment turn counter on the active segment sentinel.
+        Increment segment turn counter on the active or paused segment sentinel.
 
         Called at API entry point when a real user message arrives.
         This is the authoritative source for segment turn count.
+
+        If the segment is paused, atomically resumes it to 'active' —
+        the timeout clock restarts from this message.
 
         Args:
             continuum_id: Continuum ID
             user_id: User ID
 
         Returns:
-            New turn number (1-indexed). Returns 1 if no active segment exists yet
-            (segment will be created when message is saved).
+            New turn number (1-indexed). Returns 1 if no active/paused segment
+            exists yet (segment will be created when message is saved).
         """
         db = self._get_client(user_id)
 
-        # Atomically increment turn count AND clear any virtual_last_message_time
-        # (user is active, so postpone state should be cleared)
+        # Atomically increment turn count and ensure status is 'active'.
+        # Matches both 'active' and 'paused' segments — a paused segment
+        # is auto-resumed when the user sends a message.
         query = """
             UPDATE messages
             SET metadata = jsonb_set(
-                metadata - 'virtual_last_message_time',
+                metadata - 'paused_at',
                 '{segment_turn_count}',
                 to_jsonb((metadata->>'segment_turn_count')::int + 1)
-            )
+            ) || '{"status": "active"}'::jsonb
             WHERE continuum_id = %s
                 AND metadata->>'is_segment_boundary' = 'true'
-                AND metadata->>'status' = 'active'
+                AND metadata->>'status' IN ('active', 'paused')
             RETURNING (metadata->>'segment_turn_count')::int as turn_count
         """
 
@@ -917,40 +940,34 @@ class ContinuumRepository:
         if rows and rows[0].get('turn_count'):
             return rows[0]['turn_count']
 
-        # No active segment exists - create one now.
+        # No active/paused segment exists - create one now.
         # This ensures find_active_segment() will succeed immediately after this call.
         from utils.timezone_utils import utc_now
         self._ensure_active_segment(UUID(str(continuum_id)), user_id, utc_now(), db)
         return 1
 
-    def set_segment_virtual_last_message_time(
-        self,
-        continuum_id: str | UUID,
-        user_id: str,
-        virtual_time: datetime
-    ) -> bool:
+    def pause_segment(self, continuum_id: str | UUID, user_id: str) -> bool:
         """
-        Set virtual_last_message_time on active segment sentinel.
+        Pause the active segment, making it invisible to the timeout service.
 
-        Used to postpone segment collapse - timeout service will use this
-        timestamp if it's later than the actual last message time.
+        A paused segment is excluded from timeout checks entirely. It resumes
+        automatically when the user sends their next message (via
+        increment_segment_turn matching paused status).
 
         Args:
             continuum_id: Continuum ID
             user_id: User ID
-            virtual_time: The virtual last message timestamp to set
 
         Returns:
-            True if segment was updated, False if no active segment found
+            True if segment was paused, False if no active segment found
         """
         db = self._get_client(user_id)
 
         query = """
             UPDATE messages
-            SET metadata = jsonb_set(
-                metadata,
-                '{virtual_last_message_time}',
-                to_jsonb(%s::text)
+            SET metadata = metadata || jsonb_build_object(
+                'status', 'paused',
+                'paused_at', %s::text
             )
             WHERE continuum_id = %s
                 AND metadata->>'is_segment_boundary' = 'true'
@@ -958,32 +975,31 @@ class ContinuumRepository:
             RETURNING id
         """
 
-        # Use execute_returning to ensure commit happens
-        rows = db.execute_returning(query, (virtual_time.isoformat(), str(continuum_id)))
+        rows = db.execute_returning(query, (format_utc_iso(utc_now()), str(continuum_id)))
         return bool(rows)
 
-    def clear_segment_virtual_last_message_time(
-        self,
-        continuum_id: str | UUID,
-        user_id: str
-    ) -> bool:
+    def unpause_segment(self, continuum_id: str | UUID, user_id: str) -> bool:
         """
-        Clear virtual_last_message_time from active segment sentinel.
+        Explicitly unpause a paused segment without sending a message.
 
-        Called when user sends a message to reset the postpone state.
+        Typically unpausing happens automatically via increment_segment_turn(),
+        but this allows the UI to unpause without requiring a message.
+
+        Args:
+            continuum_id: Continuum ID
+            user_id: User ID
 
         Returns:
-            True if segment was updated, False if no active segment found
+            True if segment was unpaused, False if no paused segment found
         """
         db = self._get_client(user_id)
 
         query = """
             UPDATE messages
-            SET metadata = metadata - 'virtual_last_message_time'
+            SET metadata = (metadata - 'paused_at') || '{"status": "active"}'::jsonb
             WHERE continuum_id = %s
                 AND metadata->>'is_segment_boundary' = 'true'
-                AND metadata->>'status' = 'active'
-                AND metadata ? 'virtual_last_message_time'
+                AND metadata->>'status' = 'paused'
             RETURNING id
         """
 
@@ -1233,6 +1249,7 @@ class ContinuumRepository:
                 AND m.role IN ('user', 'assistant')
                 AND (m.metadata->>'is_segment_boundary' IS NULL OR m.metadata->>'is_segment_boundary' = 'false')
                 AND (m.metadata->>'system_notification' IS NULL OR m.metadata->>'system_notification' = 'false')
+                AND (m.metadata->>'has_tool_calls' IS NULL OR m.metadata->>'has_tool_calls' != 'true')
             ORDER BY m.created_at DESC
             LIMIT %s
         """
@@ -1281,146 +1298,3 @@ class ContinuumRepository:
             messages.extend([user_msg, assistant_msg])
 
         return messages
-
-    def find_resumable_segment(
-        self,
-        continuum_id: str | UUID,
-        user_id: str
-    ) -> Message | None:
-        """
-        Find the most recently collapsed segment that can be resumed.
-
-        A segment is resumable if:
-        - status = 'collapsed'
-        - not tombstoned (processing_failed IS NOT TRUE)
-        - no active segment exists for the same continuum
-
-        Args:
-            continuum_id: Continuum ID
-            user_id: User ID
-
-        Returns:
-            Resumable segment sentinel or None
-        """
-        db = self._get_client(user_id)
-
-        query = """
-            SELECT * FROM messages
-            WHERE continuum_id = %s
-                AND metadata->>'is_segment_boundary' = 'true'
-                AND metadata->>'status' = 'collapsed'
-                AND (metadata->>'processing_failed')::boolean IS NOT TRUE
-                AND NOT EXISTS (
-                    SELECT 1 FROM messages m2
-                    WHERE m2.continuum_id = %s
-                        AND m2.metadata->>'is_segment_boundary' = 'true'
-                        AND m2.metadata->>'status' = 'active'
-                )
-            ORDER BY created_at DESC
-            LIMIT 1
-        """
-
-        cid = str(continuum_id)
-        rows = db.execute_query(query, (cid, cid))
-        messages = self._parse_message_rows(rows)
-        return messages[0] if messages else None
-
-    def reactivate_collapsed_segment(
-        self,
-        continuum_id: str | UUID,
-        segment_id: str,
-        user_id: str,
-        virtual_time: datetime
-    ) -> bool:
-        """
-        Atomically reactivate a collapsed segment for resume.
-
-        Clears collapse artifacts (summary, embedding, collapse metadata),
-        resets extraction state, and sets status back to active.
-
-        Args:
-            continuum_id: Continuum ID
-            segment_id: Segment ID from sentinel metadata
-            user_id: User ID
-            virtual_time: Virtual last message time for timeout calculation
-
-        Returns:
-            True if reactivation succeeded, False if segment was not in collapsed state
-        """
-        db = self._get_client(user_id)
-        now = format_utc_iso(utc_now())
-
-        query = """
-            UPDATE messages
-            SET content = '[Segment in progress]',
-                metadata = (metadata
-                    - 'collapsed_at' - 'summary_generated_at' - 'inactive_duration_minutes'
-                    - 'processing_failed' - 'display_title' - 'complexity_score'
-                    - 'segment_embedding_value' - 'has_segment_embedding'
-                    - 'segment_end_time' - 'segment_summary'
-                ) || jsonb_build_object(
-                    'status', 'active',
-                    'collapse_attempts', 0,
-                    'memories_extracted', false,
-                    'virtual_last_message_time', %s,
-                    'resumed_at', %s
-                ),
-                segment_embedding = NULL
-            WHERE continuum_id = %s
-                AND metadata->>'is_segment_boundary' = 'true'
-                AND metadata->>'segment_id' = %s
-                AND metadata->>'status' = 'collapsed'
-            RETURNING id
-        """
-
-        rows = db.execute_returning(query, (
-            format_utc_iso(virtual_time),
-            now,
-            str(continuum_id),
-            segment_id
-        ))
-
-        if rows:
-            logger.info(f"Reactivated collapsed segment {segment_id} for user {user_id}")
-            return True
-        return False
-
-    def delete_segment_memories(self, segment_id: str, user_id: str) -> int:
-        """
-        Delete memories extracted from a specific segment.
-
-        Called after reactivating a collapsed segment so memories are
-        re-extracted on the next collapse with the full message set.
-
-        Args:
-            segment_id: Segment ID (from sentinel metadata, not message UUID)
-            user_id: User ID
-
-        Returns:
-            Count of deleted memories
-        """
-        db = self._get_client(user_id)
-
-        # source_segment_id stores the segment boundary message ID as UUID.
-        # Find the sentinel's message UUID from the segment_id metadata value.
-        sentinel_rows = db.execute_query(
-            """SELECT id FROM messages
-               WHERE metadata->>'segment_id' = %s
-                 AND metadata->>'is_segment_boundary' = 'true'
-               LIMIT 1""",
-            (segment_id,)
-        )
-        if not sentinel_rows:
-            return 0
-
-        sentinel_uuid = str(sentinel_rows[0]['id'])
-
-        rows = db.execute_returning(
-            "DELETE FROM memories WHERE source_segment_id = %s AND user_id = %s RETURNING id",
-            (sentinel_uuid, user_id)
-        )
-
-        count = len(rows) if rows else 0
-        if count:
-            logger.info(f"Deleted {count} memories from segment {segment_id} for user {user_id}")
-        return count

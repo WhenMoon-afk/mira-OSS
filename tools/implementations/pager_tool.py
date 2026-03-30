@@ -58,7 +58,7 @@ class PagerTool(Tool):
     
     anthropic_schema = {
         "name": "pager_tool",
-        "description": "Virtual pager messaging system. Create pager devices and send/receive short messages with priority levels and location tracking.",
+        "description": "Send and receive short messages between virtual pager devices.",
         "input_schema": {
                 "type": "object",
                 "properties": {
@@ -69,77 +69,65 @@ class PagerTool(Tool):
                     },
                     "username": {
                         "type": "string",
-                        "description": "Username to register for federated addressing (3-20 alphanumeric characters)"
+                        "description": "Username for federated addressing (3-20 alphanumeric chars, lowercased automatically). Only for register_username"
                     },
-                    "name": {
+                    "device_name": {
                         "type": "string",
-                        "description": "Name for the pager device (for register_device)"
+                        "description": "Friendly name for the pager device (register_device only, required, non-empty)"
                     },
-                    "description": {
+                    "device_description": {
                         "type": "string",
-                        "description": "Description of the pager device (optional)"
+                        "description": "Optional description for the pager device (register_device only)"
                     },
                     "sender_id": {
                         "type": "string",
-                        "description": "ID of the sending pager (format: PAGER-XXXX)"
+                        "description": "ID of the sending pager device (dev_XXXXXXXX format). Must be an active device"
                     },
-                    "recipient_id": {
+                    "recipient": {
                         "type": "string",
-                        "description": "ID of the receiving pager (format: PAGER-XXXX)"
+                        "description": "Recipient username (e.g. 'taylor') or federated address (e.g. 'taylor@server'). For send_message. Usernames resolve to the recipient's active pager device"
                     },
                     "content": {
                         "type": "string",
-                        "description": "Message content (max 300 chars or will be AI-distilled)"
+                        "description": "Message body for send_message. Messages over 300 characters are AI-distilled to fit; if distillation is disabled, messages over 300 chars are rejected"
                     },
                     "priority": {
                         "type": "integer",
                         "enum": [0, 1, 2],
-                        "description": "Message priority: 0=normal, 1=high, 2=urgent"
+                        "description": "Priority: 0=normal, 1=high, 2=urgent. Default 0 (send_message) or 1 (send_location)"
                     },
                     "location": {
                         "type": "string",
-                        "description": "Optional location information to attach to message"
+                        "description": "Optional location string for send_message. Stored verbatim on the message record"
                     },
                     "expiry_hours": {
                         "type": "integer",
-                        "description": "Hours until message expires (default: 24)"
+                        "description": "Integer hours until message expiry. Defaults to 24. Only applies to send_message (send_location always uses 6)"
                     },
                     "device_secret": {
                         "type": "string",
-                        "description": "Device secret for authentication (proves sender identity)"
+                        "description": "Device secret from register_device response. If provided, must match the sender device's stored secret or the call is rejected"
                     },
                     "untrusted_device_id": {
                         "type": "string",
-                        "description": "ID of device to revoke trust for"
+                        "description": "Device ID (dev_XXXXXXXX) to untrust. Used with revoke_trust. Must have an existing trust relationship with pager_id"
                     },
-                    "message": {
+                    "note": {
                         "type": "string",
-                        "description": "Optional message to include with location pin (max 50 chars)"
+                        "description": "Short note to attach to a location pin. Max 50 chars; longer values are rejected. send_location only"
                     },
                     "pager_id": {
                         "type": "string",
-                        "description": "ID of a specific pager device"
+                        "description": "Pager device ID (dev_XXXXXXXX). Required for: get_received_messages, get_sent_messages, deactivate_device, list_trusted_devices, revoke_trust"
                     },
                     "message_id": {
                         "type": "string",
-                        "description": "ID of a specific message (format: MSG-XXXXXXXX)"
+                        "description": "Message ID (msg_XXXXXXXX). Used only with mark_message_read"
                     },
                     "unread_only": {
                         "type": "boolean",
-                        "description": "Only return unread messages (default: false)"
+                        "description": "Filter to unread messages only. Default false. get_received_messages only"
                     },
-                    "include_expired": {
-                        "type": "boolean",
-                        "description": "Include expired messages (default: false)"
-                    },
-                    "active_only": {
-                        "type": "boolean",
-                        "description": "Only return active devices (default: true)"
-                    },
-                    "kwargs": {
-                        "type": "string",
-                        "description": "JSON string containing operation parameters"
-                    }
                 },
                 "required": ["operation"]
             }
@@ -521,63 +509,63 @@ class PagerTool(Tool):
 
     def _register_device(
         self,
-        name: str,
-        description: Optional[str] = None,
+        device_name: str,
+        device_description: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Register a new pager device.
-        
+
         Args:
-            name: Friendly name for the pager device
-            description: Optional description of the device
-            
+            device_name: Friendly name for the pager device
+            device_description: Optional description of the device
+
         Returns:
             Dict containing the created device
-            
+
         Raises:
             ValueError: If required fields are missing
         """
-        
+
         # Validate required parameters
-        if not name:
+        if not device_name:
             self.logger.error("Name is required for registering a pager device")
             raise ValueError("Name is required for registering a pager device")
-            
+
         # Generate a unique pager ID
         pager_id = f"PAGER-{uuid.uuid4().hex[:4].upper()}"
-        
+
         # Generate device secret and fingerprint
         device_secret = f"SECRET-{uuid.uuid4().hex[:32].upper()}"
         # Fingerprint is hash of device ID + secret (like SSH host key fingerprint)
         device_fingerprint = hashlib.sha256(
             f"{pager_id}{device_secret}".encode()
         ).hexdigest()[:16].upper()
-        
+
         # Insert device into database
         try:
             device_data = {
                 "id": pager_id,
-                "encrypted__name": name,
-                "encrypted__description": description,
+                "encrypted__name": device_name,
+                "encrypted__description": device_description,
                 "created_at": utc_now().isoformat(),
                 "last_active": utc_now().isoformat(),
                 "active": 1,  # SQLite uses 1/0 for boolean
                 "device_secret": device_secret,
                 "device_fingerprint": device_fingerprint
             }
-            
+
             row_id = self.db.insert('pager_devices', device_data)
             # Get the inserted row
             result = self.db.select('pager_devices', 'id = :pager_id', {'pager_id': pager_id})[0]
-            
+
         except Exception as e:
             self.logger.error(f"Error saving pager device: {e}")
             self.logger.error(f"Failed to save pager device: {e}")
             raise ValueError(f"Failed to save pager device: {str(e)}")
-            
+
         return {
             "device": self._device_to_dict(result),
-            "message": f"Pager device '{name}' registered successfully with ID {pager_id}"
+            "message": f"Pager device '{device_name}' registered successfully with ID {pager_id}"
         }
 
     def _get_lattice_identity(self) -> "LatticeIdentity":
@@ -850,7 +838,7 @@ class PagerTool(Tool):
     def _send_message(
         self,
         sender_id: str,
-        recipient_address: str,
+        recipient: str,
         content: str,
         priority: Optional[int] = 0,
         location: Optional[str] = None,
@@ -866,7 +854,7 @@ class PagerTool(Tool):
 
         Args:
             sender_id: ID of the sending pager device (UUID) - internal identifier
-            recipient_address: Recipient username or federated address
+            recipient: Recipient username or federated address
             content: Message content (will be distilled if too long)
             priority: Message priority (0=normal, 1=high, 2=urgent)
             location: Optional location information
@@ -881,10 +869,10 @@ class PagerTool(Tool):
         """
 
         # Route federated messages through federation adapter
-        if '@' in recipient_address:
+        if '@' in recipient:
             return self._send_federated_message(
                 sender_pager_id=sender_id,
-                recipient_address=recipient_address,
+                recipient_address=recipient,
                 content=content,
                 priority=priority,
                 location=location,
@@ -892,18 +880,18 @@ class PagerTool(Tool):
             )
 
         # For local delivery, resolve username to pager device ID
-        recipient_pager_id = self._resolve_recipient_to_pager_id(recipient_address)
+        recipient_pager_id = self._resolve_recipient_to_pager_id(recipient)
 
         # Validate required parameters
         if not all([sender_id, recipient_pager_id, content]):
-            self.logger.error("sender_id, recipient_address, and content are required for send_message")
-            raise ValueError("sender_id, recipient_address, and content are required")
-            
+            self.logger.error("sender_id, recipient, and content are required for send_message")
+            raise ValueError("sender_id, recipient, and content are required")
+
         # Validate priority
         if priority not in [0, 1, 2]:
             self.logger.error(f"Invalid priority: {priority}. Must be 0, 1, or 2")
             raise ValueError("Priority must be 0 (normal), 1 (high), or 2 (urgent)")
-            
+
         # Get sender and recipient devices
         sender = self.db.select(
             'pager_devices',
@@ -920,15 +908,15 @@ class PagerTool(Tool):
             self.logger.error(f"Invalid device secret")
             raise ValueError(f"Invalid device secret")
 
-        recipient = self.db.select(
+        recipient_device = self.db.select(
             'pager_devices',
             'id = :recipient_id',
             {'recipient_id': recipient_pager_id}
         )
-        if not recipient or not recipient[0]['active']:
+        if not recipient_device or not recipient_device[0]['active']:
             self.logger.error(f"Recipient pager not found or inactive")
             raise ValueError(f"Recipient pager not found or inactive")
-        recipient = recipient[0]
+        recipient_device = recipient_device[0]
             
         # Update sender's last active time
         self.db.update(
@@ -993,7 +981,7 @@ class PagerTool(Tool):
             raise RuntimeError(f"Failed to send message: {str(e)}") from e
             
         result = {
-            "message": self._message_to_dict(message_result, sender['name'], recipient['name']),
+            "message": self._message_to_dict(message_result, sender['name'], recipient_device['name']),
             "status": "delivered"
         }
         
@@ -1580,55 +1568,55 @@ Provide ONLY the distilled message, no explanations or meta-text."""
     def _send_location(
         self,
         sender_id: str,
-        recipient_id: str,
+        recipient: str,
         priority: Optional[int] = 1,  # Default to high priority for location pins
-        message: Optional[str] = None,
+        note: Optional[str] = None,
         device_secret: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send a location pin message from one pager to another.
-        
+
         Args:
             sender_id: ID of the sending pager
-            recipient_id: ID of the receiving pager
+            recipient: Recipient username or federated address
             priority: Message priority (default 1=high for location pins)
-            message: Optional brief message (max 50 chars)
+            note: Optional brief note (max 50 chars)
             device_secret: Device secret for authentication
-            
+
         Returns:
             Dict containing the sent location message
         """
-        self.logger.info(f"Sending location pin from {sender_id} to {recipient_id}")
-        
+        self.logger.info(f"Sending location pin from {sender_id} to {recipient}")
+
         # Get current location
         location_data = self._get_device_location()
-        
+
         # Format location as JSON string for storage
         location_json = json.dumps({
             "lat": location_data["lat"],
             "lng": location_data["lng"],
             "accuracy_meters": location_data["accuracy_meters"]
         })
-        
+
         # Create location message content
         content = f"📍 Location Pin: {location_data['address']}"
         if location_data.get('description'):
             content += f" ({location_data['description']})"
-        
-        # Add optional message if provided
-        if message:
-            # Enforce brief message limit for location pins
-            if len(message) > 50:
-                raise ValueError(f"Location pin message too long: {len(message)} characters (max 50)")
-            content += f"\nNote: {message}"
-        
+
+        # Add optional note if provided
+        if note:
+            # Enforce brief note limit for location pins
+            if len(note) > 50:
+                raise ValueError(f"Location pin note too long: {len(note)} characters (max 50)")
+            content += f"\nNote: {note}"
+
         # Add coordinates for technical reference
         content += f"\n[{location_data['lat']:.4f}, {location_data['lng']:.4f}]"
-        
+
         # Use the existing send_message method with location data
         return self._send_message(
             sender_id=sender_id,
-            recipient_id=recipient_id,
+            recipient=recipient,
             content=content,
             priority=priority,
             location=location_json,

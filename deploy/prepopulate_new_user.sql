@@ -63,12 +63,12 @@ So, now that that''s out of the way: What do you want to chat about first? I can
 ORDER BY seq;
 
 -- Insert initial memories (embeddings will be generated on first access)
-INSERT INTO memories (user_id, text, importance_score, confidence)
+INSERT INTO memories (user_id, text, importance_score)
 VALUES
-    (:'user_id'::uuid, 'The user''s name is ' || :'user_name' || '.', 0.9, 1.0),
-    (:'user_id'::uuid, 'The user is in ' || :'user_timezone' || ' timezone.', 0.8, 1.0),
-    (:'user_id'::uuid, 'The user''s current focus is: ' || :'current_focus', 0.8, 1.0),
-    (:'user_id'::uuid, 'The user''s email address is ' || :'user_email' || '.', 0.7, 1.0);
+    (:'user_id'::uuid, 'The user''s name is ' || :'user_name' || '.', 0.9),
+    (:'user_id'::uuid, 'The user is in ' || :'user_timezone' || ' timezone.', 0.8),
+    (:'user_id'::uuid, 'The user''s current focus is: ' || :'current_focus', 0.8),
+    (:'user_id'::uuid, 'The user''s email address is ' || :'user_email' || '.', 0.7);
 
 COMMIT;
 

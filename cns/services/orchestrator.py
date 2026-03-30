@@ -18,6 +18,7 @@ from uuid import UUID
 if TYPE_CHECKING:
     from cns.infrastructure.continuum_repository import ContinuumRepository
     from cns.infrastructure.continuum_pool import UnitOfWork
+    from cns.core.message import Message
     from cns.services.memory_relevance_service import MemoryRelevanceService
     from cns.services.subcortical import SubcorticalLayer
     from cns.integration.event_bus import EventBus
@@ -37,8 +38,44 @@ from clients.hybrid_embeddings_provider import get_hybrid_embeddings_provider
 from cns.services.subcortical import SubcorticalResult, SurfacedMemory
 from lt_memory.models import MemoryDict
 from utils.tag_parser import TagParser, match_memory_id
+from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_slice(messages: list[dict[str, object]], cut_idx: int) -> list[dict[str, object]]:
+    """Slice messages at cut_idx, preserving tool_use/tool_result pair integrity.
+
+    Returns messages[:1] + messages[adjusted_cut:], where the cut is shifted
+    to avoid orphaning tool_use or tool_result blocks at the boundary.
+    """
+
+    def _is_tool_block(msg: dict[str, object], role: str, block_type: str) -> bool:
+        if msg.get("role") != role:
+            return False
+        content = msg.get("content")
+        return (isinstance(content, list)
+                and any(isinstance(b, dict) and b.get("type") == block_type for b in content))
+
+    # Adjust forward past orphaned tool_result at the start of the kept window
+    original_cut = cut_idx
+    while cut_idx < len(messages) and _is_tool_block(messages[cut_idx], "user", "tool_result"):
+        cut_idx += 1
+
+    result = messages[:1] + messages[cut_idx:]
+
+    # Trim trailing orphaned tool_use at the end
+    while len(result) > 1 and _is_tool_block(result[-1], "assistant", "tool_use"):
+        result.pop()
+
+    if cut_idx != original_cut:
+        logger.warning(
+            "Tool pair safety: adjusted cut index %d -> %d to preserve "
+            "tool_use/tool_result integrity (skipped %d orphaned messages)",
+            original_cut, cut_idx, cut_idx - original_cut
+        )
+
+    return result
 
 
 class TurnMetadata(TypedDict, total=False):
@@ -76,6 +113,16 @@ class MemorySurfacingResult:
 
 
 @dataclass
+class ToolInteraction:
+    """Tracks a single tool use/result pair during the LLM turn."""
+    tool_name: str
+    tool_id: str
+    arguments: dict[str, object]
+    result: str | list[dict[str, object]] = ""
+    completed: bool = False
+
+
+@dataclass
 class TurnAccumulator:
     """Accumulates state during the LLM streaming event loop."""
     response_text: str = ""
@@ -85,6 +132,7 @@ class TurnAccumulator:
     touch_resolved_uuids: list[str] = field(default_factory=list)
     tools_used: list[str] = field(default_factory=list)
     events: list[StreamEvent] = field(default_factory=list)
+    tool_interactions: list[ToolInteraction] = field(default_factory=list)
 
     def reset(self):
         """Reset for overflow retry — clears all accumulated state."""
@@ -95,6 +143,7 @@ class TurnAccumulator:
         self.touch_resolved_uuids = []
         self.tools_used = []
         self.events = []
+        self.tool_interactions = []
 
 
 class ContinuumOrchestrator:
@@ -177,6 +226,55 @@ class ContinuumOrchestrator:
             return ""
         return f"[used: {', '.join(tool_names)}]"
 
+    def _build_tool_history_messages(
+        self,
+        interactions: list[ToolInteraction],
+    ) -> list[Message]:
+        """
+        Build Message objects for persisting tool use/result history.
+
+        Produces one assistant message containing tool_use content blocks,
+        followed by one tool message per interaction with the raw result.
+        Timestamps are offset by milliseconds to guarantee deterministic
+        DB ordering on reload.
+        """
+        from datetime import timedelta
+        from cns.core.message import Message
+
+        base_time = utc_now()
+        messages: list[Message] = []
+
+        # Assistant message with tool_use blocks
+        tool_use_blocks = [
+            {
+                "type": "tool_use",
+                "id": interaction.tool_id,
+                "name": interaction.tool_name,
+                "input": interaction.arguments,
+            }
+            for interaction in interactions
+        ]
+        assistant_msg = Message(
+            content=tool_use_blocks,
+            role="assistant",
+            metadata={"has_tool_calls": True}
+        )
+        # Override frozen created_at for deterministic ordering
+        object.__setattr__(assistant_msg, 'created_at', base_time + timedelta(milliseconds=1))
+        messages.append(assistant_msg)
+
+        # One tool message per interaction
+        for i, interaction in enumerate(interactions):
+            tool_msg = Message(
+                content=interaction.result,
+                role="tool",
+                metadata={"tool_call_id": interaction.tool_id}
+            )
+            object.__setattr__(tool_msg, 'created_at', base_time + timedelta(milliseconds=i + 2))
+            messages.append(tool_msg)
+
+        return messages
+
     def _consume_stream(
         self,
         stream_events: Iterator[StreamEvent],
@@ -203,6 +301,11 @@ class ContinuumOrchestrator:
         for event in stream_events:
             # Tool execution tracking
             if isinstance(event, ToolExecutingEvent):
+                acc.tool_interactions.append(ToolInteraction(
+                    tool_name=event.tool_name,
+                    tool_id=event.tool_id,
+                    arguments=event.arguments
+                ))
                 if event.tool_name not in acc.tools_used:
                     acc.tools_used.append(event.tool_name)
 
@@ -221,8 +324,13 @@ class ContinuumOrchestrator:
                 else:
                     logger.info(f"Tool executing: {event.tool_name} with args: {event.arguments}")
 
-            # Tool completion — capture touch results
+            # Tool completion — capture result and touch results
             if isinstance(event, ToolCompletedEvent):
+                for interaction in acc.tool_interactions:
+                    if interaction.tool_id == event.tool_id:
+                        interaction.result = event.result
+                        interaction.completed = True
+                        break
                 if event.tool_name == "code_execution":
                     logger.info("=" * 80)
                     logger.info("✅ CODE_EXECUTION COMPLETED")
@@ -237,8 +345,25 @@ class ContinuumOrchestrator:
                             acc.touch_resolved_uuids = tool_result.get("resolved_uuids", [])
                     except (json.JSONDecodeError, AttributeError):
                         logger.warning("Failed to parse memory_tool touch result")
+                elif isinstance(event.result, list):
+                    # Content blocks (images) — log text blocks only, skip base64
+                    text_parts = [b.get('text', '') for b in event.result if b.get('type') == 'text']
+                    logger.info(f"Tool completed: {event.tool_name} -> [content blocks: {', '.join(text_parts)}]")
                 else:
                     logger.info(f"Tool completed: {event.tool_name} -> {event.result[:200]}...")
+
+                # Check for inline image artifact in tool result
+                try:
+                    tool_result = json.loads(event.result) if isinstance(event.result, str) else event.result
+                    image_artifact = tool_result.get("_image_artifact") if isinstance(tool_result, dict) else None
+                    if image_artifact and stream and stream_callback:
+                        alt = image_artifact.get("alt_text", "Generated image")
+                        fid = image_artifact["file_id"]
+                        image_tag = f"\n\n![{alt}](/v0/api/images/{fid})\n\n📥 [Download full resolution](/v0/api/files/{fid})\n\n"
+                        stream_callback({"type": "text", "content": image_tag})
+                        acc.response_text += image_tag
+                except (json.JSONDecodeError, KeyError, TypeError):
+                    pass  # Not an image-producing tool, ignore
 
             # Tool errors
             if isinstance(event, ToolErrorEvent):
@@ -431,19 +556,36 @@ class ContinuumOrchestrator:
             for item in conversation_prefix_items
         ]
 
-        # Post-history messages (domaindoc) — placed AFTER history so edits don't
-        # invalidate the history cache
-        post_history_messages = [
-            {
+        # Post-history messages (domaindoc) — synthetic tool result framing.
+        # Placed AFTER history so edits don't invalidate the history cache.
+        # Tool result framing gives domain knowledge higher attention weight
+        # than plain assistant messages — the model treats it as retrieved data.
+        # KNOWN BUG: Frozen snapshot for the entire agentic loop. Enable/expand/
+        # edit via domaindoc_tool updates DB but this content is never re-rendered.
+        # Worst case: enable → expand produces zero visible content because the
+        # trinket wasn't rendering that doc at compose time. Same staleness
+        # applies to notification_center (reminders). See _execute_with_tools.
+        post_history_messages = []
+        for i, item in enumerate(post_history_items):
+            tool_use_id = f"toolu_dd_{i:04d}"
+            post_history_messages.append({
                 "role": "assistant",
                 "content": [{
-                    "type": "text",
-                    "text": item,
-                    "cache_control": {"type": "ephemeral", "ttl": "1h"}
+                    "type": "tool_use",
+                    "id": tool_use_id,
+                    "name": "domaindoc_tool",
+                    "input": {"operation": "overview"}
                 }]
-            }
-            for item in post_history_items
-        ]
+            })
+            post_history_messages.append({
+                "role": "user",
+                "content": [{
+                    "type": "tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": item,
+                    "cache_control": {"type": "ephemeral"}
+                }]
+            })
 
         current_user_msg = messages[-1]
         history_messages = messages[:-1]
@@ -470,7 +612,7 @@ class ContinuumOrchestrator:
         one_shot_trim = self._pending_context_trim.pop(str(continuum.id), None)
         if one_shot_trim:
             logger.info(f"Applying one-shot trim from async LLM judgment: {one_shot_trim} messages")
-            messages_for_llm = messages_for_llm[:1] + messages_for_llm[one_shot_trim + 1:]
+            messages_for_llm = _safe_slice(messages_for_llm, one_shot_trim + 1)
 
         # Apply tier-based model and thinking configuration
         from utils.user_context import get_user_preferences, resolve_tier, LLMProvider
@@ -481,6 +623,7 @@ class ContinuumOrchestrator:
         tier_config = resolve_tier(prefs.llm_tier)
 
         llm_kwargs['model_preference'] = tier_config.model
+        llm_kwargs['max_tokens'] = 31999  # Frontend generation ceiling
 
         # Extended thinking: enabled only when subcortical layer provides complexity assessment
         if mem.subcortical_result is not None:
@@ -538,7 +681,7 @@ class ContinuumOrchestrator:
             # === PROACTIVE TOKEN CHECK ===
             last_input = self._last_turn_usage.get(continuum_id)
             estimated = self._estimate_request_tokens(messages_for_llm, available_tools, last_input)
-            available_for_input = config.api.context_window_tokens - config.api.max_tokens
+            available_for_input = config.api.context_window_tokens - llm_kwargs.get('max_tokens', config.api.max_tokens)
 
             if estimated > available_for_input:
                 overflow_attempt += 1
@@ -593,6 +736,10 @@ class ContinuumOrchestrator:
         parsed_tags = self.tag_parser.parse_response(acc.response_text, preserve_tags=['my_emotion'])
         clean_response_text = parsed_tags['clean_text']
 
+        # Process check-in response if Mira produced one
+        if parsed_tags.get('checkin_response'):
+            self._process_checkin_response(parsed_tags['checkin_response'])
+
         logger.debug(f"Emotion extracted: {parsed_tags.get('emotion')}")
         logger.debug(f"Emotion tag in clean_text: {'<mira:my_emotion>' in clean_response_text}")
 
@@ -625,11 +772,45 @@ class ContinuumOrchestrator:
             "pinned_memory_ids": list(mem.pinned_ids)
         }
 
+        if acc.tools_used:
+            assistant_metadata["has_tool_calls"] = True
+            assistant_metadata["tools_used"] = acc.tools_used
+
         if parsed_tags.get('emotion'):
             assistant_metadata["emotion"] = parsed_tags['emotion']
 
         if acc.thinking_content:
             assistant_metadata["thinking"] = acc.thinking_content
+
+        if acc.raw_response and hasattr(acc.raw_response, 'stop_reason'):
+            assistant_metadata["stop_reason"] = acc.raw_response.stop_reason
+
+        # Extract full thinking blocks (with signatures) for cross-turn persistence.
+        # The API requires unmodified blocks to maintain reasoning continuity.
+        if acc.raw_response:
+            thinking_blocks = []
+            for block in acc.raw_response.content:
+                if block.type == "thinking":
+                    thinking_blocks.append({
+                        "type": "thinking",
+                        "thinking": block.thinking,
+                        "signature": block.signature
+                    })
+                elif block.type == "redacted_thinking":
+                    thinking_blocks.append({
+                        "type": "redacted_thinking",
+                        "data": block.data
+                    })
+            if thinking_blocks:
+                assistant_metadata["thinking_blocks"] = thinking_blocks
+
+        # Build tool history messages for persistence (before assistant message
+        # so they appear in correct chronological order in the cache)
+        completed_interactions = [i for i in acc.tool_interactions if i.completed]
+        tool_history_messages: list[Message] = []
+        if completed_interactions and not config.tool_result_display.tombstone_mode:
+            tool_history_messages = self._build_tool_history_messages(completed_interactions)
+            continuum.add_tool_history(tool_history_messages)
 
         assistant_msg_obj, response_events = continuum.add_assistant_message(
             clean_response_text, assistant_metadata
@@ -683,7 +864,7 @@ class ContinuumOrchestrator:
             metadata=user_msg_obj.metadata
         )
 
-        unit_of_work.add_messages(persist_user_msg, assistant_msg_obj)
+        unit_of_work.add_messages(persist_user_msg, *tool_history_messages, assistant_msg_obj)
         unit_of_work.mark_metadata_updated()
 
         # Auto-continuation: If tools were loaded and we haven't already tried,
@@ -968,7 +1149,7 @@ class ContinuumOrchestrator:
         if len(messages) < window_size * 2 + 1:
             # Too few messages, use oldest-first fallback
             logger.info(f"Too few messages for drift detection ({len(messages)}), using fallback")
-            result = messages[:1] + messages[fallback_prune_count + 1:]
+            result = _safe_slice(messages, fallback_prune_count + 1)
             details = {
                 "window_size": window_size,
                 "threshold": drift_threshold,
@@ -988,7 +1169,7 @@ class ContinuumOrchestrator:
                 for m in content_messages[i:i + window_size]
             )
             # Use fast embeddings for drift detection
-            embedding = self.embeddings_provider.embed_query(window_text)
+            embedding = self.embeddings_provider.encode_realtime(window_text)
             windows.append((i, embedding))
 
         # Find candidate cut points (similarity drops)
@@ -1034,12 +1215,12 @@ class ContinuumOrchestrator:
         if best_cut_idx is not None:
             # Found topic boundary - keep system msg + messages from boundary onward
             logger.info(f"Topic drift detected at message {best_cut_idx}, dropping {best_cut_idx} messages")
-            return messages[:1] + content_messages[best_cut_idx:], details
+            return _safe_slice(messages, best_cut_idx + 1), details
         else:
             # No clear boundary - use oldest-first fallback
             logger.info(f"No topic drift found, using oldest-first fallback ({fallback_prune_count} messages)")
             details["selection_method"] = "fallback"
-            return messages[:1] + messages[fallback_prune_count + 1:], details
+            return _safe_slice(messages, fallback_prune_count + 1), details
 
     def _llm_judge_cut_point(self, messages: list[dict[str, object]]) -> int | None:
         """
@@ -1076,7 +1257,7 @@ class ContinuumOrchestrator:
                 str(m.get('content', ''))[:500]
                 for m in content_messages[i:i + window_size]
             )
-            embedding = self.embeddings_provider.embed_query(window_text)
+            embedding = self.embeddings_provider.encode_realtime(window_text)
             windows.append((i, embedding))
 
         # Find candidate cut points
@@ -1257,13 +1438,40 @@ Respond with ONLY the boundary number (1-{len(candidate_cuts)}) or "NONE" if no 
             # Remediation 2: Pure oldest-first fallback (maximum speed)
             logger.info("Remediation 2: Pure oldest-first fallback")
             prune_count = config.context.overflow_fallback_prune_count
-            result = messages_for_llm[:1] + messages_for_llm[prune_count + 1:]
+            result = _safe_slice(messages_for_llm, prune_count + 1)
 
             logger.info(
                 "Overflow remediated: oldest-first fallback | tier=2 tokens=%d before=%d after=%d event=%s",
                 estimated_tokens, messages_before, len(result), event_type
             )
             return result
+
+    def _process_checkin_response(self, checkin_response: str) -> None:
+        """
+        Store check-in feedback and invalidate the LoRA trinket cache.
+
+        Non-fatal: logs errors but doesn't fail the conversation turn.
+
+        Args:
+            checkin_response: Extracted feedback text from <mira:checkin_response> tag
+        """
+        try:
+            from cns.infrastructure.feedback_tracker import FeedbackTracker
+            from utils.user_context import get_current_user_id
+            from clients.valkey_client import get_valkey_client
+            from working_memory.trinkets.base import TRINKET_KEY_PREFIX
+
+            user_id = get_current_user_id()
+            tracker = FeedbackTracker()
+            tracker.acknowledge_checkin(user_id, checkin_response)
+
+            # Invalidate LoRA trinket cache so next turn omits <behavioral_checkin>
+            valkey = get_valkey_client()
+            valkey.hdel_with_retry(f"{TRINKET_KEY_PREFIX}:{user_id}", "behavioral_directives")
+
+            logger.info("Check-in response processed for user %s", user_id)
+        except Exception as e:
+            logger.error("Failed to process check-in response: %s", e, exc_info=True)
 
 
 # Global orchestrator instance (singleton pattern)

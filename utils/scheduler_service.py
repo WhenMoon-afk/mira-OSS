@@ -112,7 +112,7 @@ class SchedulerService:
         try:
             logger.info("Stopping scheduler service")
 
-            self.scheduler.shutdown(wait=True)
+            self.scheduler.shutdown(wait=False)  # AsyncIOExecutor ignores wait=True anyway
 
             self._running = False
             logger.info("Scheduler service stopped")

@@ -104,89 +104,65 @@ if [ -n "$CONFIG_PATCH_OLLAMA_MODEL" ] && [ "$CONFIG_PATCH_OLLAMA_MODEL" != "qwe
     echo -e "${CHECKMARK}"
 fi
 
-# Patch config for offline mode (all LLM endpoints use Ollama instead of Groq)
+# Offline mode: LLM endpoints are configured post-schema by postgresql.sh
+# (INSERTs offline tier, UPDATEs internal_llm to Ollama endpoints/models)
 if [ "$CONFIG_OFFLINE_MODE" = "yes" ]; then
-    echo -ne "${DIM}${ARROW}${RESET} Patching config for offline mode... "
-    OLLAMA_MODEL="${CONFIG_OLLAMA_MODEL:-qwen3:1.7b}"
-    if [ "$OS" = "macos" ]; then
-        # Patch database schema - account_tiers for offline mode (endpoint, model, api_key)
-        sed -i '' "s|https://api.groq.com/openai/v1/chat/completions|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i '' "s|'qwen/qwen3-32b'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i '' "s|'moonshotai/kimi-k2-instruct-0905'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i '' "s|, 'provider_key')|, NULL)|g" /opt/mira/app/deploy/mira_service_schema.sql
-        # Patch database schema - internal_llm for offline mode (analysis)
-        sed -i '' "s|'openai/gpt-oss-20b'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        # Patch database schema - internal_llm for offline mode (summary)
-        sed -i '' "s|'claude-haiku-4-5'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i '' "s|https://api.anthropic.com/v1/messages|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i '' "s|, 'anthropic_key',|, NULL,|g" /opt/mira/app/deploy/mira_service_schema.sql
-        # Patch database schema - internal_llm for offline mode (injection_defense)
-        sed -i '' "s|'meta-llama/llama-3.1-8b-instruct'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i '' "s|https://openrouter.ai/api/v1/chat/completions|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
-    else
-        # Patch database schema - account_tiers for offline mode (endpoint, model, api_key)
-        sed -i "s|https://api.groq.com/openai/v1/chat/completions|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i "s|'qwen/qwen3-32b'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i "s|'moonshotai/kimi-k2-instruct-0905'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i "s|, 'provider_key')|, NULL)|g" /opt/mira/app/deploy/mira_service_schema.sql
-        # Patch database schema - internal_llm for offline mode (analysis)
-        sed -i "s|'openai/gpt-oss-20b'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        # Patch database schema - internal_llm for offline mode (summary)
-        sed -i "s|'claude-haiku-4-5'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i "s|https://api.anthropic.com/v1/messages|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i "s|, 'anthropic_key',|, NULL,|g" /opt/mira/app/deploy/mira_service_schema.sql
-        # Patch database schema - internal_llm for offline mode (injection_defense)
-        sed -i "s|'meta-llama/llama-3.1-8b-instruct'|'${OLLAMA_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-        sed -i "s|https://openrouter.ai/api/v1/chat/completions|http://localhost:11434/v1/chat/completions|g" /opt/mira/app/deploy/mira_service_schema.sql
-    fi
-    echo -e "${CHECKMARK}"
-
-    # Reminder: tools have hardcoded LLM configs
     echo ""
-    echo -e "${DIM}NOTE: Tools (web_tool, getcontext_tool) use hardcoded LLM configs.${RESET}"
+    echo -e "${DIM}NOTE: Tools (web_tool, forage_tool) use hardcoded LLM configs.${RESET}"
     echo -e "${DIM}For offline providers, edit the tool config classes directly:${RESET}"
     echo -e "${DIM}  - tools/implementations/web_tool.py (WebToolConfig)${RESET}"
-    echo -e "${DIM}  - tools/implementations/getcontext_tool.py (GetContextToolConfig)${RESET}"
+    echo -e "${DIM}  - tools/implementations/forage_tool.py (ForageToolConfig)${RESET}"
     echo ""
 fi
 
-# Patch provider endpoint and model if not Groq (after files are copied, before database is created)
-if [ "$CONFIG_PROVIDER_NAME" != "Groq" ] && [ -n "$CONFIG_PROVIDER_ENDPOINT" ]; then
-    echo -ne "${DIM}${ARROW}${RESET} Patching provider endpoint (${CONFIG_PROVIDER_NAME})... "
-    if [ "$OS" = "macos" ]; then
-        # Patch database schema - account_tiers and internal_llm endpoints
-        sed -i '' "s|https://api.groq.com/openai/v1/chat/completions|${CONFIG_PROVIDER_ENDPOINT}|g" /opt/mira/app/deploy/mira_service_schema.sql
-    else
-        # Patch database schema - account_tiers and internal_llm endpoints
-        sed -i "s|https://api.groq.com/openai/v1/chat/completions|${CONFIG_PROVIDER_ENDPOINT}|g" /opt/mira/app/deploy/mira_service_schema.sql
-    fi
-    echo -e "${CHECKMARK}"
+# Patch schema for user's configured providers (chat tier + subcortical)
+if [ "$CONFIG_OFFLINE_MODE" != "yes" ]; then
+    SCHEMA="/opt/mira/app/deploy/mira_service_schema.sql"
 
-    # Patch model names if user specified a model
-    if [ -n "$CONFIG_PROVIDER_MODEL" ]; then
-        echo -ne "${DIM}${ARROW}${RESET} Patching model names (${CONFIG_PROVIDER_MODEL})... "
+    # --- Chat tier: patch primary row if generic, or if Anthropic with non-default model ---
+    if [ "$CONFIG_CHAT_PROVIDER_TYPE" = "generic" ]; then
+        echo -ne "${DIM}${ARROW}${RESET} Configuring chat tier (generic: ${CONFIG_CHAT_MODEL})... "
         if [ "$OS" = "macos" ]; then
-            # Patch database schema - account_tiers models
-            sed -i '' "s|'qwen/qwen3-32b'|'${CONFIG_PROVIDER_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-            sed -i '' "s|'moonshotai/kimi-k2-instruct-0905'|'${CONFIG_PROVIDER_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-            # Patch database schema - internal_llm models (execution and analysis only)
-            sed -i '' "s|'openai/gpt-oss-20b'|'${CONFIG_PROVIDER_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
+            sed -i '' "s|('primary', 'claude-sonnet-4-6', 0, 'Primary', 1, 'anthropic', NULL, NULL, FALSE)|('primary', '${CONFIG_CHAT_MODEL}', 0, 'Primary', 1, 'generic', '${CONFIG_CHAT_ENDPOINT}', 'openaicompat_key', FALSE)|" "$SCHEMA"
         else
-            # Patch database schema - account_tiers models
-            sed -i "s|'qwen/qwen3-32b'|'${CONFIG_PROVIDER_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-            sed -i "s|'moonshotai/kimi-k2-instruct-0905'|'${CONFIG_PROVIDER_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
-            # Patch database schema - internal_llm models (execution and analysis only)
-            sed -i "s|'openai/gpt-oss-20b'|'${CONFIG_PROVIDER_MODEL}'|g" /opt/mira/app/deploy/mira_service_schema.sql
+            sed -i "s|('primary', 'claude-sonnet-4-6', 0, 'Primary', 1, 'anthropic', NULL, NULL, FALSE)|('primary', '${CONFIG_CHAT_MODEL}', 0, 'Primary', 1, 'generic', '${CONFIG_CHAT_ENDPOINT}', 'openaicompat_key', FALSE)|" "$SCHEMA"
+        fi
+        echo -e "${CHECKMARK}"
+    elif [ "$CONFIG_CHAT_MODEL" != "claude-sonnet-4-6" ] && [ -n "$CONFIG_CHAT_MODEL" ]; then
+        echo -ne "${DIM}${ARROW}${RESET} Patching chat model (${CONFIG_CHAT_MODEL})... "
+        if [ "$OS" = "macos" ]; then
+            sed -i '' "s|'claude-sonnet-4-6'|'${CONFIG_CHAT_MODEL}'|" "$SCHEMA"
+        else
+            sed -i "s|'claude-sonnet-4-6'|'${CONFIG_CHAT_MODEL}'|" "$SCHEMA"
         fi
         echo -e "${CHECKMARK}"
     fi
 
-    # Reminder: tools have hardcoded LLM configs
+    # --- Subcortical: patch endpoint + model if non-default ---
+    if [ "$CONFIG_SUBCORTICAL_ENDPOINT" != "https://api.groq.com/openai/v1/chat/completions" ] && [ -n "$CONFIG_SUBCORTICAL_ENDPOINT" ]; then
+        echo -ne "${DIM}${ARROW}${RESET} Patching subcortical endpoint... "
+        if [ "$OS" = "macos" ]; then
+            sed -i '' "s|https://api.groq.com/openai/v1/chat/completions|${CONFIG_SUBCORTICAL_ENDPOINT}|g" "$SCHEMA"
+        else
+            sed -i "s|https://api.groq.com/openai/v1/chat/completions|${CONFIG_SUBCORTICAL_ENDPOINT}|g" "$SCHEMA"
+        fi
+        echo -e "${CHECKMARK}"
+    fi
+    if [ "$CONFIG_SUBCORTICAL_MODEL" != "qwen/qwen3-32b" ] && [ -n "$CONFIG_SUBCORTICAL_MODEL" ]; then
+        echo -ne "${DIM}${ARROW}${RESET} Patching subcortical model (${CONFIG_SUBCORTICAL_MODEL})... "
+        if [ "$OS" = "macos" ]; then
+            sed -i '' "s|qwen/qwen3-32b|${CONFIG_SUBCORTICAL_MODEL}|g" "$SCHEMA"
+        else
+            sed -i "s|qwen/qwen3-32b|${CONFIG_SUBCORTICAL_MODEL}|g" "$SCHEMA"
+        fi
+        echo -e "${CHECKMARK}"
+    fi
+
     echo ""
-    echo -e "${DIM}NOTE: Tools (web_tool, getcontext_tool) use hardcoded LLM configs.${RESET}"
+    echo -e "${DIM}NOTE: Tools (web_tool, forage_tool) use hardcoded LLM configs.${RESET}"
     echo -e "${DIM}For custom providers, edit the tool config classes directly:${RESET}"
     echo -e "${DIM}  - tools/implementations/web_tool.py (WebToolConfig)${RESET}"
-    echo -e "${DIM}  - tools/implementations/getcontext_tool.py (GetContextToolConfig)${RESET}"
+    echo -e "${DIM}  - tools/implementations/forage_tool.py (ForageToolConfig)${RESET}"
     echo ""
 fi
 
@@ -265,12 +241,29 @@ if venv/bin/python3 -c "import spacy.util; exit(0 if spacy.util.is_package('en_c
     echo -e "${CHECKMARK} ${DIM}(already installed)${RESET}"
 else
     echo -e "${DIM}(not found)${RESET}"
+    # spacy >=3.8.12 gates download on shutil.which("pip") — fails in venvs
+    # where only pip3 exists (common with ensurepip). Resolve the compatible
+    # model URL via spacy's own compatibility API, then pip-install directly.
+    SPACY_MODEL_URL=$(venv/bin/python3 -c "
+from spacy.cli.download import get_compatibility, get_version, get_model_filename
+from spacy import about
+compat = get_compatibility()
+version = get_version('en_core_web_lg', compat)
+filename = get_model_filename('en_core_web_lg', version, sdist=False)
+base = about.__download_url__.rstrip('/') + '/'
+print(base + filename)
+")
     if [ "$LOUD_MODE" = true ]; then
         print_step "Installing spaCy language model..."
-        venv/bin/python3 -m spacy download en_core_web_lg
+        venv/bin/python3 -m pip install "${SPACY_MODEL_URL}"
     else
-        (venv/bin/python3 -m spacy download en_core_web_lg > /dev/null 2>&1) &
+        (venv/bin/python3 -m pip install -q "${SPACY_MODEL_URL}") &
         show_progress $! "Installing spaCy language model"
+        if [ $? -ne 0 ]; then
+            print_error "Failed to install spaCy language model (en-core-web-lg)"
+            print_info "Run with --loud flag to see detailed error output"
+            exit 1
+        fi
     fi
 fi
 

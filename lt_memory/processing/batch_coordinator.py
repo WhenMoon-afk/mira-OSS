@@ -46,6 +46,16 @@ class BatchResultProcessor(ABC):
         """
         pass
 
+    def finalize_batch(self, batch_id: str, user_id: str) -> None:
+        """
+        Called once after all records for a batch_id have been processed.
+
+        Override to trigger downstream work that should happen once per Anthropic
+        batch rather than once per DB record (e.g., relationship classification
+        after all extraction chunks complete).
+        """
+        pass
+
 
 class BatchCoordinator:
     """
@@ -123,7 +133,8 @@ class BatchCoordinator:
         result_processor: BatchResultProcessor,
         update_status_fn: Callable[..., None],
         increment_retry_fn: Callable[[Any, str], None],
-        delete_batch_fn: Callable[[Any, str], None]
+        delete_batch_fn: Callable[[Any, str], None],
+        claim_batch_fn: Callable[[Any, str], bool] = None
     ) -> Dict[str, int]:
         """
         Generic batch polling loop.
@@ -141,6 +152,8 @@ class BatchCoordinator:
                 Called as: update_status_fn(batch_id, status, error_message=..., user_id=...)
             increment_retry_fn: Function to increment retry count (batch_id, user_id)
             delete_batch_fn: Function to delete batch after success (batch_id, user_id)
+            claim_batch_fn: Atomically claim batch before processing (batch_id, user_id).
+                Returns True if claimed, False if already claimed by another thread.
 
         Returns:
             Stats dict (checked, completed, failed, expired)
@@ -183,7 +196,16 @@ class BatchCoordinator:
                 batch_groups[batch.batch_id] = []
             batch_groups[batch.batch_id].append(batch)
 
+        groups_processed = 0
         for batch_id, batches in batch_groups.items():
+            if groups_processed >= self.config.max_batches_per_poll:
+                logger.info(
+                    f"Reached per-cycle limit ({self.config.max_batches_per_poll}), "
+                    f"deferring {len(batch_groups) - groups_processed} remaining batch groups"
+                )
+                break
+            groups_processed += 1
+
             stats["checked"] += len(batches)
 
             # Check expiration
@@ -224,7 +246,15 @@ class BatchCoordinator:
 
             # Handle batch status
             if batch_info.processing_status == "ended":
+                any_succeeded = False
                 for b in batches:
+                    # Atomically claim batch before processing to prevent
+                    # concurrent threads from processing the same batch
+                    # (happens when poll timeout fires but thread continues)
+                    if claim_batch_fn and not claim_batch_fn(b.id, b.user_id):
+                        logger.debug(f"Batch {b.id} already claimed by another thread, skipping")
+                        continue
+
                     try:
                         # Process with timeout to prevent infinite hangs
                         # CRITICAL: Don't use 'with' context manager - it calls
@@ -234,6 +264,7 @@ class BatchCoordinator:
                         try:
                             if future.result(timeout=self.config.batch_processing_timeout_seconds):
                                 stats["completed"] += 1
+                                any_succeeded = True
                                 delete_batch_fn(b.id, b.user_id)
                             else:
                                 raise RuntimeError("Processing returned False")
@@ -269,6 +300,13 @@ class BatchCoordinator:
                                 user_id=b.user_id
                             )
                         stats["failed"] += 1
+
+                # Trigger downstream work once for the entire Anthropic batch
+                if any_succeeded:
+                    try:
+                        result_processor.finalize_batch(batch_id, batches[0].user_id)
+                    except Exception as e:
+                        logger.error(f"Error finalizing batch {batch_id}: {e}", exc_info=True)
 
             elif batch_info.processing_status == "in_progress":
                 for b in batches:
@@ -310,7 +348,8 @@ class BatchCoordinator:
                 result_processor=result_processor,
                 update_status_fn=lambda bid, status, **kw: self.db.update_batch_status("extraction", bid, status, **kw),
                 increment_retry_fn=lambda bid, uid: self.db.increment_batch_retry("extraction", bid, uid),
-                delete_batch_fn=lambda bid, uid: self.db.delete_batch("extraction", bid, uid)
+                delete_batch_fn=lambda bid, uid: self.db.delete_batch("extraction", bid, uid),
+                claim_batch_fn=lambda bid, uid: self.db.claim_batch("extraction", bid, uid)
             )
 
             for key in all_stats:
@@ -342,7 +381,8 @@ class BatchCoordinator:
                 result_processor=result_processor,
                 update_status_fn=lambda bid, status, **kw: self.db.update_batch_status("post_processing", bid, status, **kw),
                 increment_retry_fn=lambda bid, uid: self.db.increment_batch_retry("post_processing", bid, uid),
-                delete_batch_fn=lambda bid, uid: self.db.delete_batch("post_processing", bid, uid)
+                delete_batch_fn=lambda bid, uid: self.db.delete_batch("post_processing", bid, uid),
+                claim_batch_fn=lambda bid, uid: self.db.claim_batch("post_processing", bid, uid)
             )
 
             for key in all_stats:

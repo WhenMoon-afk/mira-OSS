@@ -76,10 +76,10 @@ class ReminderManager(EventAwareTrinket):
         categories: List[Tuple[_CategoryConfig, List[Dict], List[Dict]]] = []
         for config, cat_name in [(_USER_CONFIG, "user"), (_INTERNAL_CONFIG, "internal")]:
             overdue = self._collect_reminders(self._reminder_tool.run(
-                operation="get_reminders", date_type="overdue", category=cat_name
+                operation="get_reminders", date_filter="overdue", category=cat_name
             ))
             today = self._collect_reminders(self._reminder_tool.run(
-                operation="get_reminders", date_type="today", category=cat_name
+                operation="get_reminders", date_filter="today", category=cat_name
             ))
             categories.append((config, overdue, today))
 

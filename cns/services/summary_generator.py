@@ -10,7 +10,7 @@ from enum import Enum
 from dataclasses import dataclass
 from pathlib import Path
 
-from cns.core.message import Message
+from cns.core.message import Message, preprocess_content_blocks
 from cns.infrastructure.continuum_repository import ContinuumRepository
 from clients.llm_provider import LLMProvider, ContextOverflowError
 from utils.timezone_utils import utc_now
@@ -166,14 +166,14 @@ class SummaryGenerator:
             raw_summary_output = self.llm_provider.extract_text_content(response)
 
             # Extract synopsis, display title, and complexity from output
-            synopsis, display_title, complexity = self._extract_summary_components(raw_summary_output)
+            result = self._extract_summary_components(raw_summary_output)
 
             logger.info(
-                f"Generated {summary_type.value} (complexity={complexity}), "
+                f"Generated {summary_type.value} (complexity={result.complexity}), "
                 f"summarizing {len(messages) if messages else 'pre-formatted'} messages"
             )
 
-            return SummaryResult(synopsis=synopsis.strip(), display_title=display_title, complexity=complexity)
+            return result
 
         except ContextOverflowError:
             # Segment too large for single pass - use hierarchical summarization
@@ -257,32 +257,14 @@ class SummaryGenerator:
             role_label = msg.role.upper()
             content = msg.content
 
-            # Handle structured content (multimodal messages with images, tool calls, etc.)
+            # Preprocess structured content (strips media, truncates tool results)
             if isinstance(content, list):
-                text_parts = []
-                media_count = 0
-                for block in content:
-                    if isinstance(block, dict):
-                        block_type = block.get('type', '')
-                        if block_type == 'text':
-                            text_parts.append(block.get('text', ''))
-                        elif block_type in ('image', 'image_url', 'container_upload'):
-                            media_count += 1
-                        elif block_type == 'tool_use':
-                            text_parts.append(f"[Used tool: {block.get('name', 'unknown')}]")
-                        elif block_type == 'tool_result':
-                            # Summarize tool result briefly
-                            result = block.get('content', '')
-                            if isinstance(result, str) and len(result) > 200:
-                                result = result[:200] + '...'
-                            text_parts.append(f"[Tool result: {result}]")
-
-                # Combine text parts, note if media was present
-                content = ' '.join(text_parts)
-                if media_count > 0:
-                    content = f"[{media_count} image(s) shared] {content}".strip()
+                preprocessed = preprocess_content_blocks(content)
+                content = ' '.join(preprocessed.text_parts)
+                if preprocessed.image_count > 0:
+                    content = f"[{preprocessed.image_count} image(s) shared] {content}".strip()
                 if not content:
-                    content = f"[{media_count} image(s) shared, no text]"
+                    content = f"[{preprocessed.image_count} image(s) shared, no text]"
 
             formatted_lines.append(f"{role_label}: {content}")
 

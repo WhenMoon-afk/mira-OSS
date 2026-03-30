@@ -637,6 +637,144 @@ Two required fields:
 - Clear descriptions - Claude uses these to understand how to call the tool
 - Mark required fields in `"required"` array
 
+## Writing the Top-Level Tool Description
+
+The `description` field in `anthropic_schema` is a tool-selection label. Its only job: the LLM glances at it and knows whether to pick up this tool. It is not an operation manifest, not defensive documentation, not a place for parameter guards or disambiguation infrastructure.
+
+### What it is
+
+Plain functional language. What does the tool do, stated simply.
+
+**Good examples:**
+- `"Search the web, fetch and extract webpage content, make HTTP requests to APIs."`
+- `"Send and receive short messages between virtual pager devices."`
+- `"Search past conversation history."`
+- `"Search and manage long-term memories."`
+- `"Create and manage scheduled reminders with contact linking."`
+
+### What it is not
+
+- Operation-by-operation documentation (the enum handles this)
+- Parameter name corrections (parameter descriptions handle this)
+- Disambiguation from other tools (system prompt handles this)
+- Behavioral coaching or sequencing instructions (system prompt handles this)
+- Consequence framing or failure mode prevention (parameter descriptions handle this)
+
+### The one exception
+
+If the tool has a behavioral constraint that is genuinely part of what the tool *does* — not a guardrail, but a core design property invisible from the enum and parameters alone — include it. Example:
+
+> `"Generate and refine AI images. Results return to you only — the user sees the image when you publish it."`
+
+The visibility model here isn't defensive documentation. It's what the tool does. Without it, the caller's mental model of the tool is fundamentally wrong.
+
+### Rule of thumb
+
+If you can describe what the tool does in under 15 words, do that. If you need more, ask whether the extra words describe what the tool *does* or what the caller *should do* — the latter belongs elsewhere.
+
+---
+
+## Writing anthropic_schema Parameter Descriptions
+
+Parameter descriptions in `anthropic_schema` are interface contracts, not documentation. The reader is a language model that will infer behavior from your word choices — imprecise language causes real tool-call failures downstream. Every description must constrain behavior, not merely describe it.
+
+### The Standard
+
+Six attributes define a well-written parameter description:
+
+**Precision-oriented compression.** Pack maximum behavioral information into minimum tokens. Word choice is functional, not aesthetic. "Literal string to match" prevents a regex assumption. "Exact" disambiguates matching behavior. Each word is load-bearing — if you can remove a word without losing a constraint, remove it.
+
+**Caller-model empathy.** Before writing, ask: what will the model infer or assume from this description? What can go wrong if it reads this wrong? Drop internal jargon the caller has no context for. A description referencing "segment collapse" or "the overview section" means nothing to an LLM that has never seen your codebase — it will hallucinate what those mean and act on that hallucination.
+
+**Implementation-grounded.** Read the code that consumes the parameter before writing its description. `str.replace()` means literal matching, not regex. A set equality check means exhaustive lists, not partial. A `max(0, min(value, 10))` clamp means the valid range is 0-10 regardless of what the caller passes. Describe actual code behavior, not intended behavior.
+
+**Zero hedging.** State facts flatly. "Longer values are rejected." Not "may be rejected" or "could cause issues." Confidence is earned by reading the code — if you know what it does, say it.
+
+**Terse failure-mode annotations.** When reviewing an existing description, the note identifies the specific failure the current wording enables. "A caller might assume truncation — code raises ValueError on overflow." Not an explanation of why bad descriptions are bad. Point at the gap, state the fix, move on.
+
+**Contrastive proposals.** Generate at least three options, varying them along a real axis — specificity vs. brevity, implementation detail vs. caller-facing behavior. Description quality is empirical. You cannot know which phrasing an LLM will act on correctly without seeing alternatives side by side.
+
+---
+
+### Practical Standards
+
+#### Parameter Naming
+
+Names must match what the parameter actually contains. Every mismatch is cognitive overhead for the model — a reach toward a name that feels right is the root of a hallucination.
+
+- **IDs:** Use `xxx_XXXXXXXX` format — 3-letter prefix + 8 hex chars. The prefix encodes entity type unambiguously: `mem_a1b2c3d4`, `rem_a1b2c3d4`, `msg_a1b2c3d4`. Never use dash-separated formats like `PAGER-XXXX` or bare hex strings.
+- **Timestamps:** Suffix `_at` for moments in time (`happens_at`, `expires_at`, `created_at`). Suffix `_time` for search window boundaries (`start_time`, `end_time`). Never use bare `date` for a datetime field.
+- **LLM instruction parameters:** Name them `instructions`, not `prompt`. "Instructions" signals directives to a downstream model. "Prompt" is ambiguous — the caller may assume it refers to the user's message.
+- **Boolean filters:** Names should encode the filtering direction clearly. `unread_only` not `filter_unread`. The name should make the default state obvious.
+
+#### Timestamps
+
+MIRA operates in user-local time — UTC is a server implementation detail invisible at the tool interface. All timestamp descriptions and examples should use ISO 8601 in user-local time:
+
+```
+ISO 8601 (YYYY-MM-DDTHH:MM:SS)
+```
+
+Do not include the Z suffix. Do not say "UTC." The server handles timezone conversion internally.
+
+For parameters that accept relative language alongside absolute timestamps, state both forms:
+
+```
+Accepts ISO 8601 (YYYY-MM-DDTHH:MM:SS) or relative phrases like 'tomorrow', 'in 2 days', 'next week'
+```
+
+Past-relative phrases apply to event occurrence timestamps (`happens_at`, `'6 months ago'`, `'last Tuesday'`). Future-relative phrases apply to expiry timestamps (`expires_at`, `'in 3 months'`). Reminder dates accept both directions naturally.
+
+#### What to Omit
+
+Remove parameters that:
+- Are configurability-for-configurability's-sake — the default is always correct in practice
+- Duplicate another parameter's function under a different name
+- Expose implementation details the caller should never act on
+- Can be handled automatically by the server (e.g., auth header names and prefixes when credential injection is already handling auth)
+
+Every parameter you remove is one the model cannot get wrong.
+
+#### Mutual Exclusivity vs. Co-dependency
+
+**Mutually exclusive parameters** (providing both is an error) must be enforced in code — raise on both-provided — and declared in each description: "Mutually exclusive with X — providing both raises an error."
+
+**Co-dependent parameters** (neither works without the other) must be declared in the schema using `dependentRequired`:
+
+```json
+"dependentRequired": {
+  "temporal_direction": ["reference_time"],
+  "reference_time": ["temporal_direction"]
+}
+```
+
+The model reads `dependentRequired` as a schema-level constraint. Reinforce it in the description prose as well: "Ignored unless reference_time is also set."
+
+#### Operation Scoping
+
+When a parameter applies only to certain operations, say so explicitly at the end of the description: "Only for 'expand_message'." "Used by send_message and send_location." Omit this only when the parameter applies uniformly to all operations. A caller that doesn't know a parameter is scoped will set it on the wrong operation and expect it to work.
+
+#### The One-Sentence Rule
+
+Each description is one sentence. If you cannot fit the behavioral constraint, required co-parameters, valid range, and operation scope into one sentence — compress harder. Cut hedges. Cut filler. Cut historical context. Keep the constraint. If the sentence still won't close, the parameter is probably doing too much and should be split.
+
+---
+
+### Review Checklist
+
+Before finalizing any parameter description:
+
+- [ ] Read the code — does the description match actual validation, defaults, clamps, and rejection vs. truncation behavior?
+- [ ] Would an LLM caller know exactly what value to pass here?
+- [ ] Are co-dependencies named inline or enforced via `dependentRequired`?
+- [ ] Are valid ranges, defaults, and format constraints stated?
+- [ ] Is internal jargon absent?
+- [ ] Is operation scope stated if the parameter is not universal?
+- [ ] Does the name match what the parameter actually contains?
+- [ ] Can any word be removed without losing a behavioral constraint?
+
+---
+
 ### Database Operations Quick Reference
 
 **See utils/userdata_manager.py:332-405** for full implementation.

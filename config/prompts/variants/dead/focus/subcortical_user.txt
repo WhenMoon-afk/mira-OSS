@@ -1,0 +1,12 @@
+<conversational_context>
+{conversation_turns}
+</conversational_context>
+------------------------------------------------------------
+<system_message>Execute the four-step IR process on this turn:</system_message>
+<turn speaker="user">{user_message}</turn>
+------------------------------------------------------------
+<stored_passages>
+{previous_memories}
+</stored_passages>
+------------------------------------------------------------
+<primary_focus>All four tasks — entity extraction, passage filtering, query expansion, and complexity — must be grounded in the current user turn above, not the conversational history. The conversation context is for pronoun resolution and topic continuity only. Expand what the user is saying NOW.</primary_focus>

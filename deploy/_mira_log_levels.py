@@ -1,9 +1,11 @@
 """
 MIRA custom log level registration.
 
-Installed into site-packages via scripts/install_log_levels.py so that
-TOAST is available on every Logger instance at interpreter startup —
-before any application code runs. Zero external dependencies.
+Install into site-packages with: python scripts/install_log_levels.py
+
+This copies the module + a .pth auto-import hook so that TOAST is
+available on every Logger instance at interpreter startup — before
+any application code runs. Zero external dependencies.
 """
 
 import logging

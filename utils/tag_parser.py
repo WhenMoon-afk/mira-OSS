@@ -91,6 +91,7 @@ class ParsedResponse(TypedDict):
     display_title: Optional[str]
     complexity: Optional[float]
     internal_monologue: Optional[str]
+    checkin_response: Optional[str]
     clean_text: str
 
 
@@ -134,6 +135,13 @@ class TagParser:
     # Uses mira: namespace like all other Mira output tags
     INTERNAL_MONOLOGUE_PATTERN = re.compile(
         r'<mira:internal_monologue>(.*?)</mira:internal_monologue>\s*',
+        re.DOTALL | re.IGNORECASE
+    )
+    # Pattern for check-in response feedback (behavioral debrief return path)
+    # Extracted via finditer + last-match-wins: if Mira revises the tag
+    # within the same response, the final version is what gets stored.
+    CHECKIN_RESPONSE_PATTERN = re.compile(
+        r'<mira:checkin_response>(.*?)</mira:checkin_response>',
         re.DOTALL | re.IGNORECASE
     )
 
@@ -184,6 +192,11 @@ class TagParser:
         if monologue_match:
             internal_monologue = monologue_match.group(1).strip()
 
+        # Extract check-in response (last-match-wins for iterative refinement)
+        checkin_response = None
+        for checkin_match in self.CHECKIN_RESPONSE_PATTERN.finditer(response_text):
+            checkin_response = checkin_match.group(1).strip()
+
         parsed = {
             'error_analysis': error_analyses,
             'referenced_memories': [],  # Now handled via memory_tool touch operation
@@ -191,6 +204,7 @@ class TagParser:
             'display_title': display_title,
             'complexity': complexity,
             'internal_monologue': internal_monologue,
+            'checkin_response': checkin_response,
             'clean_text': self.remove_all_tags(response_text, preserve_tags=preserve_tags)
         }
 

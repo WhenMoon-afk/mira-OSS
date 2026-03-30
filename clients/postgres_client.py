@@ -43,7 +43,7 @@ class PostgresClient:
             # Close sync pools
             for pool in cls._connection_pools.values():
                 try:
-                    pool.close()
+                    pool.close(timeout=0)  # Workers are daemon threads — no need to wait
                 except Exception as e:
                     logger.warning(f"Error closing sync pool: {e}", exc_info=True)
             cls._connection_pools.clear()
@@ -88,8 +88,8 @@ class PostgresClient:
                 try:
                     pool = ConnectionPool(
                         conninfo=self._conninfo,
-                        min_size=2,  # TODO: Tune via perftest - set based on observed request burst patterns
-                        max_size=20,  # Maximum connections
+                        min_size=3,
+                        max_size=30,
                         timeout=30,
                         max_lifetime=3600,  # Recycle connections after 1 hour
                         max_idle=300        # Close idle connections after 5 minutes
@@ -225,6 +225,6 @@ class PostgresClient:
     @classmethod
     def close_all_pools(cls):
         for db_name, pool in cls._connection_pools.items():
-            pool.close()
+            pool.close(timeout=0)  # Workers are daemon threads — no need to wait
             logger.toast(f"Connection pool closed: {db_name}")
         cls._connection_pools.clear()

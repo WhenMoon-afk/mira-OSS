@@ -7,6 +7,7 @@ call tools and services directly, just as MIRA does during continuums.
 import logging
 from typing import Any, TYPE_CHECKING, TypedDict
 from enum import Enum
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from fastapi.responses import JSONResponse
@@ -137,13 +138,13 @@ class ReminderDomainHandler(BaseDomainHandler):
     ACTIONS = {
         "complete": {
             "required": ["id"],
-            "optional": [],
-            "types": {"id": str}
+            "optional": ["resolution_note"],
+            "types": {"id": str, "resolution_note": str}
         },
         "bulk_complete": {
             "required": ["ids"],
-            "optional": [],
-            "types": {"ids": list}
+            "optional": ["resolution_note"],
+            "types": {"ids": list, "resolution_note": str}
         },
         "create": {
             "required": ["title", "date"],
@@ -183,37 +184,44 @@ class ReminderDomainHandler(BaseDomainHandler):
         try:
             if action == "complete":
                 # Mark single reminder as completed
-                result = reminder_tool.run(
-                    operation="mark_completed",
-                    reminder_id=data["id"]
-                )
+                run_kwargs: dict[str, Any] = {
+                    "operation": "mark_completed",
+                    "reminder_id": data["id"]
+                }
+                if data.get("resolution_note"):
+                    run_kwargs["resolution_note"] = data["resolution_note"]
+                result = reminder_tool.run(**run_kwargs)
 
                 return {
                     "completed": True,
                     "reminder": result.get("reminder"),
                     "message": result.get("message", "Reminder marked as completed")
                 }
-            
+
             elif action == "bulk_complete":
                 # Mark multiple reminders as completed
                 reminder_ids = data["ids"]
-                
+                resolution_note = data.get("resolution_note")
+
                 # Validate that ids is a non-empty list of strings
                 if not reminder_ids:
                     raise ValidationError("At least one reminder ID is required")
-                
+
                 if not all(isinstance(id, str) for id in reminder_ids):
                     raise ValidationError("All reminder IDs must be strings")
-                
+
                 completed = []
                 failed = []
-                
+
                 for reminder_id in reminder_ids:
                     try:
-                        result = reminder_tool.run(
-                            operation="mark_completed",
-                            reminder_id=reminder_id
-                        )
+                        run_kwargs = {
+                            "operation": "mark_completed",
+                            "reminder_id": reminder_id
+                        }
+                        if resolution_note:
+                            run_kwargs["resolution_note"] = resolution_note
+                        result = reminder_tool.run(**run_kwargs)
                         completed.append({
                             "id": reminder_id,
                             "title": result.get("reminder", {}).get("title", "Unknown")
@@ -373,17 +381,17 @@ class MemoryDomainHandler(BaseDomainHandler):
             memory_id = data["id"]
             
             # Verify memory exists
-            memory = lt_db.get_memory(memory_id)
+            memory = lt_db.get_memory(UUID(memory_id))
             if not memory:
                 raise NotFoundError("memory", memory_id)
 
-            # Delete the memory
-            deleted_count = lt_db.delete_memories([memory_id])
-            
+            # Archive the memory (soft delete)
+            lt_db.archive_memory(UUID(memory_id))
+
             return {
-                "deleted": deleted_count > 0,
+                "deleted": True,
                 "id": memory_id,
-                "message": f"Memory deleted successfully" if deleted_count > 0 else "Failed to delete memory"
+                "message": "Memory deleted successfully"
             }
         
         elif action == "bulk_delete":
@@ -397,14 +405,15 @@ class MemoryDomainHandler(BaseDomainHandler):
             if not all(isinstance(id, str) for id in memory_ids):
                 raise ValidationError("All memory IDs must be strings")
             
-            # Delete memories
-            deleted_count = lt_db.delete_memories(memory_ids)
-            
+            # Archive memories (soft delete)
+            for mid in memory_ids:
+                lt_db.archive_memory(UUID(mid))
+
             return {
-                "deleted_count": deleted_count,
+                "deleted_count": len(memory_ids),
                 "requested_count": len(memory_ids),
                 "ids": memory_ids,
-                "message": f"Deleted {deleted_count} of {len(memory_ids)} memories"
+                "message": f"Deleted {len(memory_ids)} of {len(memory_ids)} memories"
             }
         
         else:
@@ -544,11 +553,12 @@ class UserDomainHandler(BaseDomainHandler):
         },
         "update_profile": {
             "required": [],
-            "optional": ["first_name", "last_name", "timezone"],
+            "optional": ["first_name", "last_name", "timezone", "temperature_unit"],
             "types": {
                 "first_name": str,
                 "last_name": str,
-                "timezone": str
+                "timezone": str,
+                "temperature_unit": str
             }
         },
         "update_preferences": {
@@ -606,7 +616,8 @@ class UserDomainHandler(BaseDomainHandler):
                 "profile": {
                     "first_name": prefs.first_name,
                     "last_name": prefs.last_name,
-                    "timezone": prefs.timezone
+                    "timezone": prefs.timezone,
+                    "temperature_unit": prefs.temperature_unit
                 }
             }
 
@@ -615,8 +626,8 @@ class UserDomainHandler(BaseDomainHandler):
             from clients.valkey_client import get_valkey_client
 
             # At least one field must be provided
-            if not any(k in data for k in ["first_name", "last_name", "timezone"]):
-                raise ValidationError("At least one field (first_name, last_name, timezone) must be provided")
+            if not any(k in data for k in ["first_name", "last_name", "timezone", "temperature_unit"]):
+                raise ValidationError("At least one field (first_name, last_name, timezone, temperature_unit) must be provided")
 
             # Validate timezone if provided
             if "timezone" in data:
@@ -625,6 +636,15 @@ class UserDomainHandler(BaseDomainHandler):
                     validate_timezone(data["timezone"])
                 except Exception:
                     raise ValidationError(f"Invalid timezone: {data['timezone']}")
+
+            # Validate temperature_unit if provided
+            if "temperature_unit" in data:
+                valid_units = ("fahrenheit", "celsius")
+                if data["temperature_unit"] not in valid_units:
+                    raise ValidationError(
+                        f"Invalid temperature unit '{data['temperature_unit']}'. "
+                        f"Valid units: {', '.join(valid_units)}"
+                    )
 
             # Build UPDATE query dynamically based on provided fields
             update_fields = []
@@ -642,18 +662,22 @@ class UserDomainHandler(BaseDomainHandler):
                 update_fields.append("timezone = %(timezone)s")
                 params["timezone"] = data["timezone"]
 
+            if "temperature_unit" in data:
+                update_fields.append("temperature_unit = %(temperature_unit)s")
+                params["temperature_unit"] = data["temperature_unit"]
+
             # Execute update
             session_manager = get_shared_session_manager()
-            db = session_manager.get_session(self.user_id)
-            db.execute(
-                f"UPDATE users SET {', '.join(update_fields)} WHERE id = %(user_id)s",
-                params
-            )
+            with session_manager.get_session(self.user_id) as db:
+                db.execute_update(
+                    f"UPDATE users SET {', '.join(update_fields)} WHERE id = %(user_id)s",
+                    params
+                )
 
             # Invalidate user preferences cache so changes take effect immediately
             valkey = get_valkey_client()
             cache_key = f"user_prefs:{self.user_id}"
-            valkey.delete_with_retry(cache_key)
+            valkey.delete(cache_key)
 
             return {
                 "success": True,
@@ -720,7 +744,6 @@ class UserDomainHandler(BaseDomainHandler):
             # Store calendar URL in user credentials
             credential_service = UserCredentialService()
             credential_service.store_credential(
-                user_id=self.user_id,
                 credential_type="calendar_url",
                 service_name="calendar",
                 credential_value=calendar_url
@@ -736,7 +759,6 @@ class UserDomainHandler(BaseDomainHandler):
 
             credential_service = UserCredentialService()
             calendar_url = credential_service.get_credential(
-                user_id=self.user_id,
                 credential_type="calendar_url",
                 service_name="calendar"
             )
@@ -759,7 +781,7 @@ class UserDomainHandler(BaseDomainHandler):
 
             credential_service = UserCredentialService()
             credential_service.store_credential(
-                credential_type="http_credential",
+                credential_type="api_key",
                 service_name=name,
                 credential_value=value
             )
@@ -776,8 +798,8 @@ class UserDomainHandler(BaseDomainHandler):
             credential_service = UserCredentialService()
             all_creds = credential_service.list_user_credentials()
 
-            # Extract http_credentials - structure is {"http_credential": {"name": {...}}}
-            http_creds_dict = all_creds.get("http_credential", {})
+            # Extract api_key credentials - structure is {"api_key": {"name": {...}}}
+            http_creds_dict = all_creds.get("api_key", {})
             http_creds = [
                 {"name": service_name, "created_at": cred_data.get("created_at")}
                 for service_name, cred_data in http_creds_dict.items()
@@ -795,7 +817,7 @@ class UserDomainHandler(BaseDomainHandler):
             name = data["name"]
             credential_service = UserCredentialService()
             deleted = credential_service.delete_credential(
-                credential_type="http_credential",
+                credential_type="api_key",
                 service_name=name
             )
 
@@ -1779,24 +1801,20 @@ class ContinuumDomainHandler(BaseDomainHandler):
             "optional": [],
             "types": {}
         },
-        "postpone_collapse": {
-            "required": ["minutes"],
-            "optional": [],
-            "types": {
-                "minutes": int
-            }
-        },
-        "get_segment_status": {
+        "pause_session": {
             "required": [],
             "optional": [],
             "types": {}
         },
         "resume_session": {
-            "required": ["minutes"],
+            "required": [],
             "optional": [],
-            "types": {
-                "minutes": int
-            }
+            "types": {}
+        },
+        "get_segment_status": {
+            "required": [],
+            "optional": [],
+            "types": {}
         }
     }
 
@@ -1875,89 +1893,52 @@ class ContinuumDomainHandler(BaseDomainHandler):
             )
 
             handler = get_segment_collapse_handler()
-            collapsed_sentinel = handler.handle_timeout(event)
-
-            if not collapsed_sentinel:
-                raise ValidationError("Segment collapse failed - check server logs")
+            try:
+                collapsed_sentinel = handler.collapse_segment(event, force_immediate=True)
+            except RuntimeError as e:
+                if "no committed messages" in str(e):
+                    return {
+                        "collapsed": False,
+                        "segment_id": segment_id,
+                        "message": "Your conversation is still being processed — "
+                                   "it will wrap up automatically once the response finishes."
+                    }
+                raise
 
             return {
                 "collapsed": True,
                 "segment_id": segment_id,
-                "summary": collapsed_sentinel.metadata.get("segment_summary"),
+                "summary": collapsed_sentinel.content,
                 "title": collapsed_sentinel.metadata.get("display_title"),
                 "message": "Segment collapsed successfully"
             }
 
-        elif action == "postpone_collapse":
+        elif action == "pause_session":
             from cns.infrastructure.continuum_pool import get_continuum_pool
             from cns.infrastructure.continuum_repository import get_continuum_repository
-            from datetime import timedelta
-            from config import config
 
-            minutes = data.get("minutes")
-            if not (1 <= minutes <= 1440):
-                raise ValidationError("minutes must be between 1 and 1440 (24 hours)")
-
-            # Get user's continuum and active segment
             continuum_pool = get_continuum_pool()
             continuum = continuum_pool.get_or_create()
-
             continuum_repo = get_continuum_repository()
+
+            # find_active_segment returns active OR paused — check current state
             sentinel = continuum_repo.find_active_segment(continuum.id, self.user_id)
-
             if not sentinel:
-                # No active segment — try transparent resume of last collapsed segment
-                resumable = continuum_repo.find_resumable_segment(continuum.id, self.user_id)
-                if not resumable:
-                    raise NotFoundError("segment", "active")
+                raise NotFoundError("segment", "active")
 
-                return self._resume_segment(
-                    continuum_repo, continuum, resumable, minutes, config
-                )
+            if sentinel.metadata.get("status") == "paused":
+                raise ValidationError("Session is already paused")
 
             segment_id = sentinel.metadata.get("segment_id")
-            now = utc_now()
-            timeout_minutes = config.system.segment_timeout
 
-            # Compute current collapse_at (same logic as get_segment_status)
-            segment_messages = continuum_repo.load_segment_messages(
-                continuum.id, self.user_id, sentinel.created_at
-            )
-            if segment_messages:
-                last_activity = segment_messages[-1].created_at
-            else:
-                last_activity = sentinel.created_at
-
-            virtual_time_str = sentinel.metadata.get("virtual_last_message_time")
-            if virtual_time_str:
-                from datetime import datetime
-                existing_virtual = datetime.fromisoformat(virtual_time_str)
-                if existing_virtual > last_activity:
-                    last_activity = existing_virtual
-
-            current_collapse_at = last_activity + timedelta(minutes=timeout_minutes)
-
-            # Add X minutes to the current collapse time (floor at now if already expired)
-            new_collapse_at = max(current_collapse_at, now) + timedelta(minutes=minutes)
-
-            # Back-calculate virtual_time so get_segment_status stays consistent
-            virtual_time = new_collapse_at - timedelta(minutes=timeout_minutes)
-
-            success = continuum_repo.set_segment_virtual_last_message_time(
-                continuum.id,
-                self.user_id,
-                virtual_time
-            )
-
+            success = continuum_repo.pause_segment(continuum.id, self.user_id)
             if not success:
-                raise ValidationError("Failed to set postpone - no active segment found")
+                raise ValidationError("Failed to pause — no active segment found")
 
             return {
-                "postponed": True,
+                "paused": True,
                 "segment_id": segment_id,
-                "collapse_at": format_utc_iso(new_collapse_at),
-                "minutes": minutes,
-                "message": f"Segment collapse postponed for {minutes} minutes"
+                "message": "Session paused. It will resume automatically when you send your next message."
             }
 
         elif action == "get_segment_status":
@@ -1966,7 +1947,6 @@ class ContinuumDomainHandler(BaseDomainHandler):
             from datetime import timedelta
             from config import config
 
-            # Get user's continuum and active segment
             continuum_pool = get_continuum_pool()
             continuum = continuum_pool.get_or_create()
 
@@ -1974,30 +1954,29 @@ class ContinuumDomainHandler(BaseDomainHandler):
             sentinel = continuum_repo.find_active_segment(continuum.id, self.user_id)
 
             if not sentinel:
-                # Check for resumable collapsed segment
-                resumable = continuum_repo.find_resumable_segment(continuum.id, self.user_id)
-                if resumable:
-                    return {
-                        "has_active_segment": False,
-                        "segment_id": resumable.metadata.get("segment_id"),
-                        "collapse_at": None,
-                        "is_postponed": False,
-                        "is_resumable": True,
-                        "collapsed_at": resumable.metadata.get("collapsed_at")
-                    }
-
                 return {
                     "has_active_segment": False,
                     "segment_id": None,
                     "collapse_at": None,
-                    "is_postponed": False,
-                    "is_resumable": False
+                    "is_paused": False
                 }
 
             segment_id = sentinel.metadata.get("segment_id")
-            virtual_time_str = sentinel.metadata.get("virtual_last_message_time")
+            status = sentinel.metadata.get("status")
+            is_paused = status == "paused"
 
-            # Get last real message time from segment messages
+            # Paused segments have no collapse_at — timeout is suspended
+            if is_paused:
+                return {
+                    "has_active_segment": True,
+                    "segment_id": segment_id,
+                    "last_activity": sentinel.metadata.get("paused_at"),
+                    "collapse_at": None,
+                    "timeout_minutes": config.system.segment_timeout,
+                    "is_paused": True
+                }
+
+            # Active segment — calculate collapse time from last message
             segment_messages = continuum_repo.load_segment_messages(
                 continuum.id, self.user_id, sentinel.created_at
             )
@@ -2006,16 +1985,6 @@ class ContinuumDomainHandler(BaseDomainHandler):
             else:
                 last_activity = sentinel.created_at
 
-            # Check if virtual time extends beyond actual activity
-            is_postponed = False
-            if virtual_time_str:
-                from datetime import datetime
-                virtual_time = datetime.fromisoformat(virtual_time_str)
-                if virtual_time > last_activity:
-                    last_activity = virtual_time
-                    is_postponed = True
-
-            # Calculate collapse time
             timeout_minutes = config.system.segment_timeout
             collapse_at = last_activity + timedelta(minutes=timeout_minutes)
 
@@ -2025,84 +1994,37 @@ class ContinuumDomainHandler(BaseDomainHandler):
                 "last_activity": format_utc_iso(last_activity),
                 "collapse_at": format_utc_iso(collapse_at),
                 "timeout_minutes": timeout_minutes,
-                "is_postponed": is_postponed,
-                "is_resumable": False
+                "is_paused": False
             }
 
         elif action == "resume_session":
             from cns.infrastructure.continuum_pool import get_continuum_pool
             from cns.infrastructure.continuum_repository import get_continuum_repository
-            from config import config
-
-            minutes = data.get("minutes")
-            if not (1 <= minutes <= 1440):
-                raise ValidationError("minutes must be between 1 and 1440 (24 hours)")
 
             continuum_pool = get_continuum_pool()
             continuum = continuum_pool.get_or_create()
             continuum_repo = get_continuum_repository()
 
-            # Block if an active segment already exists
-            active = continuum_repo.find_active_segment(continuum.id, self.user_id)
-            if active:
-                raise ValidationError("Cannot resume — an active segment already exists")
+            sentinel = continuum_repo.find_active_segment(continuum.id, self.user_id)
+            if not sentinel:
+                raise NotFoundError("segment", "active or paused")
 
-            resumable = continuum_repo.find_resumable_segment(continuum.id, self.user_id)
-            if not resumable:
-                raise NotFoundError("segment", "resumable")
+            if sentinel.metadata.get("status") != "paused":
+                raise ValidationError("Session is already active — nothing to resume")
 
-            return self._resume_segment(
-                continuum_repo, continuum, resumable, minutes, config
-            )
+            segment_id = sentinel.metadata.get("segment_id")
+            success = continuum_repo.unpause_segment(continuum.id, self.user_id)
+            if not success:
+                raise ValidationError("Failed to unpause — segment may have been modified concurrently")
+
+            return {
+                "resumed": True,
+                "segment_id": segment_id,
+                "message": "Session resumed"
+            }
 
         else:
             raise ValidationError(f"Unknown action: {action}")
-
-    def _resume_segment(self, continuum_repo: 'ContinuumRepository', continuum: 'Continuum', resumable: 'Message', minutes: int, config: 'AppConfig') -> dict[str, Any]:
-        """
-        Reactivate a collapsed segment, delete its stale memories, and invalidate cache.
-
-        Shared between postpone_collapse (transparent fallthrough) and resume_session (explicit).
-        """
-        from cns.infrastructure.continuum_pool import get_continuum_pool
-        from datetime import timedelta
-
-        segment_id = resumable.metadata.get("segment_id")
-        timeout_minutes = config.system.segment_timeout
-        now = utc_now()
-
-        # Back-calculate virtual_time for the requested extension
-        new_collapse_at = now + timedelta(minutes=minutes)
-        virtual_time = new_collapse_at - timedelta(minutes=timeout_minutes)
-
-        success = continuum_repo.reactivate_collapsed_segment(
-            continuum.id, segment_id, self.user_id, virtual_time
-        )
-        if not success:
-            raise ValidationError("Resume failed — segment may have been modified concurrently")
-
-        # Delete stale memories from previous collapse
-        deleted_count = continuum_repo.delete_segment_memories(segment_id, self.user_id)
-
-        # Invalidate session cache so next request loads the reactivated segment
-        continuum_pool = get_continuum_pool()
-        continuum_pool.invalidate()
-
-        logger.info(
-            f"Resumed segment {segment_id} for user {self.user_id}, "
-            f"deleted {deleted_count} stale memories"
-        )
-
-        return {
-            "postponed": True,
-            "resumed": True,
-            "segment_id": segment_id,
-            "collapse_at": format_utc_iso(new_collapse_at),
-            "minutes": minutes,
-            "memories_deleted": deleted_count,
-            "message": f"Session resumed with {minutes} minutes extension"
-        }
-
 
 class LoraDomainHandler(BaseDomainHandler):
     """Handler for user model actions."""

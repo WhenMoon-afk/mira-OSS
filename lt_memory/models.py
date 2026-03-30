@@ -11,17 +11,17 @@ from uuid import UUID
 # Valid relationship types for memory linking
 # Used across extraction, linking, and processing modules
 VALID_RELATIONSHIP_TYPES = frozenset({
-    "supports", "conflicts", "supersedes", "refines",
-    "precedes", "contextualizes", "extraction_ref", "null"
+    "corroborates", "conflicts", "supersedes", "refines",
+    "precedes", "contextualizes", "exemplifies", "extraction_ref", "null"
 })
 
 # Type aliases for Literal-validated fields
 RelationshipType = Literal[
-    "supports", "conflicts", "supersedes", "refines",
-    "precedes", "contextualizes", "extraction_ref", "null"
+    "corroborates", "conflicts", "supersedes", "refines",
+    "precedes", "contextualizes", "exemplifies", "extraction_ref", "null"
 ]
 BatchStatus = Literal[
-    "submitted", "processing", "completed", "failed", "expired", "cancelled"
+    "submitted", "processing", "result_processing", "completed", "failed", "expired", "cancelled"
 ]
 BatchKind = Literal["extraction", "post_processing"]
 
@@ -35,7 +35,6 @@ class MemoryLinkEntry(TypedDict):
     """Entry in Memory.inbound_links / outbound_links JSONB arrays."""
     uuid: str
     type: str
-    confidence: float
     reasoning: str
     created_at: str
     extraction_bond: NotRequired[str]
@@ -54,12 +53,12 @@ class AnnotationEntry(TypedDict):
     created_at: str
     source: str
     archived_source_ids: NotRequired[list[str]]
+    source_segment_ids: NotRequired[list[str]]  # Segment provenance preserved during consolidation
 
 
 class LinkMetadata(TypedDict):
     """Transient link context attached during proactive traversal."""
     link_type: str
-    confidence: float
     reasoning: str
     depth: int
     linked_from_id: UUID
@@ -69,7 +68,6 @@ class TraversalResult(TypedDict):
     """Single entry returned by LinkingService.traverse_related()."""
     memory: 'Memory'
     link_type: str | None
-    confidence: float | None
     reasoning: str | None
     depth: int
     linked_from_id: UUID | None
@@ -86,7 +84,6 @@ class ClassificationPayload(TypedDict):
 class ClassificationResult(TypedDict):
     """Parsed result from relationship classification LLM response."""
     relationship_type: str
-    confidence: float
     reasoning: str
 
 
@@ -217,7 +214,6 @@ class Memory(BaseModel):
     inbound_links: List[MemoryLinkEntry] = Field(default_factory=list)
     outbound_links: List[MemoryLinkEntry] = Field(default_factory=list)
     entity_links: List[EntityLinkEntry] = Field(default_factory=list)
-    confidence: float = Field(ge=0.0, le=1.0, default=0.9)
     is_archived: bool = False
     archived_at: Optional[datetime] = None
     consolidation_rejection_count: int = 0
@@ -276,7 +272,6 @@ class ExtractedMemory(BaseModel):
     importance_score: float = Field(ge=0.0, le=1.0, default=0.5)
     expires_at: Optional[datetime] = None
     happens_at: Optional[datetime] = None
-    confidence: float = Field(ge=0.0, le=1.0, default=0.9)
     relationship_type: Optional[RelationshipType] = None
     related_memory_ids: List[ExtractionRef] = Field(default_factory=list)
     consolidates_memory_ids: List[UUID] = Field(default_factory=list)
@@ -311,7 +306,7 @@ class ExtractedMemory(BaseModel):
 
         return valid_entities
 
-    @field_validator('importance_score', 'confidence')
+    @field_validator('importance_score')
     @classmethod
     def validate_score_range(cls, v: float) -> float:
         """Ensure scores are within valid range."""
@@ -343,7 +338,6 @@ class MemoryLink(BaseModel):
     source_id: UUID
     target_id: UUID
     link_type: RelationshipType
-    confidence: float = Field(ge=0.0, le=1.0)
     reasoning: str
     extraction_bond: str = ""  # 3-word bond from extraction LLM (e.g., "caused diet change")
     created_at: datetime

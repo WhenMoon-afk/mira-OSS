@@ -76,7 +76,7 @@ def format_links_summary_xml(
     Returns:
         XML string like:
         <links inbound="3" outbound="1">
-        <linked_memory id="mem_abc" link_type="supports" confidence="92">
+        <linked_memory id="mem_abc" link_type="corroborates">
         <text>Preview of linked memory text...</text>
         </linked_memory>
         </links>
@@ -102,7 +102,6 @@ def format_links_summary_xml(
         links_to_show.append({
             'uuid': link.get('uuid', ''),
             'link_type': link.get('type', 'unknown'),
-            'confidence': link.get('confidence'),
             'text': link.get('text', ''),  # May be populated by caller
             'direction': 'outbound'
         })
@@ -114,7 +113,6 @@ def format_links_summary_xml(
             links_to_show.append({
                 'uuid': link.get('uuid', ''),
                 'link_type': link.get('type', 'unknown'),
-                'confidence': link.get('confidence'),
                 'text': link.get('text', ''),
                 'direction': 'inbound'
             })
@@ -125,10 +123,6 @@ def format_links_summary_xml(
 
         # Build attributes
         attrs = [f'id="{formatted_id}"', f'link_type="{link["link_type"]}"']
-
-        confidence = link.get('confidence')
-        if confidence is not None and confidence > 0.5:
-            attrs.append(f'confidence="{int(confidence * 100)}"')
 
         parts.append(f"<linked_memory {' '.join(attrs)}>")
 

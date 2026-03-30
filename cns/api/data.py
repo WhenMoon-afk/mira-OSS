@@ -131,20 +131,11 @@ class DataEndpoint(BaseHandler):
         session_manager = get_shared_session_manager()
         lt_db = LTMemoryDB(session_manager)
 
-        # If search query provided, use search instead of regular listing
-        if search_query:
-            memory_data = lt_db.search_memories(
-                search_query=search_query,
-                offset=offset,
-                limit=limit,
-                user_id=user_id
-            )
-        else:
-            memory_data = lt_db.get_memories_paginated(
-                limit=limit,
-                offset=offset,
-                user_id=user_id
-            )
+        memory_data = lt_db.get_memories_paginated(
+            limit=limit,
+            offset=offset,
+            user_id=user_id
+        )
 
         return jsonable_encoder({
             "memories": memory_data.get("memories", []),
@@ -162,7 +153,7 @@ class DataEndpoint(BaseHandler):
     def _get_dashboard(self, **params) -> dict[str, Any]:
         """Get dashboard data - system health and context usage metrics."""
         from clients.postgres_client import PostgresClient
-        from config.config import get_config
+        from config import config
 
         user_id = get_current_user_id()
 
@@ -173,12 +164,10 @@ class DataEndpoint(BaseHandler):
         # Context usage metrics are managed by Anthropic's prompt caching
         # Token tracking is stateless - cache markers are applied unconditionally
         # and Anthropic handles threshold logic server-side
-        config = get_config()
-
         return {
             "system_health": "healthy",
             "context_usage": {
-                "max_tokens": config.context_window_tokens,
+                "max_tokens": config.api.context_window_tokens,
                 "note": "Token tracking delegated to Anthropic prompt caching"
             },
             "meta": {

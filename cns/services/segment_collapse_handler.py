@@ -9,6 +9,7 @@ Handles SessionTimeoutEvent by:
 5. Triggering downstream processing (memory extraction, domain updates)
 6. Extracting feedback signals (DIY reinforcement loop)
 7. Running pattern synthesis if use-day threshold reached (every 7 use-days)
+8. Portrait synthesis if use-day threshold reached (every 10 use-days)
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ from clients.hybrid_embeddings_provider import HybridEmbeddingsProvider
 from clients.valkey_client import get_valkey_client
 from cns.integration.event_bus import EventBus
 from utils.timezone_utils import utc_now, parse_time_string
-from utils.user_context import set_current_user_id, get_current_user_id
+from utils.user_context import set_current_user_id, get_current_user_id, clear_user_context
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +95,11 @@ class SegmentCollapseHandler:
         Lazy initialization of feedback loop components.
 
         Returns True if initialization successful, False otherwise.
-        Components are optional - handler continues without them if unavailable.
+        Retries on each call until successful — transient failures (missing
+        prompt files, import issues) don't permanently kill the pipeline.
         """
         if self._feedback_loop_initialized:
-            return self._assessment_extractor is not None
-
-        self._feedback_loop_initialized = True
+            return True
 
         try:
             from cns.services.assessment_extractor import AssessmentExtractor
@@ -112,182 +112,217 @@ class SegmentCollapseHandler:
             self._feedback_tracker = FeedbackTracker()
             self._synthesizer = UserModelSynthesizer(self._feedback_repo)
 
+            self._feedback_loop_initialized = True
             logger.info("Feedback loop components initialized successfully")
             return True
 
         except Exception as e:
-            logger.warning("Feedback loop components not available: %s", e, exc_info=True)
+            logger.error(
+                "USER MODEL PIPELINE INIT FAILED: %s — "
+                "No assessment signals or synthesis will run until this is fixed. "
+                "Will retry on next segment collapse.",
+                e, exc_info=True
+            )
             return False
 
     def handle_timeout(self, event: SegmentTimeoutEvent) -> None:
         """
-        Handle segment timeout by collapsing the segment.
+        Event subscriber wrapper for segment timeout.
 
-        Collapse failures are caught and logged - segment remains active and will retry
-        on next timeout check. However, persistent failures are escalated to alert operators.
+        Catches all exceptions so the event bus never sees failures.
+        Segment remains active on failure and retries on the next timeout check.
 
         Args:
             event: SegmentTimeoutEvent with segment details
         """
-        # Set user context once at entry point
-        set_current_user_id(event.user_id)
-
         try:
-            logger.info(
-                f"Processing timeout for segment {event.segment_id}, "
-                f"continuum {event.continuum_id}, "
-                f"inactive_duration={event.inactive_duration_minutes}min, "
-                f"local_hour={event.local_hour}"
-            )
-
-            # Find the segment boundary sentinel
-            sentinel = self._find_segment_sentinel(
-                event.continuum_id,
-                event.segment_id
-            )
-
-            if not sentinel:
-                # Sentinel missing is a data consistency error - alert operators
-                logger.error(
-                    f"COLLAPSE FAILURE: Segment sentinel {event.segment_id} not found. "
-                    f"Data consistency violation - timeout event published for non-existent segment. "
-                    f"Segment will remain in timeout queue and retry."
-                )
-                return
-
-            # Circuit breaker: stop retrying after MAX_COLLAPSE_ATTEMPTS
-            attempts = sentinel.metadata.get('collapse_attempts', 0)
-            if attempts >= MAX_COLLAPSE_ATTEMPTS:
-                logger.critical(
-                    "Segment %s has failed %d collapse attempts — tombstoning to stop retry loop. "
-                    "Check previous COLLAPSE FAILURE logs for root cause.",
-                    event.segment_id, MAX_COLLAPSE_ATTEMPTS
-                )
-                # Force-collapse with tombstone so segment exits timeout queue
-                tombstone = collapse_segment_sentinel(
-                    sentinel,
-                    summary="[Segment collapse failed after maximum retry attempts]",
-                    display_title="[Collapse Failed]",
-                    embedding=[0.0] * 768,
-                    inactive_duration_minutes=event.inactive_duration_minutes,
-                    processing_failed=True,
-                    tools_used=sentinel.metadata.get('tools_used', []),
-                    segment_end_time=utc_now(),
-                    complexity_score=0.0
-                )
-                user_id = get_current_user_id()
-                self.continuum_repo.save_message(tombstone, event.continuum_id, user_id)
-                self.continuum_pool.invalidate()
-                return
-
-            # Increment attempt counter before expensive LLM call (persists to DB via jsonb_set)
-            db = self.continuum_repo._get_client(get_current_user_id())
-            db.execute_returning("""
-                UPDATE messages
-                SET metadata = jsonb_set(metadata, '{collapse_attempts}', to_jsonb(%s))
-                WHERE id = %s
-                    AND metadata->>'is_segment_boundary' = 'true'
-                RETURNING id
-            """, (attempts + 1, str(sentinel.id)))
-
-            # Load messages in segment (between this sentinel and next, or end of continuum)
-            messages = self._load_segment_messages(
-                event.continuum_id,
-                sentinel
-            )
-
-            if not messages:
-                raise RuntimeError(
-                    f"Segment {event.segment_id} has no messages - this violates system invariants. "
-                    f"Messages are always persisted in pairs (user + assistant). "
-                    f"Possible data corruption or segment boundary logic error."
-                )
-
-            # Generate summary, display title, complexity, and embedding (raises on failure)
-            summary, display_title, complexity, embedding = self._generate_summary(
-                messages,
-                sentinel,
-                event.continuum_id
-            )
-
-            # Extract tools used from actual messages (not sentinel metadata)
-            tools_used = self._extract_tools_from_messages(messages)
-
-            # Set segment_end_time from last message (guaranteed to exist at this point)
-            segment_end_time = messages[-1].created_at
-
-            # Collapse sentinel (returns new Message with collapsed state)
-            collapsed_sentinel = collapse_segment_sentinel(
-                sentinel,
-                summary=summary,
-                display_title=display_title,
-                embedding=embedding,
-                inactive_duration_minutes=event.inactive_duration_minutes,
-                processing_failed=False,  # Always False - failures raise instead of degrading
-                tools_used=tools_used,
-                segment_end_time=segment_end_time,
-                complexity_score=complexity
-            )
-
-            # Save collapsed sentinel to database
-            # Note: segment_embedding will be extracted from sentinel.metadata during save
-            user_id = get_current_user_id()
-            self.continuum_repo.save_message(
-                collapsed_sentinel,
-                event.continuum_id,
-                user_id
-            )
-
-            # Invalidate Valkey cache to force reload with collapsed sentinel
-            self.continuum_pool.invalidate()
-
-            # Publish collapsed event
-            self.event_bus.publish(SegmentCollapsedEvent.create(
-                continuum_id=event.continuum_id,
-                segment_id=event.segment_id,
-                summary=summary,
-                tools_used=tools_used
-            ))
-
-            # Trigger downstream processing
-            self._trigger_downstream_processing(
-                event.continuum_id,
-                event.segment_id,
-                collapsed_sentinel,
-                messages,
-                summary
-            )
-
-            # Cleanup Files API uploads for this segment
-            self._cleanup_segment_files(event.segment_id)
-
-            # Flush local tmp directory (code execution file artifacts)
-            self._cleanup_local_tmp_files(str(get_current_user_id()))
-
-            # DIY Reinforcement Loop: Extract feedback and run synthesis if due
-            self._process_feedback_loop(
-                messages=messages,
-                segment_id=UUID(event.segment_id),
-                continuum_id=UUID(event.continuum_id),
-            )
-
-            # Publish manifest updated event (for cache invalidation)
-            self.event_bus.publish(ManifestUpdatedEvent.create(
-                continuum_id=event.continuum_id,
-                segment_count=self._count_user_segments()
-            ))
-
-            logger.info(f"Successfully collapsed segment {event.segment_id}")
-
+            self.collapse_segment(event)
         except Exception as e:
-            # Collapse failure - segment remains active and will retry on next timeout check
-            # Log at ERROR level with full stack trace to alert operators
             logger.error(
                 f"COLLAPSE FAILURE: Segment {event.segment_id} collapse failed. "
                 f"Segment will remain active and retry on next timeout check. "
                 f"Operators should investigate if this persists. Error: {e}",
                 exc_info=True
             )
+
+    def collapse_segment(
+        self,
+        event: SegmentTimeoutEvent,
+        force_immediate: bool = False
+    ) -> Message:
+        """
+        Collapse a segment: generate summary, update sentinel, trigger downstream.
+
+        Called by handle_timeout (event subscriber, swallows exceptions) and by the
+        actions API (needs exceptions to propagate and the collapsed sentinel returned).
+
+        Args:
+            event: SegmentTimeoutEvent with segment details
+            force_immediate: If True, run memory extraction inline instead of via
+                batch. Used for manual collapse so memories are ready before the
+                user's next conversation.
+
+        Returns:
+            Collapsed sentinel Message
+
+        Raises:
+            RuntimeError: On any collapse failure (sentinel not found, no messages,
+                summary generation failed, etc.)
+        """
+        # Clear stale per-user cached fields (e.g. cumulative_activity_days)
+        # before setting new identity — required when the timeout service
+        # processes multiple users sequentially on the same thread.
+        clear_user_context()
+        set_current_user_id(event.user_id)
+
+        logger.info(
+            f"Processing timeout for segment {event.segment_id}, "
+            f"continuum {event.continuum_id}, "
+            f"inactive_duration={event.inactive_duration_minutes}min, "
+            f"local_hour={event.local_hour}"
+        )
+
+        # Find the segment boundary sentinel
+        sentinel = self._find_segment_sentinel(
+            event.continuum_id,
+            event.segment_id
+        )
+
+        if not sentinel:
+            raise RuntimeError(
+                f"Segment sentinel {event.segment_id} not found. "
+                f"Data consistency violation - timeout event published for non-existent segment."
+            )
+
+        # Circuit breaker: stop retrying after MAX_COLLAPSE_ATTEMPTS
+        attempts = sentinel.metadata.get('collapse_attempts', 0)
+        if attempts >= MAX_COLLAPSE_ATTEMPTS:
+            logger.critical(
+                "Segment %s has failed %d collapse attempts — tombstoning to stop retry loop. "
+                "Check previous COLLAPSE FAILURE logs for root cause.",
+                event.segment_id, MAX_COLLAPSE_ATTEMPTS
+            )
+            # Force-collapse with tombstone so segment exits timeout queue
+            tombstone = collapse_segment_sentinel(
+                sentinel,
+                summary="[Segment collapse failed after maximum retry attempts]",
+                display_title="[Collapse Failed]",
+                embedding=[0.0] * 768,
+                inactive_duration_minutes=event.inactive_duration_minutes,
+                processing_failed=True,
+                tools_used=sentinel.metadata.get('tools_used', []),
+                segment_end_time=utc_now(),
+                complexity_score=0.0
+            )
+            user_id = get_current_user_id()
+            self.continuum_repo.save_message(tombstone, event.continuum_id, user_id)
+            self.continuum_pool.invalidate()
+            return tombstone
+
+        # Increment attempt counter before expensive LLM call (persists to DB via jsonb_set)
+        db = self.continuum_repo._get_client(get_current_user_id())
+        db.execute_returning("""
+            UPDATE messages
+            SET metadata = jsonb_set(metadata, '{collapse_attempts}', to_jsonb(%s))
+            WHERE id = %s
+                AND metadata->>'is_segment_boundary' = 'true'
+            RETURNING id
+        """, (attempts + 1, str(sentinel.id)))
+
+        # Load messages in segment (between this sentinel and next, or end of continuum)
+        messages = self._load_segment_messages(
+            event.continuum_id,
+            sentinel
+        )
+
+        if not messages:
+            raise RuntimeError(
+                f"Segment {event.segment_id} has no committed messages yet. "
+                f"This usually means the conversation is still being processed "
+                f"(messages are committed after the full turn completes). "
+                f"The segment will collapse automatically once the conversation finishes."
+            )
+
+        # Generate summary, display title, complexity, and embedding (raises on failure)
+        summary, display_title, complexity, embedding = self._generate_summary(
+            messages,
+            sentinel,
+            event.continuum_id
+        )
+
+        # Extract tools used from actual messages (not sentinel metadata)
+        tools_used = self._extract_tools_from_messages(messages)
+
+        # Set segment_end_time from last message (guaranteed to exist at this point)
+        segment_end_time = messages[-1].created_at
+
+        # Collapse sentinel (returns new Message with collapsed state)
+        collapsed_sentinel = collapse_segment_sentinel(
+            sentinel,
+            summary=summary,
+            display_title=display_title,
+            embedding=embedding,
+            inactive_duration_minutes=event.inactive_duration_minutes,
+            processing_failed=False,  # Always False - failures raise instead of degrading
+            tools_used=tools_used,
+            segment_end_time=segment_end_time,
+            complexity_score=complexity
+        )
+
+        # Save collapsed sentinel to database
+        # Note: segment_embedding will be extracted from sentinel.metadata during save
+        user_id = get_current_user_id()
+        self.continuum_repo.save_message(
+            collapsed_sentinel,
+            event.continuum_id,
+            user_id
+        )
+
+        # Invalidate Valkey cache to force reload with collapsed sentinel
+        self.continuum_pool.invalidate()
+
+        # Publish collapsed event
+        self.event_bus.publish(SegmentCollapsedEvent.create(
+            continuum_id=event.continuum_id,
+            segment_id=event.segment_id,
+            summary=summary,
+            tools_used=tools_used
+        ))
+
+        # Trigger downstream processing
+        self._trigger_downstream_processing(
+            event.continuum_id,
+            event.segment_id,
+            collapsed_sentinel,
+            messages,
+            summary,
+            force_immediate=force_immediate
+        )
+
+        # Cleanup Files API uploads for this segment
+        self._cleanup_segment_files(event.segment_id)
+
+        # Flush local tmp directory (code execution file artifacts)
+        self._cleanup_local_tmp_files(str(get_current_user_id()))
+
+        # DIY Reinforcement Loop: Extract feedback and run synthesis if due
+        self._process_feedback_loop(
+            messages=messages,
+            segment_id=UUID(event.segment_id),
+            continuum_id=UUID(event.continuum_id),
+        )
+
+        # Portrait synthesis if use-day threshold reached
+        self._process_portrait_synthesis()
+
+        # Publish manifest updated event (for cache invalidation)
+        self.event_bus.publish(ManifestUpdatedEvent.create(
+            continuum_id=event.continuum_id,
+            segment_count=self._count_user_segments()
+        ))
+
+        logger.info(f"Successfully collapsed segment {event.segment_id}")
+        return collapsed_sentinel
 
     def _find_segment_sentinel(
         self,
@@ -433,13 +468,14 @@ class SegmentCollapseHandler:
         segment_id: str,
         sentinel: Message,
         messages: List[Message],
-        summary: str
+        summary: str,
+        force_immediate: bool = False
     ) -> None:
         """
         Trigger downstream processing after segment collapse.
 
         Submits segment to:
-        1. Memory extraction (via Batch API) - skipped for tombstoned segments
+        1. Memory extraction (batch or immediate) - skipped for tombstoned segments
         2. Domain knowledge updates (if enabled)
 
         Requires: Active user context (set via set_current_user_id at handler entry)
@@ -450,6 +486,7 @@ class SegmentCollapseHandler:
             sentinel: Collapsed segment sentinel
             messages: Messages in segment
             summary: Generated summary text (checked for tombstone)
+            force_immediate: If True, run extraction inline (skips batch)
 
         Raises:
             RuntimeError: If memory extraction submission fails
@@ -468,18 +505,23 @@ class SegmentCollapseHandler:
             logger.info(f"Skipping memory extraction for demo user segment {segment_id}")
             return
 
-        # Memory extraction via Batch API
+        # Memory extraction (immediate for manual collapse, batch otherwise)
         if messages:
             # submit_segment_extraction is self-contained: loads messages, submits, marks boundary
             batch_submitted = self.lt_memory_factory.extraction_orchestrator.submit_segment_extraction(
                 user_id=user_id,
-                boundary_message_id=str(sentinel.id)
+                boundary_message_id=str(sentinel.id),
+                force_immediate=force_immediate
             )
 
             if not batch_submitted:
-                raise RuntimeError(f"Failed to submit segment {segment_id} for memory extraction - batch submission failed")
+                raise RuntimeError(f"Failed to submit segment {segment_id} for memory extraction - submission failed")
 
-            logger.info(f"Submitted segment {segment_id} for memory extraction")
+            # ImmediateExecutionStrategy clears user context — restore it
+            if force_immediate:
+                set_current_user_id(user_id)
+
+            logger.info(f"{'Immediate' if force_immediate else 'Batch'} extraction submitted for segment {segment_id}")
 
         # Process pending manual memories (from memory_tool.create_memory)
         self._process_pending_manual_memories(user_id, segment_id)
@@ -569,7 +611,6 @@ class SegmentCollapseHandler:
                 extracted = ExtractedMemory(
                     text=mem.text,
                     importance_score=mem.importance_score,
-                    confidence=1.0,  # Manual creation = high confidence
                     happens_at=parsed_happens_at,
                     expires_at=parsed_expires_at
                 )
@@ -589,7 +630,6 @@ class SegmentCollapseHandler:
                             source_id=memory_id,
                             target_id=target.id,
                             link_type="supersedes",
-                            confidence=1.0,
                             reasoning="Manual supersedes link",
                             created_at=utc_now()
                         )
@@ -800,8 +840,40 @@ class SegmentCollapseHandler:
                 )
 
         except Exception as e:
-            # Feedback loop failures should not block segment collapse
-            logger.warning("Feedback loop processing failed for segment %s: %s", segment_id, e, exc_info=True)
+            # Don't re-raise — segment is already collapsed and saved at this point.
+            # But log at error so operators notice immediately.
+            logger.error(
+                "USER MODEL PIPELINE FAILED for segment %s: %s — "
+                "Assessment signals and/or synthesis were lost for this segment.",
+                segment_id, e, exc_info=True
+            )
+
+    def _process_portrait_synthesis(self) -> None:
+        """
+        Synthesize user portrait if use-day threshold reached.
+
+        Runs after the feedback loop in the collapse chain. Portrait synthesis
+        is optional content — failures are logged but do not fail the collapse.
+        """
+        from config import config
+        from cns.services.portrait_service import should_synthesize_portrait, synthesize_and_store
+
+        user_id = get_current_user_id()
+        threshold = config.lt_memory.scheduled_jobs.portrait_synthesis_use_days
+
+        try:
+            if not should_synthesize_portrait(user_id, threshold):
+                return
+
+            logger.info("Running portrait synthesis for user %s", user_id)
+            synthesize_and_store(user_id)
+
+        except Exception as e:
+            logger.error(
+                "PORTRAIT SYNTHESIS FAILED for user %s: %s — "
+                "Portrait will be stale until next qualifying collapse.",
+                user_id, e, exc_info=True
+            )
 
     def _invalidate_lora_trinket_cache(self, user_id: str) -> None:
         """Invalidate LoRA trinket cache after synthesis."""

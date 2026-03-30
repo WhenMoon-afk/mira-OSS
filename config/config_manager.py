@@ -21,6 +21,7 @@ from config.config import (
     LatticeConfig,
     ContextConfig,
     PeanutGalleryConfig,
+    ToolResultDisplayConfig,
 )
 
 # Import the registry from tools package
@@ -39,7 +40,8 @@ class AppConfig(BaseModel):
     lattice: LatticeConfig = Field(default_factory=LatticeConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     peanutgallery: PeanutGalleryConfig = Field(default_factory=PeanutGalleryConfig)
-    
+    tool_result_display: ToolResultDisplayConfig = Field(default_factory=ToolResultDisplayConfig)
+
     # System prompt loaded once at startup
     system_prompt_text: str = Field(default="", exclude=True)
     

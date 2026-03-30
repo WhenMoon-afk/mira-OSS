@@ -144,7 +144,7 @@ class ProactiveService:
         # (Hub chain already provides some traversal, but this adds explicit link metadata)
         expanded_results = self._include_linked_memories(merged_results[:limit])
 
-        # Rerank and filter linked memories by type, confidence, importance
+        # Rerank and filter linked memories by type and importance
         reranked_results = self._rerank_with_links(expanded_results)
         final_results = reranked_results[:limit]
 
@@ -282,7 +282,6 @@ class ProactiveService:
                 linked_memory = linked_data["memory"]
                 linked_memory.link_metadata = {
                     "link_type": linked_data["link_type"],
-                    "confidence": linked_data["confidence"],
                     "reasoning": linked_data["reasoning"],
                     "depth": linked_data["depth"],
                     "linked_from_id": linked_data["linked_from_id"]
@@ -298,21 +297,21 @@ class ProactiveService:
 
     def _rerank_with_links(self, primary_memories: List[Memory]) -> List[Memory]:
         """
-        Rerank and filter memories considering link types, confidence, importance.
+        Rerank and filter memories considering link types and importance.
 
-        Ranking formula: type_weight × inherited_importance × confidence
+        Ranking formula: type_weight × inherited_importance
         """
         # Link type weights from config
         link_type_weights = {
             "conflicts": self.config.link_weight_conflicts,
-            "supports": self.config.link_weight_supports,
+            "corroborates": self.config.link_weight_corroborates,
             "supersedes": self.config.link_weight_supersedes,
             "refines": self.config.link_weight_refines,
             "precedes": self.config.link_weight_precedes,
             "contextualizes": self.config.link_weight_contextualizes,
+            "exemplifies": self.config.link_weight_exemplifies,
             "shares_entity": self.config.link_weight_shares_entity,
         }
-        min_confidence = self.config.link_min_confidence
         default_weight = self.config.link_weight_default
         inheritance_weight = self.config.link_importance_inheritance_weight
 
@@ -335,11 +334,6 @@ class ProactiveService:
 
                 link_meta = getattr(linked, 'link_metadata', {})
                 link_type = link_meta.get('link_type', 'unknown')
-                confidence = link_meta.get('confidence')
-
-                # Confidence filtering
-                if confidence is not None and confidence < min_confidence:
-                    continue
 
                 # Type-based weighting
                 type_weight = default_weight
@@ -353,7 +347,7 @@ class ProactiveService:
                 primary_importance = getattr(primary_memory, 'importance_score', 0.5)
                 inherited_importance = (linked_importance * inheritance_weight) + (primary_importance * (1 - inheritance_weight))
 
-                final_score = type_weight * inherited_importance * (confidence or 1.0)
+                final_score = type_weight * inherited_importance
                 scored_linked.append((linked, final_score))
 
             scored_linked.sort(key=lambda x: x[1], reverse=True)

@@ -1,0 +1,19 @@
+<conversational_context>
+{conversation_turns}
+</conversational_context>
+<task_rules>
+<rule task="entity_extraction">Only extract proper nouns that a spaCy NER model would tag as PERSON, ORG, PRODUCT, EVENT, or GPE. "Build pipeline", "testing", "Father", "subcortical", "PATCHNOTE" are NOT entities. When no entities pass this test, output "None".</rule>
+<rule task="passage_filtering">Preserve passages providing useful background even if not directly referenced. Drop entries from topics the conversation has moved past. Output ONLY passages that remain relevant, marked with still_relevant="true". Copy the full passage ID (including mem_ prefix) exactly — the system matches by ID only.</rule>
+<rule task="query_expansion">Dereference pronouns to concrete nouns using conversation context. Include domain context that would appear in stored memories. Write 2-4 semicolon-separated phrases that would match stored memories about this topic. Capture the recent conversational arc with a bias towards the most recent turns. Never leave this block empty — if the message is short, expand on the current topic or user state.</rule>
+<rule task="complexity_assessment">Evaluate based on cognitive effort required to respond well, not message length. Output exactly one of: straightforward OR complex.</rule>
+</task_rules>
+------------------------------------------------------------
+<system_message>Execute the four-step IR process on this turn:</system_message>
+┃◆┃ CURRENT TURN ┃◆┃
+<turn speaker="user">{user_message}</turn>
+┃◆┃ END CURRENT TURN ┃◆┃
+------------------------------------------------------------
+<stored_passages>
+{previous_memories}
+</stored_passages>
+------------------------------------------------------------

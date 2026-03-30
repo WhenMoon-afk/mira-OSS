@@ -6,6 +6,7 @@ Loads context for new sessions with segment summaries and session boundary marke
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 from cns.core.message import Message
 from cns.infrastructure.continuum_repository import ContinuumRepository
@@ -31,6 +32,33 @@ class SegmentCacheLoader:
             repository: Continuum repository for persistence
         """
         self.repository = repository
+        self._primer_turns = self._load_behavioral_primer()
+
+    def _load_behavioral_primer(self) -> list[Message]:
+        """Load behavioral primer dialogue and create Message objects.
+
+        Parsed once at init. Messages are reused across all load_session_cache()
+        calls — they're never persisted, so shared instances are fine.
+        """
+        path = Path("config/prompts/behavioral_primer.txt")
+        if not path.exists():
+            raise FileNotFoundError(f"Behavioral primer not found at {path}")
+
+        raw = path.read_text(encoding='utf-8').strip()
+        messages = []
+        for block in raw.split("---"):
+            block = block.strip()
+            if not block:
+                continue
+            lines = block.split("\n", 1)
+            role = lines[0].strip("[] \n")
+            content = lines[1].strip() if len(lines) > 1 else ""
+            messages.append(Message(
+                content=content,
+                role=role,
+                metadata={'system_notification': True, 'notification_type': 'behavioral_primer'}
+            ))
+        return messages
 
     def load_session_cache(self, continuum_id: str, user_id: str) -> list[Message]:
         """
@@ -59,7 +87,7 @@ class SegmentCacheLoader:
         segment_summaries = self._load_segment_summaries(continuum_id)
 
         # Step 2: Load continuity messages (last 5 turns before active sentinel)
-        continuity_messages = self._load_continuity_messages(continuum_id, turn_count=4)
+        continuity_messages = self._load_continuity_messages(continuum_id, turn_count=2)
 
         # Step 3: Create collapse marker to indicate older searchable content
         collapse_marker = create_collapse_marker()
@@ -70,13 +98,17 @@ class SegmentCacheLoader:
         # Step 5: Create session boundary marking the break
         boundary = create_session_boundary_marker(segment_summaries)
 
-        # Step 6: Assemble in order - collapse marker first, then summaries, continuity, boundary, and active messages
-        messages = [collapse_marker] + segment_summaries + continuity_messages + [boundary] + active_segment_messages
+        # Step 5.5: Behavioral primer (only when collapsed segments provide conversation history)
+        primer_turns = self._primer_turns if segment_summaries else []
+
+        # Step 6: Assemble in order - collapse marker first, then summaries, primer, continuity, boundary, and active messages
+        messages = [collapse_marker] + segment_summaries + primer_turns + continuity_messages + [boundary] + active_segment_messages
 
         logger.info(
             f"Loaded session cache for continuum {continuum_id}: "
             f"collapse marker + {len(segment_summaries)} summaries + "
-            f"{len(continuity_messages)} continuity + boundary + {len(active_segment_messages)} active"
+            f"{len(primer_turns)} primer + {len(continuity_messages)} continuity + "
+            f"boundary + {len(active_segment_messages)} active"
         )
 
         return messages

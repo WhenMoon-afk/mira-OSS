@@ -18,10 +18,10 @@ from uuid import UUID
 from cns.core.message import Message
 from lt_memory.models import ProcessingChunk, MemoryContextSnapshot
 from lt_memory.processing.extraction_engine import ExtractionEngine
-from lt_memory.processing.execution_strategy import ExecutionStrategy
+from lt_memory.processing.execution_strategy import ExecutionStrategy, ImmediateExecutionStrategy
 from lt_memory.db_access import LTMemoryDB
 from config.config import BatchingConfig
-from utils.user_context import set_current_user_id, get_current_user_id, clear_user_context
+from utils.user_context import set_current_user_id, get_current_user_id, clear_user_context, get_internal_llm
 
 if TYPE_CHECKING:
     from cns.core.continuum_repository import ContinuumRepository
@@ -49,18 +49,21 @@ class ExtractionOrchestrator:
         extraction_engine: ExtractionEngine,
         execution_strategy: ExecutionStrategy,
         continuum_repo: 'ContinuumRepository',
-        db: LTMemoryDB
+        db: LTMemoryDB,
+        immediate_strategy: ImmediateExecutionStrategy = None
     ):
         self.config = config
         self.extraction_engine = extraction_engine
         self.execution_strategy = execution_strategy
         self.continuum_repo = continuum_repo
         self.db = db
+        self.immediate_strategy = immediate_strategy
 
     def submit_segment_extraction(
         self,
         user_id: str,
-        boundary_message_id: str
+        boundary_message_id: str,
+        force_immediate: bool = False
     ) -> bool:
         """
         Self-contained segment extraction: load, submit, mark.
@@ -69,12 +72,15 @@ class ExtractionOrchestrator:
         1. Query boundary message to get segment_id and position
         2. Load messages between this boundary and the next
         3. Build single ProcessingChunk (no chunking - segments are natural units)
-        4. Submit to execution_strategy
+        4. Submit to execution_strategy (or immediate_strategy if force_immediate)
         5. Mark memories_extracted=true on the boundary message
 
         Args:
             user_id: User ID
             boundary_message_id: UUID string of the segment boundary sentinel message
+            force_immediate: If True, bypass batch and execute extraction inline
+                via ImmediateExecutionStrategy. Used for manual segment collapse
+                so memories are ready before the user's next conversation.
 
         Returns:
             True if extraction was submitted successfully
@@ -144,8 +150,24 @@ class ExtractionOrchestrator:
         )
         chunk.memory_context_snapshot = self._build_memory_context(messages, user_id)
 
-        # Step 4: Submit via execution strategy
-        batch_id = self.execution_strategy.execute_extraction(user_id, [chunk])
+        # Step 4: Submit via execution strategy (immediate when forced or non-Anthropic endpoint)
+        strategy = self.execution_strategy
+        if force_immediate and self.immediate_strategy is not None:
+            strategy = self.immediate_strategy
+            logger.info(
+                f"Using immediate extraction for segment {segment_id} "
+                f"(manual collapse — skipping batch)"
+            )
+        # FROM TAYLOR: this fix was made during a time when Claude Code had heavy
+        # degradation. something about the fix doesn't sit right with me and I can't
+        # trust claude's answer fully. If something is fucked up later thats why.
+        elif self.immediate_strategy is not None and "api.anthropic.com" not in get_internal_llm('extraction').endpoint_url:
+            strategy = self.immediate_strategy
+            logger.info(
+                f"Using immediate extraction for segment {segment_id} "
+                f"(non-Anthropic endpoint — skipping batch)"
+            )
+        batch_id = strategy.execute_extraction(user_id, [chunk])
 
         # Step 5: Mark boundary as extracted
         db_client.execute_query("""

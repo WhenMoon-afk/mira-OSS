@@ -37,7 +37,6 @@ class RawMemoryDict(TypedDict, total=False):
     """Raw memory dict from LLM extraction response before validation."""
     text: str
     importance_score: float
-    confidence: float
     expires_at: str | None
     happens_at: str | None
     relationship_type: str | None
@@ -125,7 +124,6 @@ class MemoryProcessor:
                 importance_score=self.config.default_importance_score,
                 expires_at=memory_dict.get("expires_at"),
                 happens_at=memory_dict.get("happens_at"),
-                confidence=memory_dict.get("confidence", 0.9),
                 relationship_type=memory_dict.get("relationship_type"),
                 related_memory_ids=memory_dict.get("related_memory_ids", []),
                 consolidates_memory_ids=memory_dict.get("consolidates_memory_ids", []),
@@ -330,13 +328,22 @@ class MemoryProcessor:
             Updated memory dicts with full UUIDs
         """
         for memory_dict in memories_data:
-            # Remap related_memory_ids: remap id field inside dicts
+            # Remap related_memory_ids: remap id field inside dicts, drop unresolved
             if "related_memory_ids" in memory_dict:
                 related_ids = memory_dict["related_memory_ids"]
                 if isinstance(related_ids, list):
+                    valid_refs = []
                     for ref in related_ids:
                         if isinstance(ref, dict) and "id" in ref:
                             ref["id"] = short_to_full.get(ref["id"], ref["id"])
+                            try:
+                                UUID(ref["id"])
+                                valid_refs.append(ref)
+                            except ValueError:
+                                logger.warning(f"Dropping unresolved related_memory_id after remap: {ref['id']}")
+                        else:
+                            valid_refs.append(ref)
+                    memory_dict["related_memory_ids"] = valid_refs
 
             # Remap consolidates_memory_ids (short str → full UUID)
             if "consolidates_memory_ids" in memory_dict:
@@ -435,12 +442,6 @@ class MemoryProcessor:
                     return False
 
         # FIX: Validate numeric fields with fallbacks
-        if "confidence" in memory_dict:
-            confidence = memory_dict["confidence"]
-            if not isinstance(confidence, (int, float)) or not (0.0 <= confidence <= 1.0):
-                logger.warning(f"Fixing invalid confidence {confidence} -> 0.9")
-                memory_dict["confidence"] = 0.9
-
         if "importance_score" in memory_dict:
             importance = memory_dict["importance_score"]
             if not isinstance(importance, (int, float)) or not (0.0 <= importance <= 1.0):

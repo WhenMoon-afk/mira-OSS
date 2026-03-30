@@ -80,6 +80,9 @@ Don't parameterize what won't vary. Unused parameters confuse maintainers. If yo
 ### Tool Architecture
 When working with tools, invoke `tool-builder` skill first for comprehensive patterns. Design for single responsibility (extraction tools extract, persistence tools store). Put business logic in system prompts/working_memory, not tools. Use `tools/sample_tool.py` as blueprint. Store tool data in user-specific directories via `self.user_data_path` (JSON for simple data, SQLite for complex, or `self.db` property). Include recovery guidance in error responses. Document tools thoroughly (`docs/TOOL_DEF_BESTPRACTICE.md`). Write tests for success and error paths.
 
+### LLM Caller Interface Design
+All model-facing prose — system prompts, tool parameter descriptions, agent directives, working memory trinkets — is an interface contract where imprecise language causes real behavioral failures downstream. Every word must constrain behavior: "literal string" not "text," "exact substring" not "pattern," because the reader is a language model that will infer defaults from your word choices. Ground descriptions in actual implementation behavior, not intent. Drop internal jargon the caller has no context for. State co-dependencies inline. If the current wording would cause a caller to misuse the interface, say so flatly and fix it.
+
 ### Interface Design
 When calling code misuses an interface, fix the caller — never adapt the interface to accommodate misuse.
 
@@ -92,7 +95,24 @@ When calling code misuses an interface, fix the caller — never adapt the inter
 All user-scoped code resolves `user_id` via contextvar: `from utils.user_context import get_current_user_id`. It is set once at the API boundary (`cns/api/chat.py`, `websocket_chat.py`) and flows automatically through the entire request. Never pass `user_id` through event context dicts, function parameters, or instance fields as a substitute for the contextvar — redundant channels cause inconsistent resolution patterns. Downstream services that take `user_id` as an explicit parameter (e.g., `ManifestQueryService.get_segments(user_id)`) are acceptable; the caller sources it from the contextvar. For scheduled jobs and batch operations outside HTTP context, explicitly call `set_current_user_id(user_id)`.
 
 ### Activity Days & Use-Day Scheduling
-User activity days are tracked by `utils/user_activity.py:increment_user_activity_day()` (called on first message of each day). To get the current user's activity day count, use `from utils.user_context import get_user_cumulative_activity_days` — it reads from the contextvar cache or falls back to a DB query. For interval-based scheduled tasks that should fire based on user activity (not calendar time), use `from utils.scheduled_tasks import get_users_due_for_job` with the desired interval — it returns users where `MOD(cumulative_activity_days, interval) = 0`.
+MIRA uses **use-day scheduling** — periodic jobs fire based on user activity days, not calendar time. A user who logs in Monday, skips Tuesday, returns Wednesday has their counter tick on Monday and Wednesday only. This prevents wasted work on inactive users and ensures jobs run at consistent engagement intervals.
+
+**How it works (three layers):**
+
+1. **Activity tracking** (`utils/user_activity.py:increment_user_activity_day()`) — Called on first message of each user's local day. Increments `users.cumulative_activity_days` and sets `users.last_activity_date`. This is the clock.
+
+2. **Platform scheduling function** (`utils/scheduled_tasks.py:get_users_due_for_job(interval: int)`) — The reusable core. Pass any integer interval, get back users whose `MOD(cumulative_activity_days, interval) = 0` with a 2-day recency window. Stateless — no tracking table, no "last ran" state.
+
+3. **Job registration** — Each job registers with APScheduler on a `IntervalTrigger(days=1)` (calendar tick), but the job body calls `get_users_due_for_job(N)` to filter down to only users whose activity counter hits the modular target. Interval values live in `config/config.py:ScheduledJobsConfig` as `*_use_days` fields.
+
+**Adding a new use-day-gated job:**
+1. Add a `*_use_days: int = Field(default=N)` field to `ScheduledJobsConfig` in `config/config.py`
+2. Write a function that calls `get_users_due_for_job(interval)`, loops users with `set_current_user_id()` / `clear_user_context()`, does work
+3. Register with `scheduler_service.register_job()` using `IntervalTrigger(days=1)`
+
+**Current use-day jobs:** temporal score recalc (1d), bulk score recalc (1d), batch cleanup (1d), consolidation (7d, deadheaded), entity GC (7d, deadheaded). Portrait synthesis (10d) runs in the segment collapse chain, not as a scheduled job.
+
+To get the current user's activity day count inline: `from utils.user_context import get_user_cumulative_activity_days`.
 
 ## ⚡ Performance & Tool Usage
 - **Synchronous Over Async**: Prefer synchronous unless genuine concurrency benefit exists. Only use `async/await` for truly asynchronous operations (network I/O, parallelizable file I/O, external APIs). Async overhead (context switching, event loop, complex calls) hurts performance without actual I/O concurrency. Sync is easier to debug, test, reason about.

@@ -1037,12 +1037,6 @@ migrate_check_existing_install() {
         return 1
     fi
 
-    if [ ! -f "/opt/mira/app/talkto_mira.py" ]; then
-        echo -e "${ERROR}"
-        print_error "Invalid MIRA installation (missing talkto_mira.py)"
-        return 1
-    fi
-
     echo -e "${CHECKMARK}"
     return 0
 }
@@ -1528,7 +1522,8 @@ migrate_vault_api_keys() {
     # Define key migrations: old_name -> new_name
     # Add new mappings here as schema evolves
     local -a KEY_MIGRATIONS=(
-        "groq_key:provider_key"
+        "groq_key:subcortical_key"
+        "provider_key:openaicompat_key"
     )
 
     for mapping in "${KEY_MIGRATIONS[@]}"; do

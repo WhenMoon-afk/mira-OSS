@@ -168,8 +168,9 @@ class CNSIntegrationFactory:
             from working_memory.trinkets.manifest_trinket import ManifestTrinket
             from working_memory.trinkets.proactive_memory_trinket import ProactiveMemoryTrinket
             from working_memory.trinkets.domaindoc_trinket import DomaindocTrinket
-            from working_memory.trinkets.getcontext_trinket import GetContextTrinket
+            from working_memory.trinkets.forage_trinket import ForageTrinket
             from working_memory.trinkets.lora_trinket import LoraTrinket
+            from working_memory.trinkets.location_trinket import LocationTrinket
 
             # Trinkets self-register with working memory
             TimeManager(event_bus, self._working_memory)
@@ -177,9 +178,10 @@ class CNSIntegrationFactory:
             ManifestTrinket(event_bus, self._working_memory)
             ProactiveMemoryTrinket(event_bus, self._working_memory)
             DomaindocTrinket(event_bus, self._working_memory)
-            GetContextTrinket(event_bus, self._working_memory)
+            ForageTrinket(event_bus, self._working_memory)
             LoraTrinket(event_bus, self._working_memory)
-            
+            LocationTrinket(event_bus, self._working_memory)
+
             logger.info("Event-driven working memory initialized with trinkets")
         return self._working_memory
 
@@ -200,11 +202,12 @@ class CNSIntegrationFactory:
         return self._tool_repo
 
     def _register_gated_tools(self) -> None:
-        """Register tools that self-determine their availability via is_available()."""
-        # domaindoc_tool appears when any domaindoc is enabled
-        if "domaindoc_tool" in self._tool_repo.list_all_tools():
-            self._tool_repo.register_gated_tool("domaindoc_tool")
-            logger.info("Registered domaindoc_tool as gated tool")
+        """Register tools that self-determine their availability via is_available().
+
+        Previously registered domaindoc_tool here — moved to essential_tools.
+        Preserved for future gated tools.
+        """
+        pass
 
     def _get_tag_parser(self) -> TagParser:
         """Get or create tag parser instance."""

@@ -24,7 +24,7 @@ from lt_memory.db_access import LTMemoryDB
 from lt_memory.models import PostProcessingBatch, EntityPairRow, GCStats
 from lt_memory.processing.batch_coordinator import BatchCoordinator
 from clients.llm_provider import LLMProvider, build_batch_params
-from utils.user_context import get_current_user_id
+from utils.user_context import get_current_user_id, get_internal_llm
 from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -422,8 +422,11 @@ class EntityGCService:
             f"for user {user_id}"
         )
 
-        # 3. Failover: execute synchronously
-        if self.llm_provider._is_failover_active():
+        # 3. Failover or non-Anthropic endpoint: execute synchronously
+        # FROM TAYLOR: this fix was made during a time when Claude Code had heavy
+        # degradation. something about the fix doesn't sit right with me and I can't
+        # trust claude's answer fully. If something is fucked up later thats why.
+        if self.llm_provider._is_failover_active() or "api.anthropic.com" not in get_internal_llm('entity_gc').endpoint_url:
             logger.warning(
                 f"Bypassing entity GC batch for user {user_id} — "
                 f"executing {len(groups)} groups synchronously"

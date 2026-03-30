@@ -1,61 +1,27 @@
-# CNS (Central Nervous System)
+# cns/ — Conversation orchestration: Continuum aggregate, LLM execution, memory surfacing, segment lifecycle
 
-Conversation orchestration layer. Manages the Continuum aggregate (immutable conversation state),
-LLM interaction, tool execution, memory surfacing, and segment lifecycle.
+## Rules
 
-## Subdirectories
+- No database access in `core/` or `services/` — all persistence goes through `infrastructure/` repositories.
+- Singleton services follow the `_instance = None` + `get_*()` / `initialize_*()` pattern. `integration/factory.py` calls initializers; all other callers use getters. Never instantiate services directly outside the factory.
+- All inter-component communication goes through `EventBus.publish(event)`. New events subclass one of the four base categories in `core/events.py` and use `.create()` — never construct event dicts ad hoc.
+- LLM calls use `internal_llm='purpose'` on `generate_response()` — never hardcode model names. Purpose keys: `'summary'`, `'assessment'`, `'synthesis'`, `'critic'`, `'portrait'`, `'analysis'`.
+- All LLM output parses `<mira:tag>` XML via regex with flexible whitespace. Use `utils.tag_parser.TagParser` for standard tags; follow the regex patterns in `subcortical.py` and `assessment_extractor.py` for custom tags.
+- Critical path services (`orchestrator`, `summary_generator`, `segment_collapse_handler`) propagate failures. Non-critical services (`peanutgallery_service`, feedback loop) swallow exceptions and log.
+- Thread spawns copy user context: `contextvars.copy_context().run(fn)`. See `peanutgallery_service.py` for the canonical pattern.
 
-- `core/` — Immutable domain model: Continuum aggregate, Message value objects, domain events, stream events
-- `services/` — Stateless service layer: orchestrator, subcortical processing, summary generation, segment collapse, feedback loop
-- `infrastructure/` — Persistence and caching: PostgreSQL repository, Valkey message cache, Unit of Work, feedback storage
-- `api/` — FastAPI endpoints: chat (HTTP + WebSocket), actions (domain routing), data queries, health, tool config
-- `integration/` — Event bus (pub/sub) and factory (dependency wiring for the entire CNS graph)
+## Files
 
-## Cross-Cutting Patterns
+- `core/` — Immutable domain model: Continuum aggregate, Message value objects, domain events, stream events, segment cache reconstruction. No I/O.
+- `services/` — Stateless service layer: orchestrator, subcortical processing, summary generation, segment collapse, user model pipeline, peanut gallery, manifest query.
+- `infrastructure/` — Persistence and caching: PostgreSQL continuum repository, Valkey message cache, feedback storage.
+- `api/` — FastAPI endpoints: chat (HTTP + WebSocket), actions, data queries, health, tool config, federation.
+- `integration/` — Event bus (pub/sub) and factory (dependency wiring for the entire CNS graph).
 
-### Event-Driven Coordination
-All inter-component communication goes through `EventBus.publish(event)`. Subscribers register
-by event class name string. Callbacks execute synchronously. New events belong to one of four
-categories defined in `core/events.py`: MessageEvent, ToolEvent, WorkingMemoryEvent, ContinuumCheckpointEvent.
-Always use the `.create()` classmethod on event subclasses — it auto-generates event_id, occurred_at,
-and pulls user_id from contextvar.
+## Wiring
 
-### Immutability
-`Message` and `ContinuumState` are frozen dataclasses. `ContinuumEvent` subclasses are frozen.
-Mutations produce new objects. Segment sentinel metadata dicts are the one exception (mutated in place
-for atomic DB updates via `jsonb_set`).
+Segment lifecycle has three states: `active` (timeout ticking), `paused` (timeout suspended), `collapsed` (processed). Users can pause sessions indefinitely; segments auto-resume to `active` when the user sends their next message (via `increment_segment_turn()`). Segment collapse chain (triggered by `SegmentTimeoutEvent` on active-only segments): `segment_timeout_service` publishes → `segment_collapse_handler` handles → `summary_generator` produces summary → embedding → sentinel collapse in `infrastructure/continuum_repository` → `lt_memory` extraction → portrait synthesis gate (every 10 activity days via `ScheduledJobsConfig.portrait_synthesis_use_days`).
 
-### User Context
-All user-scoped operations rely on `utils.user_context.get_current_user_id()` contextvar.
-Set once at the API boundary, flows through services → repositories → PostgreSQL RLS.
-When spawning threads, use `contextvars.copy_context()` (see PeanutGalleryService for the pattern).
+Memory surfacing pipeline (inside `orchestrator.process_message()`): `subcortical.generate()` (query expansion + retention + entities + complexity) → pinned cap (`max_pinned_memories=15`) → fresh budget (`max(min_fresh, max_surfaced - pinned)`) → `memory_relevance_service` embedding search → merge → `UpdateTrinketEvent` to `ProactiveMemoryTrinket`. Total bounded by `max_surfaced_memories=20`.
 
-### LLM Configuration
-Never hardcode model names or API keys. For `generate_response()` calls, use `internal_llm='purpose'`
-param — it resolves endpoint, model, and API key from the internal_llm database schema. Purpose
-keys include `'summary'`, `'analysis'`, `'domaindoc_summary'`, etc. For batch API paths that build
-raw param dicts, use `get_internal_llm(purpose)` directly to access `.model` and `.effort`.
-
-### XML Tag Parsing
-All LLM output uses `<mira:tag>content</mira:tag>` format. Parse with regex allowing flexible
-whitespace. Use `utils.tag_parser.TagParser` for standard tags. For custom tags, follow the
-regex patterns in `subcortical.py` and `assessment_extractor.py`.
-
-### Singleton Services
-Infrastructure services use module-level `_instance` + `get_*()` / `initialize_*()` pairs.
-The factory in `integration/factory.py` calls the initializers; everyone else calls the getters.
-Don't create service instances directly outside the factory.
-
-### Fail-Fast
-Required infrastructure (DB, Valkey, embeddings, LLM) failures propagate. Never catch and return
-None/[]/defaults for required services. Non-blocking exceptions are only acceptable for genuinely
-optional features (feedback loop, retrieval logging, peanut gallery).
-
-### Memory ID Convention
-Memories use 8-char ID prefixes (first 8 of UUID, stripped of hyphens) formatted as `mem_XXXXXXXX`
-via `utils.tag_parser.format_memory_id()`. All memory matching (pinning, retention)
-uses this prefix, case-insensitive.
-
-### Embedding Dimension
-All embeddings are 768-dimensional via `get_hybrid_embeddings_provider()`. Use `encode_deep()`
-for persistence-quality embeddings (segment summaries, memories). Generate once, pass to all consumers.
+`actions.py` calls `segment_collapse_handler.collapse_segment(event, force_immediate=True)` — the `force_immediate` flag skips batch scheduling so memories are available before the user's next turn.

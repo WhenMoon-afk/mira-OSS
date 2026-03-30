@@ -33,8 +33,12 @@ class DomaindocTool(Tool):
 
     name = "domaindoc_tool"
 
-    # Operations without ordering dependencies — safe for concurrent execution
-    _parallel_safe_operations = frozenset({"search", "expand", "collapse"})
+    # Operations without ordering dependencies — safe for concurrent execution.
+    # KNOWN BUG: _execute_with_tools runs sequential tools BEFORE parallel ones.
+    # If the model issues expand (parallel) + append (sequential) in the same
+    # response, append runs first. Doesn't cause data corruption (writes don't
+    # check collapsed state) but is semantically inverted from model intent.
+    _parallel_safe_operations = frozenset({"search", "expand", "collapse", "overview", "request_create", "request_delete"})
 
     @classmethod
     def is_call_parallel_safe(cls, tool_input: Dict[str, Any]) -> bool:
@@ -42,112 +46,140 @@ class DomaindocTool(Tool):
 
     simple_description = """Section-aware editing for domain knowledge documents with expand/collapse support."""
 
-    anthropic_schema = {
-        "name": "domaindoc_tool",
-        "description": """Edit domain knowledge documents with section-level control and one level of nesting.
+    def _build_domaindoc_catalog(self) -> List[str]:
+        """Query user's SQLite for all non-archived domaindoc labels.
 
-CRITICAL PARAMETER NAMES (use these exact names - do not use alternatives):
-• label (NOT "domain" or "name") - Identifies which domaindoc to edit
-• find and replace (NOT "old_str" or "new_str") - For sed/sed_all operations
-• section (NOT "header") - Section header to target
-• content (NOT "text" or "body") - Content to add/replace
+        Returns empty list on any failure (no user context, no domaindocs table, etc.)
+        so the schema is always valid.
+        """
+        try:
+            db = self.db
+            results = db.fetchall(
+                "SELECT label FROM domaindocs WHERE archived = FALSE ORDER BY label"
+            )
+            return [r["label"] for r in results]
+        except Exception:
+            return []
 
-IMPORTANT: Collapsed sections show ONLY headers - content is hidden until expanded.
-Pinned sections are always expanded. When a parent section is collapsed, ALL its subsections are hidden.
+    def _build_schema(self, labels: List[str]) -> Dict[str, Any]:
+        """Construct the full Anthropic schema with live domaindoc catalog."""
+        if labels:
+            catalog_lines = "\n".join(f"- {lbl}" for lbl in labels)
+            description = (
+                "Manage domain knowledge documents: browse, enable/disable, edit sections.\n\n"
+                f"Available domaindocs:\n{catalog_lines}\n\n"
+                "Use 'overview' to preview a domaindoc's structure before enabling. Use 'enable'/'disable' "
+                "to control which are loaded into context. This tool cannot create or delete domaindocs — "
+                "direct the user to the MIRA app UI for lifecycle operations."
+            )
+        else:
+            description = (
+                "Manage domain knowledge documents: browse, enable/disable, edit sections.\n\n"
+                "No domaindocs available. Direct the user to create one via the MIRA app UI."
+            )
 
-SUBSECTIONS: Use parent="ParentName" to work with nested sections.
-• Top-level section: section="Research" (no parent)
-• Subsection: section="Competitors", parent="Research"
-• Sub-subsection: section="Acme Corp", parent="Competitors" (where Competitors is under Research)
-Depth limit is 2 - three levels maximum (section → subsection → sub-subsection).
-
-DOCUMENT MANAGEMENT:
-• search - query="search terms", optional label="specific_doc". Returns matches with context snippets.
-• enable - label="doc_name". Enable a disabled domaindoc.
-• disable - label="doc_name". Disable an enabled domaindoc.
-
-SECTION MANAGEMENT:
-• expand/collapse - section="NAME" (add parent="X" for subsections), or sections=["A","B"] for batch.
-• set_expanded_by_default - section="NAME", expanded_by_default=true/false. Marks section to show expanded by default (still collapsible).
-• pin/unpin - section="NAME". Pinned sections are always expanded and cannot be collapsed or deleted.
-• create_section - section="HEADER", content="...", optional parent="X", optional expanded_by_default=true.
-• rename_section - section="OLD", new_name="NEW".
-• delete_section - Remove section (must be expanded and not pinned; if parent, all subsections must be expanded).
-• reorder_sections - order=["ALL","SECTIONS","IN","ORDER"] (add parent="X" to reorder subsections).
-
-CONTENT EDITING (all require section, add parent for subsections):
-• append - section="NAME", content="new text"
-• sed/sed_all - section="NAME", find="old", replace="new"
-• replace_section - section="NAME", content="new content" """,
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": [
-                        "search", "enable", "disable",
-                        "expand", "collapse", "set_expanded_by_default",
-                        "pin", "unpin",
-                        "create_section", "rename_section",
-                        "delete_section", "reorder_sections",
-                        "append", "sed", "sed_all", "replace_section"
-                    ],
-                    "description": "Operation to perform"
-                },
-                "label": {
-                    "type": "string",
-                    "description": "Domaindoc to target (e.g., 'marketing_plan'). Optional for search (searches all enabled docs)."
-                },
-                "query": {
-                    "type": "string",
-                    "description": "Search query (search operation). Case-insensitive substring match."
-                },
-                "section": {
-                    "type": "string",
-                    "description": "Section header (exact match required)"
-                },
-                "sections": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Section headers for batch expand/collapse"
-                },
-                "parent": {
-                    "type": "string",
-                    "description": "Parent section header when targeting a subsection"
-                },
-                "content": {
-                    "type": "string",
-                    "description": "Content for append/create_section/replace_section"
-                },
-                "find": {
-                    "type": "string",
-                    "description": "Text to find (sed/sed_all)"
-                },
-                "replace": {
-                    "type": "string",
-                    "description": "Replacement text (sed/sed_all)"
-                },
-                "new_name": {
-                    "type": "string",
-                    "description": "New header (rename_section)"
-                },
-                "after": {
-                    "type": "string",
-                    "description": "Insert after this section (create_section)"
-                },
-                "expanded_by_default": {
-                    "type": "boolean",
-                    "description": "Mark section as expanded by default (create_section, set_expanded_by_default). Unlike overview, these sections can still be collapsed."
-                },
-                "order": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "All section headers in new order (reorder_sections)"
-                }
-            },
-            "required": ["operation"]
+        # Build label property — constrain to valid labels when catalog is available
+        label_prop: Dict[str, Any] = {
+            "type": "string",
+            "description": "The domaindoc's label. Optional for search and request_create; required for all other operations"
         }
-    }
+        if labels:
+            label_prop["enum"] = labels
+
+        return {
+            "name": "domaindoc_tool",
+            "description": description,
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "operation": {
+                        "type": "string",
+                        "enum": [
+                            "overview", "search", "enable", "disable",
+                            "expand", "collapse", "set_expanded_by_default",
+                            "pin", "unpin",
+                            "create_section", "rename_section",
+                            "delete_section", "reorder_sections",
+                            "append", "sed", "sed_all", "replace_section",
+                            "request_create", "request_delete"
+                        ],
+                        "description": (
+                            "Operation to perform. 'overview' previews a domaindoc's structure (works on disabled docs). "
+                            "'request_create' is a noop — do NOT call this operation. Instead, when the user asks to create "
+                            "a domaindoc, or when you recognize a topic with enough depth to warrant persistent structured "
+                            "reference (e.g., the user is deep in an ongoing project, extended summaries show sustained "
+                            "engagement with a domain, or the user keeps referencing the same complex information across "
+                            "conversations), tell the user directly: domaindocs are created via the MIRA app UI "
+                            "(Settings > Domain Documents > Create New). Suggest a label and description for them. "
+                            "Do not suggest creating domaindocs for transient topics or one-off questions. "
+                            "'request_delete' is a noop — do NOT call this operation. Instead, when the user asks to delete "
+                            "a domaindoc, tell them directly: domaindocs are deleted via the MIRA app UI "
+                            "(Settings > Domain Documents > [label] > Delete). Suggest 'disable' as a non-destructive "
+                            "alternative that removes the domaindoc from context without losing content."
+                        )
+                    },
+                    "label": label_prop,
+                    "query": {
+                        "type": "string",
+                        "description": "Case-insensitive substring to match against section headers and content. Used with search"
+                    },
+                    "section": {
+                        "type": "string",
+                        "description": "Section header to operate on (exact match). Add parent for subsections"
+                    },
+                    "sections": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Array of section headers for batch expand, collapse, or set_expanded_by_default"
+                    },
+                    "parent": {
+                        "type": "string",
+                        "description": "Header of the parent section. Required when targeting a subsection or reordering subsections"
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The section content. Required for create_section and replace_section; adds to existing section content for append"
+                    },
+                    "find": {
+                        "type": "string",
+                        "description": "Literal string to match in section content. For sed and sed_all operations"
+                    },
+                    "replace": {
+                        "type": "string",
+                        "description": "Literal replacement text for sed/sed_all. Use empty string to delete the matched text"
+                    },
+                    "new_name": {
+                        "type": "string",
+                        "description": "New section header name for rename_section"
+                    },
+                    "insert_after": {
+                        "type": "string",
+                        "description": "Existing section header — new section is inserted immediately after it. Omit to place at end of the section list"
+                    },
+                    "expanded_by_default": {
+                        "type": "boolean",
+                        "description": "If true, section displays expanded by default but can still be collapsed. Used by create_section and set_expanded_by_default"
+                    },
+                    "order": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Every section header at the level being reordered, in new order. Must include all headers — no omissions or extras"
+                    }
+                },
+                "required": ["operation"]
+            }
+        }
+
+    @property
+    def anthropic_schema(self) -> Dict[str, Any]:
+        """Dynamic schema with live domaindoc catalog.
+
+        Catalog changes only on domaindoc create/delete/archive (rare lifecycle events).
+        Enable/disable state is NOT reflected — MIRA infers active state from the
+        domaindoc trinket content already in context.
+        """
+        labels = self._build_domaindoc_catalog()
+        return self._build_schema(labels)
 
     # =========================================================================
     # Database Helpers
@@ -293,20 +325,6 @@ CONTENT EDITING (all require section, add parent for subsections):
     # Tool Interface
     # =========================================================================
 
-    def is_available(self) -> bool:
-        """Available when at least one domaindoc is enabled."""
-        try:
-            db = self.db  # Uses cached UserDataManager from Tool base class
-            results = db.fetchall(
-                "SELECT 1 FROM domaindocs WHERE enabled = TRUE LIMIT 1"
-            )
-            return len(results) > 0
-        except RuntimeError:
-            return False
-        except Exception as e:
-            logger.warning(f"Domaindoc availability check failed: {e}")
-            return False
-
     def run(
         self,
         operation: str,
@@ -318,7 +336,7 @@ CONTENT EDITING (all require section, add parent for subsections):
         find: Optional[str] = None,
         replace: Optional[str] = None,
         new_name: Optional[str] = None,
-        after: Optional[str] = None,
+        insert_after: Optional[str] = None,
         order: Optional[List[str]] = None,
         parent: Optional[str] = None,
         expanded_by_default: Optional[bool] = None
@@ -337,6 +355,16 @@ CONTENT EDITING (all require section, add parent for subsections):
             if not label:
                 raise ValueError("disable requires 'label' parameter")
             return self._op_disable(db, label)
+        elif operation == "overview":
+            if not label:
+                raise ValueError("overview requires 'label' parameter")
+            return self._op_overview(db, label)
+        elif operation == "request_create":
+            return self._op_request_create(label)
+        elif operation == "request_delete":
+            if not label:
+                raise ValueError("request_delete requires 'label' parameter")
+            return self._op_request_delete(label)
 
         # All other operations require a label and enabled domaindoc
         if not label:
@@ -355,7 +383,7 @@ CONTENT EDITING (all require section, add parent for subsections):
         elif operation == "unpin":
             return self._op_unpin(db, domaindoc_id, section, parent)
         elif operation == "create_section":
-            return self._op_create_section(db, domaindoc_id, section, content, after, parent, expanded_by_default)
+            return self._op_create_section(db, domaindoc_id, section, content, insert_after, parent, expanded_by_default)
         elif operation == "rename_section":
             return self._op_rename_section(db, domaindoc_id, section, new_name, parent)
         elif operation == "delete_section":
@@ -523,6 +551,81 @@ CONTENT EDITING (all require section, add parent for subsections):
             "label": label,
             "enabled": False,
             "message": f"Domaindoc '{label}' is now disabled"
+        }
+
+    # =========================================================================
+    # Browsing & Lifecycle Guidance Operations
+    # =========================================================================
+
+    def _op_overview(self, db: UserDataManager, label: str) -> Dict[str, Any]:
+        """Return domaindoc description + section tree (headers and summaries, no full content).
+
+        Works on both enabled and disabled domaindocs — the "sample to taste" mechanism
+        for previewing what a domaindoc contains before deciding to enable it.
+        """
+        doc = self._get_domaindoc(db, label, require_enabled=False)
+        domaindoc_id = doc["id"]
+
+        # Get all sections with parent relationships
+        all_sections = db.fetchall(
+            "SELECT * FROM domaindoc_sections WHERE domaindoc_id = :doc_id ORDER BY parent_section_id NULLS FIRST, sort_order",
+            {"doc_id": domaindoc_id}
+        )
+        all_sections = [db._decrypt_dict(s) for s in all_sections]
+
+        # Build section tree: top-level sections with nested subsections
+        section_by_id = {s["id"]: s for s in all_sections}
+        section_tree: List[Dict[str, Any]] = []
+
+        for sec in all_sections:
+            if sec.get("parent_section_id") is not None:
+                continue  # Skip subsections — they'll be nested under parents
+
+            entry: Dict[str, Any] = {
+                "header": sec["header"],
+                "summary": sec.get("summary") or "(no summary)",
+                "collapsed": sec.get("collapsed", False),
+                "pinned": sec.get("pinned", False),
+            }
+
+            # Find subsections
+            subsections = [
+                {
+                    "header": sub["header"],
+                    "summary": sub.get("summary") or "(no summary)",
+                    "collapsed": sub.get("collapsed", False),
+                }
+                for sub in all_sections
+                if sub.get("parent_section_id") == sec["id"]
+            ]
+            if subsections:
+                entry["subsections"] = subsections
+
+            section_tree.append(entry)
+
+        return {
+            "success": True,
+            "label": label,
+            "description": doc.get("encrypted__description") or doc.get("description", ""),
+            "enabled": doc.get("enabled", False),
+            "section_count": len(all_sections),
+            "sections": section_tree
+        }
+
+    def _op_request_create(self, label: str | None) -> Dict[str, Any]:
+        """Noop fallback — the operation description already tells the LLM what to do."""
+        return {
+            "success": False,
+            "operation": "request_create",
+            "error": "You called request_create, but the operation description says not to. Re-read the 'operation' parameter description and relay the directions to the user directly instead of calling this tool."
+        }
+
+    def _op_request_delete(self, label: str) -> Dict[str, Any]:
+        """Noop fallback — the operation description already tells the LLM what to do."""
+        return {
+            "success": False,
+            "operation": "request_delete",
+            "error": "You called request_delete, but the operation description says not to. Re-read the 'operation' parameter description and relay the directions to the user directly instead of calling this tool."
         }
 
     # =========================================================================
@@ -694,7 +797,7 @@ CONTENT EDITING (all require section, add parent for subsections):
         domaindoc_id: int,
         section: Optional[str],
         content: Optional[str],
-        after: Optional[str],
+        insert_after: Optional[str],
         parent: Optional[str] = None,
         expanded_by_default: Optional[bool] = None
     ) -> Dict[str, Any]:
@@ -746,8 +849,8 @@ CONTENT EDITING (all require section, add parent for subsections):
             # Creating top-level section
             all_sections = self._get_all_sections(db, domaindoc_id)
 
-        if after:
-            after_sec = self._get_section(db, domaindoc_id, after, parent)
+        if insert_after:
+            after_sec = self._get_section(db, domaindoc_id, insert_after, parent)
             new_order = after_sec["sort_order"] + 1
             for sec in all_sections:
                 if sec["sort_order"] >= new_order:
@@ -788,7 +891,7 @@ CONTENT EDITING (all require section, add parent for subsections):
         self._record_version(db, domaindoc_id, "create_section", {
             "header": header,
             "content_length": len(content),
-            "after": after,
+            "insert_after": insert_after,
             "parent": parent,
             "expanded_by_default": start_expanded
         }, int(section_id))

@@ -1,0 +1,13 @@
+<conversational_context>
+{conversation_turns}
+</conversational_context>
+------------------------------------------------------------
+<system_message>Execute the four-step IR process on this turn:</system_message>
+┃◆┃ CURRENT TURN ┃◆┃
+<turn speaker="user">{user_message}</turn>
+┃◆┃ END CURRENT TURN ┃◆┃
+------------------------------------------------------------
+<stored_passages>
+{previous_memories}
+</stored_passages>
+------------------------------------------------------------

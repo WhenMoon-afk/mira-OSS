@@ -149,5 +149,28 @@ class LoraTrinket(EventAwareTrinket):
                 f'- Regarding {topic["section_id"]}: {topic["reason"]}'
             )
 
+        parts.append("")
+        parts.append(
+            "<instruction>After the user responds to the check-in, close the feedback loop:\n"
+            "1. Echo their feedback verbatim as a markdown blockquote (> prefix) — this is what the "
+            "user sees.\n"
+            "2. Repeat the identical content in a <mira:checkin_response> tag (invisible to user, "
+            "parsed by backend). Blockquote and tag must match exactly.\n"
+            "3. Ask the user to confirm wording accuracy. If they correct you, reissue both blockquote "
+            "and tag with the revised version. Latest output wins.\n"
+            "4. Consolidate all check-in feedback into one blockquote + tag pair, even across multiple "
+            "topics.\n\n"
+            "Example output after user responds:\n"
+            "```\n"
+            "Here's what I'm recording:\n\n"
+            "> User prefers blunt technical feedback without diplomatic hedging.\n"
+            "> When I soften criticism, they find it condescending rather than considerate.\n\n"
+            "<mira:checkin_response>User prefers blunt technical feedback without diplomatic hedging. "
+            "When I soften criticism, they find it condescending rather than considerate."
+            "</mira:checkin_response>\n\n"
+            "Is this wording accurate?\n"
+            "```</instruction>"
+        )
+
         parts.append("</behavioral_checkin>")
         return "\n".join(parts)

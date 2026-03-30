@@ -219,7 +219,7 @@ init_vault() {
     vault kv put secret/mira/api_keys \
         anthropic_key="$CONFIG_ANTHROPIC_KEY" \
         anthropic_batch_key="$CONFIG_ANTHROPIC_BATCH_KEY" \
-        provider_key="$CONFIG_PROVIDER_KEY" \
+        openaicompat_key="$CONFIG_PROVIDER_KEY" \
         kagi_api_key="$CONFIG_KAGI_KEY"
 
     vault kv put secret/mira/database \

@@ -33,6 +33,7 @@ onnx             # ONNX runtime - sentence_transformers.py, bge_embeddings.py
 onnxruntime      # ONNX inference engine - bge_embeddings.py
 onnxconverter_common  # ONNX conversion utilities - bge_embeddings.py
 tqdm             # Progress bars - bge_embeddings.py model loading
+scikit-learn>=1.4.0  # TF-IDF candidate discovery for memory linking pipeline
 spacy>=3.7.0     # NER and NLP - entity extraction for memory linking
 # Note: Install en_core_web_lg with: python -m spacy download en_core_web_lg
 
@@ -46,6 +47,7 @@ mcp              # Model Context Protocol SDK - mcp_client.py for MCP server con
 
 # == TOOL-SPECIFIC LIBRARIES ==
 googlemaps       # Google Maps API - maps_tool.py
+google-genai     # Google Gemini GenAI SDK - imagegen_tool.py
 kasa             # TP-Link Kasa smart devices - kasa_tool.py
 kagiapi          # Kagi search API - web_tool.py (primary search provider)
 ddgs             # DuckDuckGo search - web_tool.py (fallback search provider)
@@ -61,8 +63,6 @@ pydantic         # Data validation - widely used across API models and tools
 python-dateutil  # Date parsing - reminder_tool.py, timezone_utils.py
 pytz             # Timezone handling - timezone_utils.py
 colorama         # Terminal colors - logging_config.py
-rich             # Rich text and TUI components - talkto_mira.py CLI interface
-prompt_toolkit   # Advanced input handling - talkto_mira.py multiline input and paste support
 rapidfuzz        # Fuzzy string matching - memory deduplication, entity normalization
 json-repair      # JSON repair for malformed LLM responses - extraction.py
 psutil           # Process management - playwright_service.py for forced browser shutdown

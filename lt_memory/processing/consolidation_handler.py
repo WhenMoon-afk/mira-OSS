@@ -97,10 +97,10 @@ class ConsolidationHandler:
             all_outbound_links.extend(memory.outbound_links)
             all_entity_links.extend(memory.entity_links)
 
-        # Step 4: Deduplicate links (exclude self-references, keep highest confidence)
+        # Step 4: Deduplicate links (exclude self-references, keep most recent)
         old_memory_id_strs = {str(mid) for mid in old_memory_ids}
 
-        # Deduplicate inbound links by UUID, keeping link with highest confidence
+        # Deduplicate inbound links by UUID, keeping most recent link
         unique_inbound = {}
         for link in all_inbound_links:
             uuid = link['uuid']
@@ -109,11 +109,11 @@ class ConsolidationHandler:
             if uuid not in unique_inbound:
                 unique_inbound[uuid] = link
             else:
-                # Keep link with higher confidence
-                if link.get('confidence', 0) > unique_inbound[uuid].get('confidence', 0):
+                # Keep most recent link
+                if link.get('created_at', '') > unique_inbound[uuid].get('created_at', ''):
                     unique_inbound[uuid] = link
 
-        # Deduplicate outbound links by UUID, keeping link with highest confidence
+        # Deduplicate outbound links by UUID, keeping most recent link
         unique_outbound = {}
         for link in all_outbound_links:
             uuid = link['uuid']
@@ -122,11 +122,11 @@ class ConsolidationHandler:
             if uuid not in unique_outbound:
                 unique_outbound[uuid] = link
             else:
-                # Keep link with higher confidence
-                if link.get('confidence', 0) > unique_outbound[uuid].get('confidence', 0):
+                # Keep most recent link
+                if link.get('created_at', '') > unique_outbound[uuid].get('created_at', ''):
                     unique_outbound[uuid] = link
 
-        # Deduplicate entity links by UUID (entity links don't have confidence scores)
+        # Deduplicate entity links by UUID
         unique_entities = {
             link['uuid']: link for link in all_entity_links
         }
@@ -136,11 +136,29 @@ class ConsolidationHandler:
             f"{len(unique_outbound)} outbound, {len(unique_entities)} entities"
         )
 
-        # Step 5: Create consolidated memory with median importance
+        # Step 5: Preserve segment provenance from source memories
+        # Pick earliest source segment for primary tracing column;
+        # full set is recorded in the consolidation annotation.
+        source_segment_ids = [
+            m.source_segment_id for m in old_memories
+            if m.source_segment_id is not None
+        ]
+        # Earliest by creation time — old_memories are sorted by importance_score DESC
+        # from get_memories_by_ids, so find the earliest created_at explicitly
+        earliest_segment_id = None
+        if source_segment_ids:
+            segment_by_created = sorted(
+                [(m.created_at, m.source_segment_id) for m in old_memories if m.source_segment_id],
+                key=lambda x: x[0]
+            )
+            earliest_segment_id = segment_by_created[0][1]
+
+        # Step 5b: Create consolidated memory with median importance
         consolidated_memory = ExtractedMemory(
             text=consolidated_text,
             importance_score=median_importance,
-            consolidates_memory_ids=[str(mid) for mid in old_memory_ids]
+            consolidates_memory_ids=list(old_memory_ids),
+            source_segment_id=earliest_segment_id,
         )
 
         # Step 6: Store consolidated memory with embeddings
@@ -168,16 +186,20 @@ class ConsolidationHandler:
                 f"{len(unique_entities)} entities"
             )
 
-        # Step 7b: Store merge note as annotation
+        # Step 7b: Store merge note as annotation (includes segment provenance)
         if merge_note:
             source_uuids = [str(mid) for mid in old_memory_ids]
+            annotation: Dict[str, Any] = {
+                'text': merge_note,
+                'created_at': utc_now().isoformat(),
+                'source': 'consolidation',
+                'archived_source_ids': source_uuids,
+            }
+            # Preserve all source segment IDs for full lineage tracing
+            if source_segment_ids:
+                annotation['source_segment_ids'] = list({str(sid) for sid in source_segment_ids})
             self.db.update_memory(new_memory_id, {
-                'annotations': [{
-                    'text': merge_note,
-                    'created_at': utc_now().isoformat(),
-                    'source': 'consolidation',
-                    'archived_source_ids': source_uuids,
-                }]
+                'annotations': [annotation]
             }, user_id=user_id)
 
         # Step 8: Update all memories that were linking TO old memories

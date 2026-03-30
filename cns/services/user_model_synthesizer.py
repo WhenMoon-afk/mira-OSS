@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import List, Literal, Optional
 
 from cns.infrastructure.feedback_repository import FeedbackRepository, FeedbackSignalRow
+from cns.infrastructure.feedback_tracker import FeedbackTracker
 from cns.services.system_prompt_parser import format_section_list, get_assessable_sections
 from clients.llm_provider import LLMProvider
 from config import config
@@ -118,12 +119,16 @@ class UserModelSynthesizer:
             logger.info("No signals or existing model for user %s", user_id)
             return SynthesisResult(observations=[], checkin_topics=[], raw_xml="")
 
+        # Fetch and consume any pending check-in feedback (atomically cleared)
+        tracker = FeedbackTracker()
+        checkin_feedback = tracker.get_and_clear_checkin_response(user_id)
+
         # Format signals grouped by section
         signals_text = self._format_signals_by_section(signals) if signals else "No new signals."
         current_model_text = current_model_xml if current_model_xml else "No existing user model (first synthesis)."
 
         # Initial synthesis
-        candidate_xml = self._run_synthesis(signals_text, current_model_text)
+        candidate_xml = self._run_synthesis(signals_text, current_model_text, checkin_feedback)
 
         # Critic validation loop
         for attempt in range(CRITIC_MAX_ATTEMPTS):
@@ -137,7 +142,7 @@ class UserModelSynthesizer:
 
             if attempt < CRITIC_MAX_ATTEMPTS - 1:
                 candidate_xml = self._rerun_synthesis_with_feedback(
-                    critic.feedback, signals_text, current_model_text
+                    critic.feedback, signals_text, current_model_text, checkin_feedback
                 )
         else:
             # Circuit breaker: fall back to previous model rather than injecting
@@ -157,12 +162,20 @@ class UserModelSynthesizer:
         )
         return result
 
-    def _run_synthesis(self, signals_text: str, current_model_text: str) -> str:
+    def _run_synthesis(
+        self,
+        signals_text: str,
+        current_model_text: str,
+        checkin_feedback: str | None = None
+    ) -> str:
         """Run the synthesis LLM call and return raw XML output."""
         user_prompt = self._synthesis_user_template.format(
             current_user_model=current_model_text,
             assessment_signals=signals_text
         )
+
+        if checkin_feedback:
+            user_prompt += f"\n\n## User Check-in Feedback\n{checkin_feedback}"
 
         llm_messages = [
             {"role": "system", "content": self._synthesis_system_prompt},
@@ -229,13 +242,17 @@ class UserModelSynthesizer:
         self,
         feedback: str,
         signals_text: str,
-        current_model_text: str
+        current_model_text: str,
+        checkin_feedback: str | None = None
     ) -> str:
         """Rerun synthesis with critic feedback appended to the prompt."""
         user_prompt = self._synthesis_user_template.format(
             current_user_model=current_model_text,
             assessment_signals=signals_text
         )
+
+        if checkin_feedback:
+            user_prompt += f"\n\n## User Check-in Feedback\n{checkin_feedback}"
 
         user_prompt += f"\n\n## Quality Critic Feedback\nThe quality critic flagged these issues in the previous attempt. Revise the user model to address them:\n\n{feedback}"
 

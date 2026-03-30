@@ -51,11 +51,13 @@ Benefits of using generate_response():
 import anthropic
 import concurrent.futures
 import hashlib
+import httpx
 import json
 import logging
 import os
 import random
 import re
+import signal
 import threading
 import time
 from pathlib import Path
@@ -74,6 +76,16 @@ from tools.repo import ANTHROPIC_BETA_FLAGS
 # Maximum file size for code execution artifacts (Anthropic server-enforced limit: 32MB)
 MAX_FILE_ARTIFACT_SIZE = 32 * 1024 * 1024
 
+# Firehose: toggle with `kill -USR1 <pid>`, check with `kill -USR2 <pid>` (logs state)
+_firehose_active = False
+
+def _toggle_firehose(signum, frame):
+    global _firehose_active
+    _firehose_active = not _firehose_active
+    logging.getLogger(__name__).warning(f"Firehose {'ENABLED' if _firehose_active else 'DISABLED'}")
+
+signal.signal(signal.SIGUSR1, _toggle_firehose)
+
 
 def sanitize_filename(filename: str, max_length: int = 200) -> str:
     """Sanitize filename from external source for safe filesystem storage."""
@@ -82,8 +94,11 @@ def sanitize_filename(filename: str, max_length: int = 200) -> str:
     safe = safe.lstrip('.')                             # No hidden files
     safe = re.sub(r'[^a-zA-Z0-9._-]', '_', safe)       # Allowlist chars
     if len(safe) > max_length:                          # Cap length
-        stem, _, ext = safe.rpartition('.')
-        safe = stem[:max_length - len(ext) - 1] + '.' + ext if ext else safe[:max_length]
+        stem, sep, ext = safe.rpartition('.')
+        if sep and len(ext) + 1 < max_length:           # Has real extension that fits
+            safe = stem[:max_length - len(ext) - 1] + '.' + ext
+        else:                                            # No extension or ext too long
+            safe = safe[:max_length]
     return safe or 'file'                               # Fallback
 
 
@@ -102,7 +117,7 @@ class ContextOverflowError(Exception):
 
 
 # Retry configuration for transient API errors (overloaded_error)
-OVERLOAD_MAX_RETRIES = 10
+OVERLOAD_MAX_RETRIES = 3
 OVERLOAD_BASE_DELAY = 1.0  # seconds
 OVERLOAD_MAX_DELAY = 8.0   # seconds
 
@@ -124,9 +139,21 @@ class ToolExecution(NamedTuple):
 class ToolExecutionResult(NamedTuple):
     """Result of executing a single tool."""
     tool_call: ToolCall
-    result_content: str
+    result_content: Union[str, List[Dict[str, Any]]]
     raw_result: Any
     error: Optional[Exception]
+
+
+def _displayable_result(
+    result_content: Union[str, List[Dict[str, Any]]], raw_result: Any
+) -> Union[str, List[Dict[str, Any]]]:
+    """Pass through tool result content for persistence and downstream use.
+
+    Content blocks (images + text) flow through as-is so they persist to
+    conversation history and remain visible to the LLM on subsequent turns.
+    String results pass through unchanged.
+    """
+    return result_content
 
 
 # Maps named effort levels to token budgets for non-adaptive models
@@ -149,6 +176,10 @@ class ThinkingConfig:
     """
     effort: Optional[Literal["low", "medium", "high", "max"]] = None
     budget_tokens: Optional[int] = None
+
+    def __post_init__(self):
+        if self.effort is not None and self.budget_tokens is not None:
+            raise ValueError("Mutually exclusive: set effort or budget_tokens, not both")
 
     @property
     def active(self) -> bool:
@@ -254,12 +285,14 @@ class CircuitBreaker:
                 return False, f"Tool '{last.tool_name}' failed after correction attempt: {last.error}"
             # First failure - allow retry (model will see schema in error message)
 
-        # Check for repeated results (last 2 executions) - loop detection
+        # Check for repeated results (last 2 executions of SAME tool) - loop detection
         if len(self.tool_results) >= 2:
-            last_result = self.tool_results[-1].result_hash
-            second_last_result = self.tool_results[-2].result_hash
+            current = self.tool_results[-1]
+            previous = self.tool_results[-2]
 
-            if last_result == second_last_result and last_result is not None:
+            if (current.tool_name == previous.tool_name
+                    and current.result_hash == previous.result_hash
+                    and current.result_hash is not None):
                 return False, "Repeated identical results"
 
         return True, "Continue"
@@ -306,7 +339,7 @@ class LLMProvider:
         # Initialize Anthropic SDK client
         self.anthropic_client = anthropic.Anthropic(
             api_key=self.api_key,
-            timeout=self.timeout
+            timeout=httpx.Timeout(connect=30.0, read=600.0, write=30.0, pool=30.0)
         )
 
         # Attach request logging hooks (req_id → content mapping)
@@ -337,15 +370,14 @@ class LLMProvider:
         # Optional tool repository for tool execution
         self.tool_repo = tool_repo
 
-        # Check for firehose mode (env var: MIRA_FIREHOSE=1)
-        self.firehose_enabled = bool(os.environ.get('MIRA_FIREHOSE'))
+        # Firehose mode checked live at call time via os.environ.get('MIRA_FIREHOSE')
 
         # Consolidated initialization log
         features = []
         if self.tool_repo: features.append("tools")
         if self.enable_prompt_caching: features.append("cache")
         if self.emergency_fallback_enabled: features.append("fallback")
-        if self.firehose_enabled: features.append("firehose")
+        if _firehose_active: features.append("firehose")
 
         self.logger.info(
             f"LLMProvider: model={self.model}, features={','.join(features) if features else 'none'}"
@@ -402,6 +434,112 @@ class LLMProvider:
 
         self.logger.info(f"Downloaded file artifact {file_id} ({safe_filename}, {size_bytes} bytes)")
         return content_path
+
+    def _emit_server_tool_completed_events(self, content_blocks: list) -> Generator[StreamEvent, None, None]:
+        """Emit ToolCompletedEvent for server-side tool results.
+
+        Server-side tools (code_execution, bash) are executed by Anthropic and their
+        results appear as content blocks in the response. The orchestrator needs
+        ToolCompletedEvent to mark tool interactions as completed so they get
+        persisted in conversation history.
+        """
+        # Build a map of server_tool_use id → name for matching results to tool calls
+        server_tool_map: dict[str, str] = {}
+        for block in content_blocks:
+            if block.type == "server_tool_use":
+                server_tool_map[block.id] = block.name
+
+        for block in content_blocks:
+            if block.type == "code_execution_result":
+                # code_execution_result doesn't have tool_use_id — find the
+                # server_tool_use block that precedes it (code_execution name)
+                tool_name = "code_execution"
+                # Build a compact summary instead of dumping all stdout
+                stdout = getattr(block, 'stdout', '') or ''
+                stderr = getattr(block, 'stderr', '') or ''
+                rc = getattr(block, 'return_code', 0)
+                summary_parts = []
+                if rc != 0:
+                    summary_parts.append(f"exit_code={rc}")
+                if stdout:
+                    summary_parts.append(f"stdout={len(stdout)} chars")
+                if stderr:
+                    summary_parts.append(f"stderr={len(stderr)} chars")
+                result_summary = f"[code_execution: {', '.join(summary_parts) or 'no output'}]"
+
+                # Find matching server_tool_use ID
+                tool_id = ""
+                for tid, tname in server_tool_map.items():
+                    if tname == "code_execution":
+                        tool_id = tid
+                        break
+
+                yield ToolCompletedEvent(
+                    tool_name=tool_name,
+                    tool_id=tool_id,
+                    result=result_summary,
+                )
+            elif block.type == "bash_code_execution_tool_result":
+                tool_id = getattr(block, 'tool_use_id', '')
+                tool_name = server_tool_map.get(tool_id, "bash_code_execution")
+                inner = block.content
+                if hasattr(inner, 'stdout'):
+                    stdout = inner.stdout or ''
+                    stderr = inner.stderr or ''
+                    rc = getattr(inner, 'return_code', 0)
+                    summary_parts = []
+                    if rc != 0:
+                        summary_parts.append(f"exit_code={rc}")
+                    if stdout:
+                        summary_parts.append(f"stdout={len(stdout)} chars")
+                    if stderr:
+                        summary_parts.append(f"stderr={len(stderr)} chars")
+                    result_summary = f"[bash: {', '.join(summary_parts) or 'no output'}]"
+                else:
+                    result_summary = f"[bash: error - {getattr(inner, 'error', 'unknown')}]"
+
+                yield ToolCompletedEvent(
+                    tool_name=tool_name,
+                    tool_id=tool_id,
+                    result=result_summary,
+                )
+
+    def _extract_file_artifacts(self, content_blocks: list) -> Generator[StreamEvent, None, None]:
+        """Extract file artifacts from code execution result blocks.
+
+        Handles both legacy code_execution_result and newer bash_code_execution_tool_result
+        block types. The bash variant has one extra nesting layer:
+        block.content (ResultBlock) -> .content (List[OutputBlock]).
+        """
+        from tools.repo import FILES_API_BETA_FLAG
+
+        for block in content_blocks:
+            output_blocks: list = []
+            if block.type == "code_execution_result":
+                output_blocks = block.content
+            elif block.type == "bash_code_execution_tool_result":
+                inner = block.content
+                if hasattr(inner, 'content'):  # ResultBlock, not ErrorBlock
+                    output_blocks = inner.content
+
+            for output_block in output_blocks:
+                if hasattr(output_block, 'file_id') and output_block.file_id:
+                    try:
+                        meta = self.anthropic_client.beta.files.retrieve_metadata(
+                            output_block.file_id, betas=[FILES_API_BETA_FLAG]
+                        )
+                        self.download_file_artifact(
+                            output_block.file_id, meta.filename,
+                            meta.mime_type, meta.size_bytes
+                        )
+                        yield FileArtifactEvent(
+                            file_id=output_block.file_id,
+                            filename=meta.filename,
+                            mime_type=meta.mime_type,
+                            size_bytes=meta.size_bytes,
+                        )
+                    except Exception as e:
+                        self.logger.warning(f"Failed to process file artifact {output_block.file_id}: {e}")
 
     def _emit_events_from_response(self, response: anthropic.types.Message) -> Generator[StreamEvent, None, None]:
         """
@@ -477,6 +615,8 @@ class LLMProvider:
 
         for msg in messages:
             if msg["role"] == "system":
+                if system_content is not None:
+                    raise ValueError("Multiple system messages found — only one is supported")
                 # Preserve type - can be str or List[Dict]
                 system_content = msg["content"]
             else:
@@ -531,10 +671,9 @@ class LLMProvider:
     ) -> None:
         """Write request data to firehose_output.json for debugging.
 
-        Captures all LLM requests (Anthropic and generic providers) when
-        MIRA_FIREHOSE=1 environment variable is set.
+        Toggle live: kill -USR1 <mira_pid>
         """
-        if not self.firehose_enabled:
+        if not _firehose_active:
             return
 
         firehose_data = {
@@ -550,9 +689,10 @@ class LLMProvider:
         }
 
         try:
-            with open("firehose_output.json", "w") as f:
+            firehose_path = "/opt/mira/data/firehose_output.json"
+            with open(firehose_path, "w") as f:
                 json.dump(firehose_data, f, indent=2)
-            self.logger.debug(f"Wrote {provider} request to firehose_output.json")
+            self.logger.debug(f"Wrote {provider} request to {firehose_path}")
         except Exception as e:
             self.logger.error(f"Failed to write firehose: {e}", exc_info=True)
 
@@ -570,8 +710,7 @@ class LLMProvider:
             return tools
 
         # Mark last tool for caching (caches all tools)
-        tools_copy = tools.copy()
-        tools_copy[-1] = tools_copy[-1].copy()
+        tools_copy = [t.copy() for t in tools]
         tools_copy[-1]["cache_control"] = {"type": "ephemeral", "ttl": "1h"}
         return tools_copy
 
@@ -965,9 +1104,46 @@ class LLMProvider:
                             input=arguments
                         ))
 
-                    # Map finish reason to Anthropic stop_reason
-                    stop_reason_map = {"stop": "end_turn", "tool_calls": "tool_use", "length": "max_tokens"}
-                    stop_reason = stop_reason_map.get(finish_reason, "end_turn")
+                    # Map finish reason to Anthropic stop_reason (case-insensitive to handle
+                    # Gemini uppercase values like "STOP", "MAX_TOKENS" that OpenRouter may pass through)
+                    stop_reason_map = {
+                        "stop": "end_turn",
+                        "tool_calls": "tool_use",
+                        "length": "max_tokens",
+                        "max_tokens": "max_tokens",
+                        # Gemini-specific: content policy / copyright filter
+                        "recitation": "end_turn",
+                        "safety": "end_turn",
+                        # OpenRouter-specific: mid-stream provider error
+                        "error": "end_turn",
+                    }
+                    normalized_finish = finish_reason.lower() if isinstance(finish_reason, str) else None
+                    stop_reason = stop_reason_map.get(normalized_finish, "end_turn")
+
+                    # Always log raw finish_reason for generic providers — essential for
+                    # diagnosing Gemini truncation (thinking budget cannibalization,
+                    # premature stop bugs, OpenRouter stream drops)
+                    self.logger.debug(
+                        f"Generic stream complete: model={model_override} "
+                        f"finish_reason={finish_reason!r} stop_reason={stop_reason} "
+                        f"text_chars={len(accumulated_text)} tool_calls={len(accumulated_tool_calls)}"
+                    )
+
+                    if normalized_finish is None:
+                        self.logger.warning(
+                            f"Stream from {model_override} ended without finish_reason — "
+                            f"possible premature termination ({len(accumulated_text)} chars accumulated)"
+                        )
+                    elif normalized_finish in ("recitation", "safety", "error"):
+                        self.logger.warning(
+                            f"Non-standard finish_reason='{finish_reason}' from {model_override} — "
+                            f"response may be truncated or filtered ({len(accumulated_text)} chars accumulated)"
+                        )
+                    elif normalized_finish not in stop_reason_map:
+                        self.logger.warning(
+                            f"Unmapped finish_reason='{finish_reason}' from {model_override}, "
+                            f"defaulted to end_turn ({len(accumulated_text)} chars accumulated)"
+                        )
 
                     response = GenericOpenAIResponse(
                         content=content_blocks,
@@ -1060,11 +1236,14 @@ class LLMProvider:
                             error = None
                             try:
                                 result = future.result()
-                                result_str = json.dumps(result) if isinstance(result, dict) else str(result)
+                                if isinstance(result, dict) and "_content_blocks" in result:
+                                    result_str = result.pop("_content_blocks")
+                                else:
+                                    result_str = json.dumps(result) if isinstance(result, dict) else str(result)
                                 yield ToolCompletedEvent(
                                     tool_name=block.name,
                                     tool_id=block.id,
-                                    result=result_str
+                                    result=_displayable_result(result_str, result),
                                 )
                             except Exception as e:
                                 self.logger.error(f"Tool execution failed for {block.name}: {e}", exc_info=True)
@@ -1709,6 +1888,11 @@ class LLMProvider:
                                         tool_name=event.content_block.name,
                                         tool_id=event.content_block.id
                                     )
+                                    yield ToolExecutingEvent(
+                                        tool_name=event.content_block.name,
+                                        tool_id=event.content_block.id,
+                                        arguments={}
+                                    )
 
                         # Get final message (Anthropic Message object)
                         final_message = stream.get_final_message()
@@ -1776,28 +1960,14 @@ class LLMProvider:
                                 pass  # OSS mode - no billing exceptions module
                             self.logger.error(f"Billing record_usage failed: {e}", exc_info=True)
 
-                        # Extract file artifacts from code_execution_result blocks
-                        from tools.repo import FILES_API_BETA_FLAG
-                        for block in final_message.content:
-                            if block.type == "code_execution_result":
-                                for output_block in block.content:
-                                    if output_block.type == "code_execution_output" and output_block.file_id:
-                                        try:
-                                            meta = self.anthropic_client.beta.files.retrieve_metadata(
-                                                output_block.file_id, betas=[FILES_API_BETA_FLAG]
-                                            )
-                                            self.download_file_artifact(
-                                                output_block.file_id, meta.filename,
-                                                meta.mime_type, meta.size_bytes
-                                            )
-                                            yield FileArtifactEvent(
-                                                file_id=output_block.file_id,
-                                                filename=meta.filename,
-                                                mime_type=meta.mime_type,
-                                                size_bytes=meta.size_bytes,
-                                            )
-                                        except Exception as e:
-                                            self.logger.warning(f"Failed to process file artifact {output_block.file_id}: {e}")
+                        # Emit ToolCompletedEvent for server-side tools so the
+                        # orchestrator can persist tool history across turns.
+                        # Without this, code_execution results are lost from
+                        # conversation history and the model loses context.
+                        yield from self._emit_server_tool_completed_events(final_message.content)
+
+                        # Extract file artifacts from code execution result blocks
+                        yield from self._extract_file_artifacts(final_message.content)
 
                         yield CompleteEvent(response=final_message)
                         break  # Success - exit retry loop
@@ -1860,7 +2030,18 @@ class LLMProvider:
         system_override: Optional[str] = None,
         allow_negative: bool = False,
     ) -> Generator[StreamEvent, None, None]:
-        """Execute with tool loop using Anthropic format."""
+        """Execute with tool loop using Anthropic format.
+
+        KNOWN BUG: System prompt staleness during agentic loop.
+        current_messages is copied once and never re-rendered between rounds.
+        Tools that mutate trinket-backing state (domaindoc expand/collapse,
+        reminder create/complete) leave the model seeing a stale system prompt
+        that contradicts its own tool results. Most visible when enable →
+        expand produces zero visible content because the trinket wasn't
+        rendering that domaindoc at compose time. The model falls back to
+        search as a read-through workaround, burning tokens and tool calls.
+        Fix requires bridging this loop back to the orchestrator's working memory.
+        """
         circuit_breaker = CircuitBreaker()
         current_messages = messages.copy()
 
@@ -1947,7 +2128,10 @@ class LLMProvider:
                 result = None
                 try:
                     result = invoke_with_context(tool_name, tc["input"])
-                    result_content = json.dumps(result) if isinstance(result, dict) else str(result)
+                    if isinstance(result, dict) and "_content_blocks" in result:
+                        result_content = result.pop("_content_blocks")
+                    else:
+                        result_content = json.dumps(result) if isinstance(result, dict) else str(result)
                 except Exception as e:
                     self.logger.error(f"Tool execution failed for {tool_name}: {e}")
                     schema_hint = ""
@@ -1966,7 +2150,7 @@ class LLMProvider:
                     tool_call=tc,
                     result_content=result_content,
                     raw_result=result,
-                    error=error
+                    error=error,
                 )
 
             # Execute sequential tools first (in request order)
@@ -1978,7 +2162,10 @@ class LLMProvider:
                 if exec_result.error:
                     yield ToolErrorEvent(tool_name=tool_name, tool_id=tool_id, error=str(exec_result.error))
                 else:
-                    yield ToolCompletedEvent(tool_name=tool_name, tool_id=tool_id, result=exec_result.result_content)
+                    yield ToolCompletedEvent(
+                        tool_name=tool_name, tool_id=tool_id,
+                        result=_displayable_result(exec_result.result_content, exec_result.raw_result),
+                    )
 
                 circuit_breaker.record_execution(tool_name, exec_result.raw_result, exec_result.error)
                 tool_results.append({
@@ -2003,7 +2190,10 @@ class LLMProvider:
                         if exec_result.error:
                             yield ToolErrorEvent(tool_name=tool_name, tool_id=tool_id, error=str(exec_result.error))
                         else:
-                            yield ToolCompletedEvent(tool_name=tool_name, tool_id=tool_id, result=exec_result.result_content)
+                            yield ToolCompletedEvent(
+                                tool_name=tool_name, tool_id=tool_id,
+                                result=_displayable_result(exec_result.result_content, exec_result.raw_result),
+                            )
 
                         circuit_breaker.record_execution(tool_name, exec_result.raw_result, exec_result.error)
                         tool_results.append({
@@ -2111,6 +2301,17 @@ class LLMProvider:
         Returns:
             Message dict with role and content blocks
         """
+        # Max stdout/stderr size to prevent context inflation during agentic loop.
+        # Code execution can produce megabytes of output; only the tail matters
+        # for the model to reason about what happened.
+        MAX_TOOL_OUTPUT_CHARS = 50_000
+
+        def _truncate_output(text: str) -> str:
+            if not text or len(text) <= MAX_TOOL_OUTPUT_CHARS:
+                return text
+            truncated = len(text) - MAX_TOOL_OUTPUT_CHARS
+            return f"[...truncated {truncated} chars...]\n{text[-MAX_TOOL_OUTPUT_CHARS:]}"
+
         content_blocks = []
 
         for block in message.content:
@@ -2119,6 +2320,13 @@ class LLMProvider:
                     "type": "thinking",
                     "thinking": block.thinking,
                     "signature": block.signature
+                })
+            elif block.type == "redacted_thinking":
+                # Opaque blocks required by the API for thinking continuity.
+                # Dropping these causes 400 errors on the next agentic loop iteration.
+                content_blocks.append({
+                    "type": "redacted_thinking",
+                    "data": block.data
                 })
             elif block.type == "text":
                 content_blocks.append({
@@ -2143,13 +2351,60 @@ class LLMProvider:
                 content_blocks.append({
                     "type": "code_execution_result",
                     "content": [
-                        {"type": ob.type, "file_id": getattr(ob, 'file_id', None)}
+                        {"type": ob.type, "file_id": ob.file_id}
                         for ob in block.content
+                        if hasattr(ob, 'file_id')
                     ],
                     "return_code": block.return_code,
-                    "stdout": block.stdout,
-                    "stderr": block.stderr,
+                    "stdout": _truncate_output(block.stdout),
+                    "stderr": _truncate_output(block.stderr),
                 })
+            elif block.type == "bash_code_execution_tool_result":
+                inner = block.content
+                if hasattr(inner, 'content'):  # ResultBlock
+                    content_blocks.append({
+                        "type": "bash_code_execution_tool_result",
+                        "content": {
+                            "type": inner.type,
+                            "content": [
+                                {"type": ob.type, "file_id": ob.file_id}
+                                for ob in inner.content
+                                if hasattr(ob, 'file_id')
+                            ],
+                            "return_code": inner.return_code,
+                            "stdout": _truncate_output(inner.stdout),
+                            "stderr": _truncate_output(inner.stderr),
+                        },
+                        "tool_use_id": block.tool_use_id,
+                    })
+                else:
+                    # ErrorBlock — must be preserved so the API sees a result
+                    # for its corresponding server_tool_use block.
+                    content_blocks.append({
+                        "type": "bash_code_execution_tool_result",
+                        "content": {
+                            "type": getattr(inner, 'type', 'error'),
+                            "error": getattr(inner, 'error', str(inner)),
+                        },
+                        "tool_use_id": block.tool_use_id,
+                    })
+            else:
+                # Unrecognized block type — pass through as-is to avoid
+                # silently dropping blocks the API requires.
+                self.logger.warning(
+                    f"Unrecognized content block type '{block.type}' in assistant message — "
+                    f"passing through raw. Update _build_assistant_message to handle this type."
+                )
+                # Convert SDK object to dict via model_dump if available (Pydantic v2),
+                # otherwise fall back to __dict__
+                if hasattr(block, 'model_dump'):
+                    content_blocks.append(block.model_dump())
+                elif hasattr(block, 'to_dict'):
+                    content_blocks.append(block.to_dict())
+                else:
+                    content_blocks.append({"type": block.type, **{
+                        k: v for k, v in vars(block).items() if not k.startswith('_')
+                    }})
 
         return {
             "role": "assistant",

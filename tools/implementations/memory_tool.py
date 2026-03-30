@@ -113,18 +113,7 @@ class MemoryTool(Tool):
 
     anthropic_schema = {
         "name": "memory_tool",
-        "description": (
-            "Manage long-term memories: search with graph traversal, create memories, "
-            "link related memories, add annotations, touch referenced memories. Use 'search' to find memories with "
-            "entity hub discovery and link traversal. Use 'create_memory' to store new "
-            "knowledge (queued for processing at segment close). Use 'link_memories' to "
-            "connect related memories. Use 'annotate_memory' to add contextual notes. "
-            "Use 'touch' after your response to record which surfaced memories you actually "
-            "referenced—pass the mem_XXXXXXXX IDs in memory_ids. "
-            "EXPLORING MEMORY CONTEXT: Search results include 'source_segment_id' when available. "
-            "To find the original conversation that produced a memory, use: "
-            "continuum_tool(operation='search_within_segment', segment_id=<source_segment_id>, query='<keywords>')."
-        ),
+        "description": "Search and manage long-term memories.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -142,87 +131,67 @@ class MemoryTool(Tool):
                     "type": "integer",
                     "minimum": 1,
                     "maximum": 20,
-                    "description": "Number of primary results, default 10"
+                    "description": "Maximum primary results per page, 1-20, default 10"
                 },
                 "page": {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Page number for pagination, default 1"
                 },
-                "include_hub_discovery": {
-                    "type": "boolean",
-                    "description": "Include entity-linked memories, default true"
-                },
-                "include_link_traversal": {
-                    "type": "boolean",
-                    "description": "Traverse links on top results, default true"
-                },
-                "traversal_depth": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 3,
-                    "description": "How many link hops to follow, default 1"
-                },
                 # Create memory parameters
-                "text": {
+                "content": {
                     "type": "string",
-                    "description": "Memory content (min 10 chars, required for 'create_memory')"
+                    "description": "The memory content to store. Minimum 10 characters after whitespace trimming. Required for 'create_memory'"
                 },
                 "user_requested": {
                     "type": "boolean",
-                    "description": "Set true when user explicitly says 'remember this', default false"
-                },
-                "importance_score": {
-                    "type": "number",
-                    "minimum": 0.0,
-                    "maximum": 1.0,
-                    "description": "Override importance score (0.0-1.0)"
+                    "description": "True if user explicitly asked to remember this. Sets importance to 0.7 if true, 0.5 if false. Default false"
                 },
                 "happens_at": {
                     "type": "string",
-                    "description": "ISO timestamp for when the event occurs"
+                    "description": "ISO 8601 datetime or past-relative phrase (e.g. '6 months ago', 'last Tuesday') for when the remembered event occurred"
                 },
                 "expires_at": {
                     "type": "string",
-                    "description": "ISO timestamp for when memory expires"
+                    "description": "ISO 8601 datetime or future-relative phrase (e.g. 'in 3 months') after which this memory should be considered expired"
                 },
                 "supersedes_memory_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of 8-char memory IDs (mem_XXXXXXXX) this memory supersedes"
+                    "description": "mem_XXXXXXXX IDs of existing memories this new memory replaces. Superseded memories receive a 70% score penalty in search results"
                 },
                 # Link memories parameters
                 "source_memory_id": {
                     "type": "string",
-                    "description": "8-char memory ID (mem_XXXXXXXX) for link source"
+                    "description": "mem_XXXXXXXX ID of the source memory in the link. The link reads as: source [link_type] target"
                 },
                 "target_memory_id": {
                     "type": "string",
-                    "description": "8-char memory ID (mem_XXXXXXXX) for link target"
+                    "description": "mem_XXXXXXXX ID of the memory the relationship points to. Required for 'link_memories'"
                 },
                 "link_type": {
                     "type": "string",
-                    "enum": ["supports", "conflicts", "supersedes", "refines", "precedes", "contextualizes"],
-                    "description": "Relationship type between memories"
+                    "enum": ["corroborates", "conflicts", "supersedes", "refines", "precedes", "contextualizes", "exemplifies"],
+                    "description": "Directional relationship from source to target. The link reads: source [link_type] target"
                 },
                 "reasoning": {
                     "type": "string",
-                    "description": "Explanation for the link (min 5 chars, required for 'link_memories')"
+                    "description": "Explanation for why this link exists. Min 5 chars. Stored with the link for future reference. Required for 'link_memories'"
                 },
                 # Annotate memory parameters
                 "memory_id": {
                     "type": "string",
-                    "description": "8-char memory ID (mem_XXXXXXXX) to annotate"
+                    "description": "mem_XXXXXXXX ID of the memory to annotate. Required for 'annotate_memory'"
                 },
-                "annotation_text": {
+                "annotation": {
                     "type": "string",
-                    "description": "Note to add (min 3 chars, required for 'annotate_memory')"
+                    "description": "Annotation content appended to the memory's annotation list. Min 3 chars. Required for 'annotate_memory'"
                 },
                 # Touch parameters
                 "memory_ids": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of mem_XXXXXXXX IDs to touch (required for 'touch')"
+                    "description": "List of mem_XXXXXXXX IDs that were actually used in your response. Must be non-empty. Required for 'touch'"
                 }
             },
             "required": ["operation"]
@@ -510,6 +479,10 @@ class MemoryTool(Tool):
             "inbound_links_count": len(memory.inbound_links) if memory.inbound_links else 0,
             "outbound_links_count": len(memory.outbound_links) if memory.outbound_links else 0,
             "annotations": memory.annotations if hasattr(memory, 'annotations') and memory.annotations else [],
+            # source_segment_id enables tracing a memory back to its origin conversation.
+            # A future "investigate" operation could use this + continuum_tool to pull
+            # the source segment's messages, but deferred — rarely needed and adds a
+            # new tool parameter for a niche use case.
             "source_segment_id": str(memory.source_segment_id) if hasattr(memory, 'source_segment_id') and memory.source_segment_id else None
         }
 
@@ -520,7 +493,7 @@ class MemoryTool(Tool):
 
     def _create_memory(
         self,
-        text: str,
+        content: str,
         user_requested: bool = False,
         importance_score: Optional[float] = None,
         happens_at: Optional[str] = None,
@@ -536,7 +509,7 @@ class MemoryTool(Tool):
         This keeps tool invocation fast and defers heavy operations.
 
         Args:
-            text: Memory content (min 10 chars)
+            content: Memory content (min 10 chars)
             user_requested: True if user explicitly said "remember this"
             importance_score: Override importance (0.0-1.0)
             happens_at: ISO timestamp for event
@@ -546,12 +519,12 @@ class MemoryTool(Tool):
         Returns:
             Queue confirmation with pending_id for tracking
         """
-        # Validate text
-        if not text or len(text.strip()) < self._config.min_text_length:
+        # Validate content
+        if not content or len(content.strip()) < self._config.min_text_length:
             raise ValueError(
-                f"Text must be at least {self._config.min_text_length} characters"
+                f"Content must be at least {self._config.min_text_length} characters"
             )
-        text = text.strip()
+        content = content.strip()
 
         # Determine importance score (cast to float - tool inputs may be strings from JSON)
         if importance_score is not None:
@@ -566,7 +539,7 @@ class MemoryTool(Tool):
 
         # Build pending memory
         pending = PendingManualMemory(
-            text=text,
+            text=content,
             importance_score=score,
             user_requested=user_requested,
             happens_at=happens_at,
@@ -596,7 +569,7 @@ class MemoryTool(Tool):
             "status": "queued",
             "pending_id": pending.pending_id,
             "will_process_at": "segment_collapse",
-            "text_preview": text[:50] + "..." if len(text) > 50 else text,
+            "text_preview": content[:50] + "..." if len(content) > 50 else content,
             "importance_score": score,
             "message": "Memory queued for processing when conversation segment closes"
         }
@@ -669,7 +642,7 @@ class MemoryTool(Tool):
     def _annotate_memory(
         self,
         memory_id: str,
-        annotation_text: str,
+        annotation: str,
         **kwargs  # Accept extra params gracefully
     ) -> Dict[str, Any]:
         """
@@ -677,15 +650,15 @@ class MemoryTool(Tool):
 
         Args:
             memory_id: 8-char ID of memory to annotate
-            annotation_text: Note to add (min 3 chars)
+            annotation: Note to add (min 3 chars)
 
         Returns:
             Annotation confirmation
         """
-        # Validate annotation text
-        if not annotation_text or len(annotation_text.strip()) < 3:
-            raise ValueError("Annotation text must be at least 3 characters")
-        annotation_text = annotation_text.strip()
+        # Validate annotation
+        if not annotation or len(annotation.strip()) < 3:
+            raise ValueError("Annotation must be at least 3 characters")
+        annotation = annotation.strip()
 
         # Resolve short ID
         memory = self._find_memory_by_short_id(memory_id)
@@ -693,15 +666,15 @@ class MemoryTool(Tool):
             raise ValueError(f"Memory '{memory_id}' not found")
 
         # Build annotation object
-        annotation = {
-            "text": annotation_text,
+        annotation_entry = {
+            "text": annotation,
             "created_at": format_utc_iso(utc_now()),
             "source": "mira"
         }
 
         # Append to existing annotations
         existing = memory.annotations if hasattr(memory, 'annotations') and memory.annotations else []
-        updated = existing + [annotation]
+        updated = existing + [annotation_entry]
 
         # Update via db_access (serialize to JSON string for JSONB column)
         self._memory_db.update_memory(memory.id, {"annotations": json.dumps(updated)})
@@ -712,7 +685,7 @@ class MemoryTool(Tool):
             "status": "annotated",
             "memory_id": format_memory_id(str(memory.id)),
             "annotation_count": len(updated),
-            "annotation_text": annotation_text,
+            "annotation": annotation,
             "message": f"Added annotation to {format_memory_id(str(memory.id))} ({len(updated)} total annotations)"
         }
 

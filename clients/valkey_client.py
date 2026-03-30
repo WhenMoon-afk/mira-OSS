@@ -354,6 +354,9 @@ class ValkeyClient:
         Returns:
             Number of keys deleted
         """
+        if any(prefix == "" for prefix in preserve_prefixes):
+            raise ValueError("Empty string in preserve_prefixes would preserve all keys")
+
         deleted_count = 0
         preserved_count = 0
 

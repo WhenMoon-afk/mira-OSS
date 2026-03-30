@@ -1,43 +1,27 @@
-# cns/infrastructure/
+# cns/infrastructure/ — CNS persistence and caching layer
 
-Persistence and caching. All database access for CNS flows through this layer.
+## Rules
+
+All DB access here uses either `PostgresClient` (user-scoped, RLS-enforced) or `get_shared_session_manager()` (shared pool). Never create a new `PostgresClient` per call — `ContinuumRepository` caches per-user clients in `_db_cache`. Cross-user admin queries use `AdminSession` to bypass RLS.
+
+`ContinuumRepository` and `ContinuumPool` are singletons accessed via `get_continuum_repository()` and `get_continuum_pool()`. Never instantiate them directly outside `integration/factory.py`.
+
+Valkey cache is event-driven — no TTL. A cache miss in `ContinuumPool.get_or_create()` means new session, not stale data. Do not add TTL-based expiry.
+
+`UnitOfWork` is the only path for persisting messages during a turn. Call `uow.add_messages()` during processing, `uow.commit()` once at the end. Bypass is not acceptable — direct `save_messages_batch()` calls skip Valkey sync.
+
+`FeedbackTracker` synthesis timing uses `users.cumulative_activity_days % threshold == 0` with a dedup guard against `activity_days_at_last_synthesis`. Never add a separate counter — it's stateless by design.
 
 ## Files
 
-- `continuum_repository.py` — PostgreSQL repository for continuums and messages. Per-user DB client caching. Handles segment sentinel creation (`_ensure_active_segment`), message persistence with UPSERT + `::vector(768)` cast, JSONB metadata operations (`metadata->>'key'`, `jsonb_set()`), segment queries, history pagination, full-text search. Admin queries use `AdminSession` to bypass RLS. Session resume: `find_resumable_segment()` finds most-recently-collapsed non-tombstoned segment (when no active exists), `reactivate_collapsed_segment()` atomically clears collapse artifacts and resets to active, `delete_segment_memories()` removes memories extracted from a specific segment. Exports `HistoryResult`, `FailedSegment`, `ActiveSegmentRow` TypedDicts for return type contracts.
-- `continuum_pool.py` — Valkey-backed session pool. `get_or_create()` returns cached Continuum or creates new session with segment boundary. `UnitOfWork` accumulates messages + metadata changes, commits atomically. Cache miss = new session. Event-driven invalidation (not TTL). Dead methods `get_by_id()` and `get_session_info()` were removed (zero callers).
-- `valkey_message_cache.py` — Message serialization/deserialization for Valkey. Converts Message objects to/from JSON. Event-driven invalidation via segment timeout, no TTL expiry. No constructor DI — uses `get_valkey_client()` singleton directly.
-- `feedback_repository.py` — CRUD for `feedback_signals` table. Saves assessment signals (with section_id, strength, evidence), retrieves unsynthesized signals, marks as synthesized. Exports `FeedbackSignalRow` TypedDict for `get_unsynthesized_signals()` return type.
-- `feedback_tracker.py` — Synthesis lifecycle for the user model pipeline. Uses modular arithmetic on `users.cumulative_activity_days` (not its own counter) to determine synthesis timing. Stores `activity_days_at_last_synthesis` snapshot, user model XML, and needs_checkin flag. Exports `LoraContent` TypedDict for `get_lora_content()` return type, `TrackingStatus` TypedDict for `get_tracking_status()` return type.
+- `continuum_repository.py` — Owns PostgreSQL persistence for continuums, messages, and segments. Exports `HistoryResult`, `FailedSegment`, `ActiveSegmentRow` TypedDicts. Segment lifecycle: `find_active_segment()` matches both `active` and `paused` status; `pause_segment()` / `unpause_segment()` toggle pause state; `increment_segment_turn()` auto-resumes paused segments on user message. Collapsed segments are final — no reactivation path.
+- `continuum_pool.py` — Owns the Valkey-backed session cache and `UnitOfWork`. `get_or_create()` is the entry point for all continuum session resolution.
+- `valkey_message_cache.py` — Owns `Message` ↔ Valkey JSON serialization. Key format: `continuum:{user_id}:messages`. No constructor DI — calls `get_valkey_client()` directly.
+- `feedback_repository.py` — Owns CRUD for `feedback_signals` table. Exports `FeedbackSignalRow`. Uses `get_shared_session_manager()`, not `PostgresClient`.
+- `feedback_tracker.py` — Owns synthesis lifecycle state in `feedback_synthesis_tracking` table. Exports `LoraContent`, `TrackingStatus`. `get_and_clear_checkin_response()` atomically nulls the stored response via `UPDATE ... RETURNING`.
 
-## Patterns to Follow
+## Wiring
 
-### Database Access
-- Use `PostgresClient("mira_service", user_id=user_id)` for user-scoped queries (RLS enforced).
-- Use `AdminSession` from `utils.database_session_manager` for cross-user admin queries only.
-- Repository caches per-user DB clients in `_db_cache` dict — don't create new PostgresClient per call.
-- JSONB filtering: `metadata->>'key' = %s` for string comparison, `metadata ? 'key'` for existence.
-- Atomic metadata updates: `jsonb_set(metadata, '{key}', to_jsonb(%s))` with `execute_returning()`.
-- UUIDs stay native for PostgreSQL queries. Convert to string only at serialization boundaries.
+`UnitOfWork.commit()` calls `repository.save_messages_batch()` then `valkey_cache.set_continuum()` in that order — DB write always precedes cache write. A crash between the two leaves DB authoritative; next cache miss reconstructs via `SegmentCacheLoader` (defined in `cns/core/segment_cache_loader.py`).
 
-### Message Persistence
-- Use `save_message()` or `save_messages_batch()` — they handle segment boundary creation automatically via `_ensure_active_segment()`.
-- The UPSERT pattern (`ON CONFLICT (id) DO UPDATE`) handles replay safety.
-- `_parse_message_rows()` is the canonical DB-row-to-Message converter. Don't reimplement.
-
-### Caching
-- Valkey cache is event-driven (no TTL). Invalidated when segment times out.
-- Cache miss in `continuum_pool.get_or_create()` triggers `SegmentCacheLoader` to reconstruct from DB.
-- `ValkeyMessageCache` handles Message ↔ JSON serialization — use it, don't roll your own.
-
-### Unit of Work
-- `continuum_pool.begin_work(continuum)` returns a `UnitOfWork`.
-- Call `uow.add_messages(msg1, msg2)` during processing, then `uow.commit()` once at the end.
-- Commit persists to both PostgreSQL and Valkey cache atomically.
-
-### User Model Storage
-- `FeedbackRepository` for assessment signal CRUD (section_id, strength, evidence), `FeedbackTracker` for synthesis lifecycle.
-- Synthesis timing uses modular arithmetic: `cumulative_activity_days % threshold == 0` with dedup guard (`activity_days > activity_days_at_last_synthesis`). No counters to reset — completely stateless.
-- `get_tracking_status()` computes `use_days_since_synthesis` on the fly as `cumulative_activity_days - activity_days_at_last_synthesis` to preserve API contract.
-- `initialize_user()` uses `ON CONFLICT DO NOTHING` for race-safe account setup.
-- `get_lora_content()` returns `{synthesis_xml, needs_checkin}` in a single query for LoraTrinket.
+`FeedbackRepository` takes `AssessmentSignal` from `cns/services/assessment_extractor.py`. `FeedbackTracker.get_lora_content()` returns `LoraContent` consumed by `LoraTrinket` in working memory. These two files are the boundary between the assessment pipeline and the user model pipeline.

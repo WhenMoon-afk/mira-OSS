@@ -21,10 +21,10 @@ def register_lt_memory_jobs(scheduler_service, lt_memory_factory) -> None:
     - Extraction retry sweep (6-hour intervals, calendar-based)
     - Extraction batch polling (1-minute intervals, calendar-based)
     - Post-processing batch polling (1-minute intervals, calendar-based)
-    - Consolidation (DEADHEADED — verifying locally)
+    - Consolidation (daily tick, use-day gated)
     - Temporal score recalculation (daily tick, use-day gated)
     - Bulk score recalculation (daily tick, use-day gated)
-    - Entity garbage collection (DEADHEADED — verifying locally)
+    - Entity garbage collection (daily tick, use-day gated)
     - Batch cleanup (daily tick, use-day gated)
 
     Args:
@@ -101,36 +101,34 @@ def register_lt_memory_jobs(scheduler_service, lt_memory_factory) -> None:
     # Use-day-gated jobs (daily tick, filtered by modular arithmetic)
     # ================================================================
 
-    # Consolidation — DEADHEADED: verifying locally before enabling on schedule
-    # def run_consolidation_for_due_users():
-    #     from utils.user_context import set_current_user_id, clear_user_context
-    #     from utils.scheduled_tasks import get_users_due_for_job
-    #
-    #     users = get_users_due_for_job(jobs_config.consolidation_use_days)
-    #     total_submitted = 0
-    #     for user in users:
-    #         user_id = str(user["id"])
-    #         set_current_user_id(user_id)
-    #         try:
-    #             batch_id = post_processing.submit_consolidation_batch(user_id)
-    #             if batch_id:
-    #                 total_submitted += 1
-    #         finally:
-    #             clear_user_context()
-    #
-    #     logger.info("Consolidation sweep: submitted batches for %d/%d due users", total_submitted, len(users))
-    #     return {"users_processed": total_submitted}
-    #
-    # success_consolidation = scheduler_service.register_job(
-    #     job_id="lt_memory_consolidation",
-    #     func=run_consolidation_for_due_users,
-    #     trigger=IntervalTrigger(days=1),
-    #     component="lt_memory",
-    #     description=f"Submit consolidation batches (every {jobs_config.consolidation_use_days} use-days)"
-    # )
-    # if not success_consolidation:
-    #     raise RuntimeError("Failed to register consolidation job")
-    # logger.info("Registered consolidation job (every %d use-days)", jobs_config.consolidation_use_days)
+    # Consolidation
+    def run_consolidation_for_due_users():
+        from utils.user_context import set_current_user_id, clear_user_context
+        from utils.scheduled_tasks import get_users_due_for_job
+
+        users = get_users_due_for_job(jobs_config.consolidation_use_days)
+        total_submitted = 0
+        for user in users:
+            user_id = str(user["id"])
+            set_current_user_id(user_id)
+            try:
+                batch_id = post_processing.submit_consolidation_batch(user_id)
+                if batch_id:
+                    total_submitted += 1
+            finally:
+                clear_user_context()
+
+        logger.info("Consolidation sweep: submitted batches for %d/%d due users", total_submitted, len(users))
+        return {"users_processed": total_submitted}
+
+    scheduler_service.register_job(
+        job_id="lt_memory_consolidation",
+        func=run_consolidation_for_due_users,
+        trigger=IntervalTrigger(days=1),
+        component="lt_memory",
+        description=f"Submit consolidation batches (every {jobs_config.consolidation_use_days} use-days)"
+    )
+    logger.info("Registered consolidation job (every %d use-days)", jobs_config.consolidation_use_days)
 
     # Temporal score recalculation
     def run_temporal_score_recalculation():
@@ -190,37 +188,35 @@ def register_lt_memory_jobs(scheduler_service, lt_memory_factory) -> None:
     )
     logger.info("Registered bulk score recalculation (every %d use-days)", jobs_config.bulk_score_recalc_use_days)
 
-    # Entity garbage collection — DEADHEADED: verifying locally before enabling on schedule
-    # def submit_entity_gc_for_due_users():
-    #     from utils.user_context import set_current_user_id, clear_user_context
-    #     from utils.scheduled_tasks import get_users_due_for_job
-    #
-    #     users = get_users_due_for_job(jobs_config.entity_gc_use_days)
-    #     total_submitted = 0
-    #     for user in users:
-    #         user_id = str(user["id"])
-    #         set_current_user_id(user_id)
-    #         try:
-    #             entity_gc = lt_memory_factory.entity_gc
-    #             batch_id = entity_gc.submit_entity_gc_batch()
-    #             if batch_id:
-    #                 total_submitted += 1
-    #         finally:
-    #             clear_user_context()
-    #
-    #     logger.info("Entity GC sweep: submitted batches for %d/%d due users", total_submitted, len(users))
-    #     return {"users_submitted": total_submitted}
-    #
-    # success_entity_gc = scheduler_service.register_job(
-    #     job_id="lt_memory_entity_gc",
-    #     func=submit_entity_gc_for_due_users,
-    #     trigger=IntervalTrigger(days=1),
-    #     component="lt_memory",
-    #     description=f"Submit entity GC batches (every {jobs_config.entity_gc_use_days} use-days)"
-    # )
-    # if not success_entity_gc:
-    #     raise RuntimeError("Failed to register entity GC job")
-    # logger.info("Registered entity GC (every %d use-days)", jobs_config.entity_gc_use_days)
+    # Entity garbage collection
+    def submit_entity_gc_for_due_users():
+        from utils.user_context import set_current_user_id, clear_user_context
+        from utils.scheduled_tasks import get_users_due_for_job
+
+        users = get_users_due_for_job(jobs_config.entity_gc_use_days)
+        total_submitted = 0
+        for user in users:
+            user_id = str(user["id"])
+            set_current_user_id(user_id)
+            try:
+                entity_gc = lt_memory_factory.entity_gc
+                batch_id = entity_gc.submit_entity_gc_batch()
+                if batch_id:
+                    total_submitted += 1
+            finally:
+                clear_user_context()
+
+        logger.info("Entity GC sweep: submitted batches for %d/%d due users", total_submitted, len(users))
+        return {"users_submitted": total_submitted}
+
+    scheduler_service.register_job(
+        job_id="lt_memory_entity_gc",
+        func=submit_entity_gc_for_due_users,
+        trigger=IntervalTrigger(days=1),
+        component="lt_memory",
+        description=f"Submit entity GC batches (every {jobs_config.entity_gc_use_days} use-days)"
+    )
+    logger.info("Registered entity GC (every %d use-days)", jobs_config.entity_gc_use_days)
 
     # Batch cleanup
     def run_batch_cleanup_for_due_users():

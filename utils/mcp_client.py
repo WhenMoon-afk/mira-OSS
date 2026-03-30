@@ -147,7 +147,7 @@ class MCPConnection:
         self.config = server_config
         self.user_id = user_id
         self.session: Optional[ClientSession] = None
-        self.credential_service = UserCredentialService(user_id)
+        self.credential_service = UserCredentialService()
         self._tools_cache: Optional[List[Tool]] = None
         self._resources_cache: Optional[List[Resource]] = None
         self._read = None

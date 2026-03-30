@@ -39,7 +39,81 @@ class ContainerUploadBlock(TypedDict, total=False):
     file_id: str
 
 
-ContentBlock = TextBlock | ImageBlock | DocumentBlock | ContainerUploadBlock
+class ToolUseBlock(TypedDict):
+    """Tool use content block in an assistant message (Anthropic API format)."""
+    type: str  # "tool_use"
+    id: str
+    name: str
+    input: dict[str, object]
+
+
+class ThinkingBlock(TypedDict, total=False):
+    """Thinking content block from extended thinking (Anthropic API format).
+
+    Must be passed back unmodified — the signature is cryptographic and the
+    API rejects tampered blocks. Two variants:
+    - type="thinking": has ``thinking`` + ``signature`` fields
+    - type="redacted_thinking": has ``data`` field (opaque base64)
+    """
+    type: str  # "thinking" | "redacted_thinking"
+    thinking: str  # type="thinking" only
+    signature: str  # type="thinking" only
+    data: str  # type="redacted_thinking" only
+
+
+ContentBlock = TextBlock | ImageBlock | DocumentBlock | ContainerUploadBlock | ToolUseBlock
+
+# --- Content block preprocessing (shared across extraction, summarization, peanut gallery) ---
+
+TOOL_RESULT_TRUNCATION_LIMIT = 500
+
+_MEDIA_BLOCK_TYPES = frozenset({"image", "image_url", "container_upload", "document"})
+
+
+@dataclass(frozen=True)
+class PreprocessedContent:
+    """Result of preprocessing content blocks into text parts."""
+    text_parts: list[str]
+    image_count: int
+
+
+def preprocess_content_blocks(content: str | list[ContentBlock]) -> PreprocessedContent:
+    """Extract text parts and image count from Message content.
+
+    Handles: text blocks (extracted), media blocks (counted, stripped),
+    tool_use (marker), tool_result (truncated at 500 chars).
+    Skips thinking/redacted_thinking blocks.
+    """
+    if isinstance(content, str):
+        return PreprocessedContent(text_parts=[content], image_count=0)
+
+    text_parts: list[str] = []
+    image_count = 0
+
+    for block in content:
+        if isinstance(block, str):
+            text_parts.append(block)
+            continue
+        if not isinstance(block, dict):
+            continue
+
+        block_type = block.get("type", "")
+        if block_type == "text":
+            text = block.get("text", "")
+            if text:
+                text_parts.append(text)
+        elif block_type in _MEDIA_BLOCK_TYPES:
+            image_count += 1
+        elif block_type == "tool_use":
+            text_parts.append(f"[Used tool: {block.get('name', 'unknown')}]")
+        elif block_type == "tool_result":
+            result = block.get("content", "")
+            if isinstance(result, str) and len(result) > TOOL_RESULT_TRUNCATION_LIMIT:
+                result = result[:TOOL_RESULT_TRUNCATION_LIMIT] + "..."
+            text_parts.append(f"[Tool result: {result}]")
+        # thinking, redacted_thinking: skip
+
+    return PreprocessedContent(text_parts=text_parts, image_count=image_count)
 
 
 class MessageMetadata(TypedDict, total=False):
@@ -67,6 +141,7 @@ class MessageMetadata(TypedDict, total=False):
     # LLM response fields
     emotion: str
     thinking: str
+    thinking_blocks: list[ThinkingBlock]
     model_error: bool
     model_error_reason: str
     # Embedding fields

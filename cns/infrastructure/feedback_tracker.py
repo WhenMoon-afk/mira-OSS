@@ -270,6 +270,59 @@ class FeedbackTracker:
 
         logger.debug("User %s: reset synthesis output, snapshot activity_days=%d", user_id, activity_days)
 
+    def acknowledge_checkin(self, user_id: str, checkin_response: str) -> None:
+        """
+        Store check-in feedback and clear the needs_checkin flag.
+
+        Idempotent: overwrites any previous checkin_response (supports iterative
+        refinement where the user corrects Mira's paraphrase across turns).
+
+        Args:
+            user_id: User ID
+            checkin_response: User-confirmed feedback text from the check-in
+        """
+        session_manager = get_shared_session_manager()
+
+        with session_manager.get_session(user_id) as session:
+            session.execute_single("""
+                UPDATE feedback_synthesis_tracking
+                SET needs_checkin = FALSE,
+                    checkin_response = %s
+                WHERE user_id = %s
+            """, (checkin_response, user_id))
+
+        logger.info("User %s: check-in acknowledged, needs_checkin=FALSE", user_id)
+
+    def get_and_clear_checkin_response(self, user_id: str) -> str | None:
+        """
+        Atomically read and clear stored check-in feedback.
+
+        Called during synthesis to incorporate user feedback, then null the
+        column so it's not consumed again in a subsequent cycle.
+
+        Args:
+            user_id: User ID
+
+        Returns:
+            Stored feedback text, or None if no feedback pending
+        """
+        session_manager = get_shared_session_manager()
+
+        with session_manager.get_session(user_id) as session:
+            result = session.execute_single("""
+                UPDATE feedback_synthesis_tracking
+                SET checkin_response = NULL
+                WHERE user_id = %s AND checkin_response IS NOT NULL
+                RETURNING checkin_response
+            """, (user_id,))
+
+            if result:
+                feedback = result.get('checkin_response')
+                if feedback:
+                    logger.info("User %s: consumed check-in feedback for synthesis", user_id)
+                    return feedback
+            return None
+
     def initialize_user(self, user_id: str) -> None:
         """
         Initialize feedback tracking for a new user.

@@ -21,7 +21,7 @@ from lt_memory.linking import LinkingService
 from lt_memory.models import ExtractionBatch, PostProcessingBatch, ExtractedMemory, MemoryLink, LinkingPair, ClassificationPair
 from config.config import BatchingConfig
 from clients.llm_provider import LLMProvider, build_batch_params
-from utils.user_context import set_current_user_id, clear_user_context
+from utils.user_context import set_current_user_id, clear_user_context, get_internal_llm
 from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -51,6 +51,11 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
         self.batching_config = batching_config
         self.llm_provider = llm_provider
         self.batch_coordinator = batch_coordinator
+
+        # Accumulates memory_ids and linking_pairs across chunks within a batch,
+        # so relationship classification is triggered once per Anthropic batch
+        # rather than once per chunk.
+        self._pending_relationships: Dict[str, Dict[str, Any]] = {}
 
     def process_result(self, batch_id: str, batch: ExtractionBatch) -> bool:
         """
@@ -121,7 +126,6 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
                                         source_id=new_id,
                                         target_id=related_id,
                                         link_type="extraction_ref",
-                                        confidence=0.9,
                                         reasoning=bond if bond else "Referenced during conversation",
                                         extraction_bond=bond,
                                         created_at=utc_now()
@@ -134,8 +138,24 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
                         # Persist LLM-extracted entities via fuzzy matching
                         self._persist_llm_entities(batch.user_id, memories, memory_ids)
 
-                        # Trigger relationship classification with linking hints
-                        self._trigger_relationship_classification(batch.user_id, memory_ids, linking_pairs)
+                        # Accumulate for finalize_batch() — relationship classification
+                        # triggers once after all chunks are processed, not per-chunk
+                        if batch_id not in self._pending_relationships:
+                            self._pending_relationships[batch_id] = {
+                                "user_id": batch.user_id,
+                                "memory_ids": [],
+                                "linking_pairs": []
+                            }
+                        acc = self._pending_relationships[batch_id]
+                        offset = len(acc["memory_ids"])
+                        acc["memory_ids"].extend(memory_ids)
+                        if linking_pairs:
+                            for pair in linking_pairs:
+                                acc["linking_pairs"].append({
+                                    "source_idx": pair["source_idx"] + offset,
+                                    "target_idx": pair["target_idx"] + offset,
+                                    "bond": pair.get("bond", "")
+                                })
 
                         logger.info(f"Batch {batch_id} chunk {batch.custom_id}: {len(memory_ids)} stored")
                     else:
@@ -163,6 +183,27 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
                 return False
 
         return False
+
+    def finalize_batch(self, batch_id: str, user_id: str) -> None:
+        """
+        Trigger relationship classification once for all chunks in this batch.
+
+        Called by poll_batches() after all chunk records for a batch_id have
+        been processed. Consumes the accumulated memory_ids and linking_pairs.
+        """
+        acc = self._pending_relationships.pop(batch_id, None)
+        if not acc or not acc["memory_ids"]:
+            return
+
+        set_current_user_id(user_id)
+        try:
+            self._trigger_relationship_classification(
+                user_id,
+                acc["memory_ids"],
+                acc["linking_pairs"] or None
+            )
+        finally:
+            clear_user_context()
 
     def _persist_llm_entities(
         self,
@@ -227,6 +268,7 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
             return
 
         all_pairs = []
+        seen_pairs: set[frozenset] = set()
 
         # Process extraction hints first (LinkingPair dicts)
         if linking_hints:
@@ -242,6 +284,8 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
                     tgt_id = memory_ids[tgt_idx]
 
                     if src_id in new_memories and tgt_id in new_memories:
+                        pair_key = frozenset({src_id, tgt_id})
+                        seen_pairs.add(pair_key)
                         all_pairs.append({
                             "new_memory_id": src_id,
                             "similar_memory_id": tgt_id,
@@ -253,10 +297,14 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
 
             logger.info(f"Added {len(all_pairs)} pairs from extraction hints for user {user_id}")
 
-        # Find similar existing memories
+        # Find similar existing memories (deduplicate bidirectional pairs)
         for mem_id in memory_ids:
             candidates = self.linking.find_similar_candidates(mem_id)
             for candidate in candidates:
+                pair_key = frozenset({mem_id, candidate.id})
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
                 all_pairs.append({
                     "new_memory_id": mem_id,
                     "similar_memory_id": candidate.id,
@@ -268,10 +316,10 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
         if not all_pairs:
             return
 
-        # Check if we should bypass batching (emergency fallback mode)
-        if self.llm_provider._is_failover_active():
+        # Check if we should bypass batching (emergency fallback or non-Anthropic endpoint)
+        if self.llm_provider._is_failover_active() or "api.anthropic.com" not in get_internal_llm('relationship').endpoint_url:
             logger.warning(
-                f"🔄 Bypassing relationship batch for user {user_id} - "
+                f"Bypassing relationship batch for user {user_id} - "
                 f"executing {len(all_pairs)} classifications immediately"
             )
             self._execute_relationship_classification_immediately(user_id, all_pairs)
@@ -350,7 +398,10 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
             set_current_user_id(user_id)
             links_created = 0
 
-            for pair in all_pairs:
+            total = len(all_pairs)
+            skipped = 0
+
+            for idx, pair in enumerate(all_pairs):
                 # Build classification payload
                 payload = self.linking.build_classification_payload(
                     pair["new_memory"],
@@ -359,19 +410,32 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
                 )
 
                 # Call LLM directly using relationship internal LLM config
-                response = self.llm_provider.generate_response(
-                    messages=[{"role": "user", "content": payload["user_prompt"]}],
-                    system_override=payload["system_prompt"],
-                    internal_llm='relationship',
-                    allow_negative=True,  # System task — segment already paid for
-                )
+                try:
+                    response = self.llm_provider.generate_response(
+                        messages=[{"role": "user", "content": payload["user_prompt"]}],
+                        system_override=payload["system_prompt"],
+                        internal_llm='relationship',
+                        allow_negative=True,  # System task — segment already paid for
+                    )
+                except Exception as e:
+                    logger.error(f"[{idx + 1}/{total}] LLM call failed: {e}")
+                    skipped += 1
+                    continue
 
                 # Extract text from response
                 response_text = self.llm_provider.extract_text_content(response)
 
+                # Strip think tags, markdown fences, and whitespace
+                import re
+                cleaned = response_text.strip()
+                cleaned = re.sub(r'<think>.*?</think>', '', cleaned, flags=re.DOTALL).strip()
+                cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
+                cleaned = re.sub(r'\s*```$', '', cleaned)
+                cleaned = cleaned.strip()
+
                 # Parse classification result
                 try:
-                    classification = json.loads(response_text)
+                    classification = json.loads(cleaned)
                     rel_type = classification.get("relationship_type")
 
                     if rel_type and rel_type != "null":
@@ -380,14 +444,20 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
                             source_id=pair["new_memory_id"],
                             target_id=pair["similar_memory_id"],
                             link_type=rel_type,
-                            confidence=classification.get("confidence", 0.9),
                             reasoning=classification.get("reasoning", ""),
                             extraction_bond=pair.get("bond", "")
                         ):
                             links_created += 1
                 except json.JSONDecodeError:
-                    logger.error("Invalid JSON in relationship classification response")
+                    logger.error(f"[{idx + 1}/{total}] Invalid JSON: {cleaned[:120]}")
+                    skipped += 1
                     continue
+
+                if (idx + 1) % 25 == 0 or (idx + 1) == total:
+                    logger.info(
+                        f"[{idx + 1}/{total}] Progress: {links_created} links created, "
+                        f"{skipped} skipped"
+                    )
 
             logger.info(
                 f"Immediate relationship classification complete for user {user_id}: "
@@ -480,7 +550,6 @@ class RelationshipBatchResultHandler(BatchResultProcessor):
                     source_id=UUID(pair_data["new_memory_id"]),
                     target_id=UUID(pair_data["similar_memory_id"]),
                     link_type=rel_type,
-                    confidence=classification.get("confidence", 0.9),
                     reasoning=classification.get("reasoning", ""),
                     extraction_bond=pair_data.get("bond", "")
                 ):
