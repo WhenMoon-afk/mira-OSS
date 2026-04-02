@@ -90,18 +90,22 @@ class SystemConfig(BaseModel):
     manifest_depth: int = Field(default=15, description="Number of recent segments to include in manifest display")
     manifest_cache_ttl: int = Field(default=3600, description="TTL for manifest cache in seconds (1 hour default)")
 
-    # Session Cache Settings (Complexity-Based Loading)
+    # Session Cache Settings (Two-Tier Complexity-Based Loading)
     session_summary_complexity_limit: float = Field(
-        default=9.5,
-        description="Maximum total complexity score for loaded segment summaries (accumulates until limit reached)"
+        default=4.5,
+        description="Maximum total complexity score for Tier 1 extended summaries"
     )
     session_summary_max_count: int = Field(
         default=4,
-        description="Maximum number of segment summaries to load regardless of complexity"
+        description="Maximum number of Tier 1 extended summaries regardless of complexity"
     )
     session_summary_query_window: int = Field(
-        default=9,
-        description="Number of recent segments to query for complexity-based selection"
+        default=14,
+        description="Number of recent segments to query for two-tier selection"
+    )
+    session_precis_max_count: int = Field(
+        default=4,
+        description="Maximum number of Tier 2 precis-only summaries to load after extended summaries"
     )
 
 
@@ -504,6 +508,16 @@ class ContextConfig(BaseModel):
         default=5,
         ge=1,
         description="Number of oldest messages to prune when no topic drift boundary found"
+    )
+    tool_result_max_chars: int = Field(
+        default=100_000,
+        ge=1000,
+        description="Max characters for a single tool result before truncation at storage time"
+    )
+    message_max_chars: int = Field(
+        default=150_000,
+        ge=10_000,
+        description="Hard cap on any single message content before DB persistence"
     )
 
 

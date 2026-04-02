@@ -78,6 +78,71 @@ def _safe_slice(messages: list[dict[str, object]], cut_idx: int) -> list[dict[st
     return result
 
 
+def _try_json_list_truncation(result: str, limit: int) -> tuple[str, str] | None:
+    """Try to truncate a JSON array to N complete elements that fit within limit.
+
+    Returns (truncated_json, description) on success, None if result isn't a JSON list.
+    """
+    try:
+        parsed = json.loads(result)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+    if not isinstance(parsed, list) or len(parsed) <= 1:
+        return None
+
+    total = len(parsed)
+
+    # Binary search: find max N where json.dumps(parsed[:N]) fits within limit
+    lo, hi = 0, total
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if len(json.dumps(parsed[:mid])) <= limit:
+            lo = mid
+        else:
+            hi = mid - 1
+
+    if lo == 0:
+        return None
+
+    return json.dumps(parsed[:lo]), f"{lo} of {total} items"
+
+
+def _truncate_tool_result(result: str, limit: int, tool_name: str) -> str:
+    """Truncate an oversized tool result, preserving structure when possible.
+
+    Tries format-aware handlers (JSON list slicing) before falling back to
+    raw character truncation. Always appends a truncation marker.
+    """
+    original_len = len(result)
+
+    # Handler chain: try each format, first match wins
+    json_result = _try_json_list_truncation(result, limit)
+    if json_result is not None:
+        truncated, description = json_result
+        marker = (
+            f"\n\n[Truncated: {tool_name} returned {description} "
+            f"({original_len:,} chars). Request smaller result sets for full data.]"
+        )
+        logger.warning(
+            "Truncated tool result from %s: %d -> %d chars (JSON list: %s)",
+            tool_name, original_len, len(truncated), description
+        )
+        return truncated + marker
+
+    # Raw fallback
+    truncated = result[:limit]
+    marker = (
+        f"\n\n[Truncated: {tool_name} returned {original_len:,} chars, "
+        f"exceeding {limit:,} char limit. Request smaller result sets for full data.]"
+    )
+    logger.warning(
+        "Truncated tool result from %s: %d -> %d chars (raw)",
+        tool_name, original_len, len(truncated)
+    )
+    return truncated + marker
+
+
 class TurnMetadata(TypedDict, total=False):
     """Metadata accumulated during process_message() and returned to the caller."""
     tools_used: list[str]
@@ -264,9 +329,15 @@ class ContinuumOrchestrator:
         messages.append(assistant_msg)
 
         # One tool message per interaction
+        limit = config.context.tool_result_max_chars
         for i, interaction in enumerate(interactions):
+            result = interaction.result
+            if isinstance(result, list):
+                result = json.dumps(result)
+            if isinstance(result, str) and len(result) > limit:
+                result = _truncate_tool_result(result, limit, interaction.tool_name)
             tool_msg = Message(
-                content=interaction.result,
+                content=result,
                 role="tool",
                 metadata={"tool_call_id": interaction.tool_id}
             )

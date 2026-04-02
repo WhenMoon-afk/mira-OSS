@@ -43,11 +43,35 @@ class UnitOfWork:
     def add_messages(self, *messages: Message) -> None:
         """
         Queue messages for persistence.
-        
+
+        Enforces a per-message character limit as a safety net against
+        oversized content bricking the conversation. Tool results have
+        a tighter, format-aware limit upstream in the orchestrator.
+
         Args:
             *messages: One or more Message objects to persist
         """
-        self.pending_messages.extend(messages)
+        from config import config
+        limit = config.context.message_max_chars
+
+        for msg in messages:
+            content = msg.content
+            content_len = len(content) if isinstance(content, str) else len(str(content))
+            if content_len > limit:
+                truncated = (content if isinstance(content, str) else str(content))[:limit]
+                truncated += f"\n\n[Message truncated: {content_len:,} chars exceeded {limit:,} char limit]"
+                msg = Message(
+                    id=msg.id,
+                    content=truncated,
+                    role=msg.role,
+                    created_at=msg.created_at,
+                    metadata=msg.metadata
+                )
+                logger.warning(
+                    "Truncated oversized %s message at persistence: %d -> %d chars",
+                    msg.role, content_len, len(truncated)
+                )
+            self.pending_messages.append(msg)
         
     def mark_metadata_updated(self) -> None:
         """Mark that continuum metadata needs to be updated."""

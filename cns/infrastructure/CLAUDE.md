@@ -15,7 +15,7 @@ Valkey cache is event-driven — no TTL. A cache miss in `ContinuumPool.get_or_c
 ## Files
 
 - `continuum_repository.py` — Owns PostgreSQL persistence for continuums, messages, and segments. Exports `HistoryResult`, `FailedSegment`, `ActiveSegmentRow` TypedDicts. Segment lifecycle: `find_active_segment()` matches both `active` and `paused` status; `pause_segment()` / `unpause_segment()` toggle pause state; `increment_segment_turn()` auto-resumes paused segments on user message. Collapsed segments are final — no reactivation path.
-- `continuum_pool.py` — Owns the Valkey-backed session cache and `UnitOfWork`. `get_or_create()` is the entry point for all continuum session resolution.
+- `continuum_pool.py` — Owns the Valkey-backed session cache and `UnitOfWork`. `UnitOfWork.add_messages()` enforces a per-message character limit (config: `context.message_max_chars`, default 150k) as a safety net against oversized content. `get_or_create()` is the entry point for all continuum session resolution.
 - `valkey_message_cache.py` — Owns `Message` ↔ Valkey JSON serialization. Key format: `continuum:{user_id}:messages`. No constructor DI — calls `get_valkey_client()` directly.
 - `feedback_repository.py` — Owns CRUD for `feedback_signals` table. Exports `FeedbackSignalRow`. Uses `get_shared_session_manager()`, not `PostgresClient`.
 - `feedback_tracker.py` — Owns synthesis lifecycle state in `feedback_synthesis_tracking` table. Exports `LoraContent`, `TrackingStatus`. `get_and_clear_checkin_response()` atomically nulls the stored response via `UPDATE ... RETURNING`.
