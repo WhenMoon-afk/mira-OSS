@@ -4,7 +4,9 @@ Update Check API endpoint - version update notification.
 Public endpoint that checks if a newer MIRA version is available.
 Logs check requests with timestamp and IP to data/update_checks.log for analytics.
 """
+import json
 import logging
+import urllib.request
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -13,6 +15,8 @@ from packaging import version as pkg_version
 from pydantic import BaseModel, Field
 
 from utils.timezone_utils import utc_now, format_utc_iso
+
+REMOTE_UPDATE_URL = "https://miraos.org/check_update"
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +37,7 @@ router = APIRouter()
 class UpdateCheckResponse(BaseModel):
     """Response for version update check."""
     update_available: bool
+    current_version: str | None = Field(default=None, description="Installed version of this instance")
     latest_version: str | None = Field(default=None, description="Latest version if update available")
     checked_at: str = Field(..., description="ISO-8601 timestamp of check")
 
@@ -89,5 +94,33 @@ def check_update_endpoint(request: Request, version: str = "") -> UpdateCheckRes
 
     return UpdateCheckResponse(
         update_available=False,
+        checked_at=format_utc_iso(utc_now())
+    )
+
+
+@router.get("/check_remote_update", response_model=UpdateCheckResponse)
+def check_remote_update(request: Request) -> UpdateCheckResponse:
+    """Check miraos.org for a newer version. Proxies server-side to avoid browser CORS."""
+    current = get_latest_version()
+    client_ip = get_client_ip(request)
+    update_logger.info(f"ip={client_ip}\tversion={current}\tcheck=remote")
+
+    try:
+        url = f"{REMOTE_UPDATE_URL}?version={current}"
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read())
+            return UpdateCheckResponse(
+                update_available=data.get("update_available", False),
+                current_version=current,
+                latest_version=data.get("latest_version"),
+                checked_at=format_utc_iso(utc_now())
+            )
+    except Exception:
+        pass
+
+    return UpdateCheckResponse(
+        update_available=False,
+        current_version=current,
         checked_at=format_utc_iso(utc_now())
     )

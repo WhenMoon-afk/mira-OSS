@@ -143,7 +143,9 @@ INSERT INTO internal_llm (name, tier, model, endpoint_url, api_key_name, descrip
     ('entity_gc', 'cof', 'claude-haiku-4-5', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Entity garbage collection', 2048, 'high'),
     ('critic', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'User model critic', 10000, NULL),
     -- Subcortical: same model for both tiers via Groq
-    ('analysis', 'cof', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'subcortical_key', 'Subcortical analysis', 3072, NULL)
+    ('analysis', 'cof', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'subcortical_key', 'Subcortical analysis', 3072, NULL),
+    -- Forage: COF gets Sonnet for tool-calling, free gets OSS 120B via Groq
+    ('forage', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'Forage agent tool-calling loop', 4096, NULL)
 ON CONFLICT (name, tier) DO NOTHING;
 
 GRANT SELECT ON internal_llm TO mira_dbuser;
@@ -167,6 +169,7 @@ INSERT INTO usage_pricing (name) VALUES
     ('consolidation:cof'), ('consolidation:free'),
     ('entity_gc:cof'), ('entity_gc:free'),
     ('extraction:cof'), ('extraction:free'),
+    ('forage:cof'), ('forage:free'),
     ('relationship:cof'), ('relationship:free'),
     ('summary:cof'), ('summary:free'),
     ('tidyup:cof'), ('tidyup:free')

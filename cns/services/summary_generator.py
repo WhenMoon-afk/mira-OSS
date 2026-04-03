@@ -38,8 +38,9 @@ class SummaryPrompt:
 
 @dataclass(frozen=True)
 class SummaryResult:
-    """Result of summary generation: synopsis, display title, and complexity score."""
+    """Result of summary generation: synopsis, precis, display title, and complexity score."""
     synopsis: str
+    precis: str
     display_title: str
     complexity: float
 
@@ -185,7 +186,7 @@ class SummaryGenerator:
                     )
                 except Exception as e:
                     logger.error(f"Chunked summarization also failed: {e}")
-                    return SummaryResult(synopsis="[Segment content not summarized]", display_title="Large segment archived", complexity=1.0)
+                    return SummaryResult(synopsis="[Segment content not summarized]", precis="", display_title="Large segment archived", complexity=1.0)
             else:
                 # Non-segment summaries can't be chunked
                 raise
@@ -295,6 +296,7 @@ class SummaryGenerator:
         display_title = parsed.get('display_title')
         synopsis = parsed.get('clean_text', summary_output).strip()
         complexity = parsed.get('complexity')
+        precis = parsed.get('precis') or ''
 
         # Missing display_title indicates LLM refused or failed to follow instructions
         # Autocollapse with tombstone instead of retrying forever
@@ -303,7 +305,7 @@ class SummaryGenerator:
                 f"LLM did not generate <mira:display_title> tag - autocollapsing with tombstone. "
                 f"Output (first 200 chars): {summary_output[:200]}"
             )
-            return SummaryResult(synopsis="[Segment content not summarized]", display_title="Archived segment", complexity=1.0)
+            return SummaryResult(synopsis="[Segment content not summarized]", precis="", display_title="Archived segment", complexity=1.0)
 
         # Default complexity to 2 (moderate) if missing or invalid
         if complexity is None or complexity not in [0.5, 1, 2, 3]:
@@ -313,7 +315,10 @@ class SummaryGenerator:
             )
             complexity = 2
 
-        return SummaryResult(synopsis=synopsis, display_title=display_title, complexity=complexity)
+        if not precis:
+            logger.warning("LLM did not generate <mira:precis> tag — precis will be empty")
+
+        return SummaryResult(synopsis=synopsis, precis=precis, display_title=display_title, complexity=complexity)
     
     def _get_segment_time(self, messages: Optional[List[Message]]) -> str:
         """

@@ -22,6 +22,8 @@ from config.config import (
     ContextConfig,
     PeanutGalleryConfig,
     ToolResultDisplayConfig,
+    SidebarDispatcherConfig,
+    ImapTriggerConfig,
 )
 
 # Import the registry from tools package
@@ -41,6 +43,8 @@ class AppConfig(BaseModel):
     context: ContextConfig = Field(default_factory=ContextConfig)
     peanutgallery: PeanutGalleryConfig = Field(default_factory=PeanutGalleryConfig)
     tool_result_display: ToolResultDisplayConfig = Field(default_factory=ToolResultDisplayConfig)
+    sidebar_dispatcher: SidebarDispatcherConfig = Field(default_factory=SidebarDispatcherConfig)
+    imap_trigger: ImapTriggerConfig = Field(default_factory=ImapTriggerConfig)
 
     # System prompt loaded once at startup
     system_prompt_text: str = Field(default="", exclude=True)

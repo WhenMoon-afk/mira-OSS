@@ -149,9 +149,11 @@ class ContinuumSearchTool(Tool):
                 },
                 "search_mode": {
                     "type": "string",
-                    "enum": ["summaries", "messages"],
+                    "enum": ["summaries", "precis", "messages"],
                     "description": (
                         "For operation='search' only. 'summaries' (default): search segment summaries. "
+                        "'precis': search segment precis (2-sentence compressed summaries). "
+                        "Results are compact so larger result sets are inexpensive; use for broad historical scans. "
                         "'messages': search individual messages (start_time and end_time required). "
                         "Ignored by other operations"
                     )
@@ -397,8 +399,8 @@ class ContinuumSearchTool(Tool):
         page = self._coerce_to_int(page, "page") or 1
 
         # Validate search mode
-        if search_mode not in ["summaries", "messages"]:
-            raise ValueError(f"search_mode must be 'summaries' or 'messages', got: {search_mode}")
+        if search_mode not in ["summaries", "precis", "messages"]:
+            raise ValueError(f"search_mode must be 'summaries', 'precis', or 'messages', got: {search_mode}")
 
         # Message mode requires timescope
         if search_mode == "messages":
@@ -418,14 +420,15 @@ class ContinuumSearchTool(Tool):
                 include_thinking=include_thinking
             )
 
-        # Summary mode (default)
+        # Summary or precis mode
         return self._search_summaries(
             query=query,
             entities=entities,
             max_results=max_results,
             page=page,
             temporal_direction=temporal_direction,
-            reference_time=reference_time
+            reference_time=reference_time,
+            precis_mode=(search_mode == "precis")
         )
 
     def _search_summaries(
@@ -435,13 +438,17 @@ class ContinuumSearchTool(Tool):
         max_results: Optional[int] = None,
         page: int = 1,
         temporal_direction: Optional[str] = None,
-        reference_time: Optional[str] = None
+        reference_time: Optional[str] = None,
+        precis_mode: bool = False
     ) -> Dict[str, Any]:
         """
         Search segment summaries using hybrid vector + BM25 search.
 
         Combines semantic similarity from embeddings with keyword relevance from
         BM25 text search. Supports temporal filtering with direction and reference time.
+
+        When precis_mode=True, returns the 2-sentence precis instead of the full
+        summary and skips segments without a precis. Higher default result limit.
 
         Args:
             query: Search query text
@@ -454,8 +461,8 @@ class ContinuumSearchTool(Tool):
         Returns:
             Dict with segment summaries, confidence scores, and pagination info
         """
-        # Set defaults
-        limit = max_results or 10  # More summaries by default
+        # Set defaults — precis results are compact so default to more
+        limit = max_results or (20 if precis_mode else 10)
         offset = (page - 1) * limit
 
         # Generate query embedding
@@ -468,6 +475,8 @@ class ContinuumSearchTool(Tool):
         except Exception as e:
             self.logger.error(f"Failed to generate query embedding: {e}")
             raise ValueError(f"Cannot perform summary search: embedding generation failed - {str(e)}")
+
+        precis_clause = "AND m.metadata->>'precis' IS NOT NULL AND m.metadata->>'precis' != ''" if precis_mode else ""
 
         # Build temporal filter if specified
         temporal_clause = ""  # SQL structure component
@@ -507,6 +516,7 @@ class ContinuumSearchTool(Tool):
                 WHERE m.metadata->>'is_segment_boundary' = 'true'
                   AND m.metadata->>'status' = 'collapsed'
                   AND m.segment_embedding IS NOT NULL
+                  {precis_clause}
                   {temporal_clause}
                 ORDER BY m.segment_embedding <=> %s::vector
                 LIMIT %s
@@ -579,7 +589,9 @@ class ContinuumSearchTool(Tool):
             # Get summary from content field (not metadata)
             summary = row.get("content") or ""
 
-            # Entity boosting
+            precis = metadata.get("precis", "")
+
+            # Entity boosting — match against synopsis (full keyword density) regardless of mode
             boost = 1.0
             matched_entities = []
             if entities and summary:
@@ -590,11 +602,10 @@ class ContinuumSearchTool(Tool):
                 # Boost by 10% per matched entity
                 boost = 1.0 + (0.1 * len(matched_entities))
 
-            results.append({
-                "result_type": "segment_summary",
+            result_entry = {
+                "result_type": "segment_precis" if precis_mode else "segment_summary",
                 "segment_id": str(row["id"])[:8],
                 "display_title": metadata.get("display_title", "Conversation segment"),
-                "summary": summary or "No summary available",
                 "confidence_score": min(row["hybrid_score"] * boost, 1.0),
                 "time_boundaries": {
                     "start": metadata.get("segment_start_time"),
@@ -603,11 +614,18 @@ class ContinuumSearchTool(Tool):
                 "tools_used": metadata.get("tools_used", []),
                 "matched_entities": matched_entities,
                 "created_at": format_utc_iso(row["created_at"])
-            })
+            }
 
-        # Apply smart filtering based on confidence clustering
+            if precis_mode:
+                result_entry["precis"] = precis
+            else:
+                result_entry["summary"] = summary or "No summary available"
+
+            results.append(result_entry)
+
+        # Apply smart filtering — skip for precis mode (designed for large result sets)
         unfiltered_count = len(results)
-        filtered_results = self._filter_results_by_confidence(results)
+        filtered_results = results if precis_mode else self._filter_results_by_confidence(results)
 
         # Calculate overall confidence
         if not filtered_results:
@@ -633,7 +651,7 @@ class ContinuumSearchTool(Tool):
             "filtered_from": unfiltered_count,
             "page": page,
             "has_more_pages": unfiltered_count == limit,
-            "search_mode": "summaries",
+            "search_mode": "precis" if precis_mode else "summaries",
             "temporal_filter": {
                 "direction": temporal_direction,
                 "reference_time": reference_time

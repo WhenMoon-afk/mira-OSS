@@ -366,10 +366,13 @@ class ContinuumOrchestrator:
             ToolExecutingEvent, ToolCompletedEvent, ToolErrorEvent,
             CircuitBreakerEvent, FileArtifactEvent
         )
+        from utils.user_context import check_cancelled
         from clients.valkey_client import get_valkey
         valkey = get_valkey()
 
         for event in stream_events:
+            check_cancelled()
+
             # Tool execution tracking
             if isinstance(event, ToolExecutingEvent):
                 acc.tool_interactions.append(ToolInteraction(

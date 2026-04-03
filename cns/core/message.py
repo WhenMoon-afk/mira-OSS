@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TypedDict
+from typing import Literal, TypedDict
 from uuid import UUID, uuid4
 from utils.timezone_utils import utc_now
 
@@ -125,7 +125,9 @@ class MessageMetadata(TypedDict, total=False):
     segment_start_time: str
     segment_end_time: str
     display_title: str
+    precis: str
     complexity_score: int
+    display_mode: Literal["extended", "precis"]  # ephemeral, set by cache loader
     tools_used: list[str]
     segment_embedding_value: list[float]
     has_segment_embedding: bool

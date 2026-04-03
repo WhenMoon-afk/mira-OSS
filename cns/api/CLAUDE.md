@@ -22,5 +22,5 @@
 - `location.py` — `POST /location`. Reverse geocodes via Nominatim, fetches 2-hour forecast from Open-Meteo, caches at `location:{user_id}` in Valkey (24h TTL). Also back-fills weather for gap days since last conversation.
 - `demo.py` — `POST /demo/session`, `POST /demo/chat`. Ephemeral demo sessions in Valkey (15 min TTL, 5 msg/min rate limit). Self-contained — excluded from OSS builds via `makeoss.sh`.
 - `federation.py` — `POST /federation/deliver`. Lattice server-to-server webhook. No user auth (Lattice handles verification). Delivers inbound federated messages via `PagerTool`.
-- `update.py` — `GET /check_update`. No auth. Compares semver against `/VERSION` file; logs checks to `data/update_checks.log`.
+- `update.py` — `GET /check_update` (direct version compare) and `GET /check_remote_update` (proxies to miraos.org for browser CORS). No auth. Reads `/VERSION` file; logs checks to `data/update_checks.log`.
 - `oss_ui.py` — `GET /chat`, `GET /`, `GET /oss-assets/*`. Self-contained minimal chat UI for OSS builds. Reads HTML and vendored JS from `deploy/oss_ui/` at import time, serves from memory. Only mounted when `web/chat/` is absent (conditional in `main.py`). No auth dependency — the HTML handles Bearer token via localStorage.

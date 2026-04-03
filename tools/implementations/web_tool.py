@@ -3,7 +3,7 @@ Web tool providing search, fetch, and HTTP request capabilities.
 
 Three operations:
 - search: Query Kagi search API for current information
-- fetch: Get cleaned webpage content with optional LLM extraction
+- fetch: Compress webpage to faithful text extract via LLM (no options — URL in, text out)
 - http: Make direct HTTP requests to APIs
 """
 import re
@@ -43,7 +43,7 @@ class WebToolConfig(BaseModel):
     default_timeout: int = Field(default=30, description="Default timeout in seconds")
     max_timeout: int = Field(default=120, description="Maximum allowed timeout")
     # LLM config for content extraction (self-contained - not database-backed)
-    llm_model: str = Field(default="openai/gpt-oss-20b", description="Model for content extraction")
+    llm_model: str = Field(default="openai/gpt-oss-120b", description="Model for content extraction")
     llm_endpoint: str = Field(default="https://api.groq.com/openai/v1/chat/completions", description="LLM endpoint")
     llm_api_key_name: Optional[str] = Field(default="subcortical_key", description="Vault key name for API key")
 
@@ -64,11 +64,6 @@ class SearchInput(BaseModel):
 class FetchInput(BaseModel):
     """Input for webpage fetch operation."""
     url: str = Field(..., description="URL to fetch")
-    instructions: str = Field(
-        default="Extract the main content from this webpage. Focus on article text, headings, and important information.",
-        description="Extraction prompt for LLM"
-    )
-    extract_format: Literal["text", "markdown", "html"] = Field(default="text", description="Output format")
     include_metadata: bool = Field(default=False, description="Include page metadata")
     timeout: Optional[int] = Field(default=None, ge=1, description="Request timeout in seconds")
 
@@ -124,7 +119,7 @@ class WebTool(Tool):
 
     Operations:
     - search: Query Kagi for current web information
-    - fetch: Get cleaned content from webpages with LLM extraction
+    - fetch: URL in, compressed text out (fixed LLM extraction, no caller options)
     - http: Make direct HTTP requests to APIs
     """
 
@@ -140,13 +135,11 @@ class WebTool(Tool):
                 "operation": {
                     "type": "string",
                     "enum": ["search", "fetch", "http"],
-                    "description": "'search' = web search, 'fetch' = extract webpage content via LLM, 'http' = direct HTTP API request"
+                    "description": "'search' = web search, 'fetch' = compressed text extraction from a URL (no options — just pass url), 'http' = direct HTTP API request"
                 },
                 "query": {"type": "string", "description": "Web search query. Only used with operation='search'. Min 1 character"},
                 "max_results": {"type": "integer", "description": "Number of search results to return (1-20, default 5). Ignored unless operation='search'"},
                 "url": {"type": "string", "description": "HTTP or HTTPS URL to request. Required for 'fetch' and 'http'. Private/internal network addresses are blocked"},
-                "instructions": {"type": "string", "description": "Tell the extraction LLM what to pull from the page. Defaults to extracting main article content. For 'fetch' only"},
-                "extract_format": {"type": "string", "enum": ["text", "markdown", "html"], "description": "How the LLM should format extracted content. 'text'=plain text, 'markdown'=Markdown, 'html'=filtered HTML. Default: 'text'. Fetch only"},
                 "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE"], "description": "HTTP verb: GET, POST, PUT, or DELETE. Required for 'http' operation"},
                 "query_params": {"type": "object", "description": "Key-value pairs appended as ?key=value query parameters. Only used with operation='http'"},
                 "headers": {"type": "object", "description": "Custom HTTP request headers as {name: value} pairs. For 'http' operation. Do not set auth headers here — use credential_name instead"},
@@ -258,20 +251,16 @@ class WebTool(Tool):
     # --- Fetch Operation ---
 
     def _fetch(self, input: FetchInput) -> Dict[str, Any]:
-        """Fetch webpage, clean HTML, extract content via LLM."""
+        """Fetch webpage, clean HTML, compress to text via LLM."""
         self._validate_url(input.url)
         timeout = self._get_timeout(input.timeout)
 
-        # Try Playwright first, fall back to HTTP
         html, response_info = self._fetch_page(input.url, timeout)
         if html is None:
             return {"success": False, "url": input.url, **response_info}
 
-        # Clean HTML
         cleaned_html = self._clean_html(html)
-
-        # Extract content via LLM
-        extracted = self._extract_with_llm(cleaned_html, input.url, input.instructions, input.extract_format)
+        extracted = self._extract_with_llm(cleaned_html, input.url)
 
         result = {"success": True, "url": input.url, "content": extracted}
 
@@ -339,28 +328,36 @@ class WebTool(Tool):
 
         return str(soup)
 
-    # Max HTML length to send to LLM (conservative limit to avoid context overflow)
-    # ~40k chars leaves room for system prompt, response, and safety margin
+    # ~40k chars leaves room for system prompt + response within the 120B model's context
     _MAX_HTML_LENGTH = 40000
 
-    def _extract_with_llm(self, html: str, url: str, prompt: str, format_type: str) -> str:
-        """Use LLM to extract content from cleaned HTML."""
+    # Fixed extraction prompt — no caller-directed options.
+    # The extraction LLM is a compressor: faithful text selection with aggressive pruning.
+    # Caller intelligence (instructions, focus) belongs in forage_tool, not here.
+    _EXTRACTION_PROMPT = (
+        "You are a text extractor. Output only text that appears on the page. "
+        "Preserve: proper nouns, dates, numbers, prices, URLs, code, tables, lists. "
+        "Preserve the page's original ordering. "
+        "Drop: navigation, headers/footers, sidebars, ads, cookie banners, related links, boilerplate. "
+        "No summaries. No introductions. No commentary. No interpretation. No added text. "
+        "If content was truncated, extract what is present without noting the truncation."
+    )
+
+    def _extract_with_llm(self, html: str, url: str) -> str:
+        """Compress cleaned HTML to faithful text via LLM."""
         from config import config
         from clients.vault_client import get_api_key
         from clients.llm_provider import LLMProvider
 
-        # Get tool-specific LLM config
         tool_config = config.web_tool
 
-        # Get API key (None for local providers like Ollama)
         if tool_config.llm_api_key_name:
             api_key = get_api_key(tool_config.llm_api_key_name)
             if not api_key:
                 raise RuntimeError(f"API key '{tool_config.llm_api_key_name}' not found in Vault")
         else:
-            api_key = None  # Local provider (Ollama) - no API key needed
+            api_key = None
 
-        # Truncate HTML to prevent context length exceeded errors
         truncated = False
         original_length = len(html)
         if original_length > self._MAX_HTML_LENGTH:
@@ -368,21 +365,12 @@ class WebTool(Tool):
             truncated = True
             self.logger.info(f"Truncated HTML from {original_length} to {self._MAX_HTML_LENGTH} chars")
 
-        format_instruction = {
-            "markdown": "Format output as Markdown.",
-            "html": "Return clean, filtered HTML.",
-            "text": "Return as plain text."
-        }.get(format_type, "")
+        truncation_note = "\nContent was truncated." if truncated else ""
+        system_prompt = f"{self._EXTRACTION_PROMPT}\n\nSource: {url}{truncation_note}"
 
-        truncation_note = " NOTE: Content was truncated due to size." if truncated else ""
-        system_prompt = f"""Extract information from this HTML per the user's request.
-USER REQUEST: {prompt}
-INSTRUCTIONS: Ignore navigation, ads, footers, sidebars. {format_instruction}{truncation_note}
-SOURCE: {url}"""
-
-        llm = LLMProvider(max_tokens=4096)
+        llm = LLMProvider(max_tokens=2048)
         response = llm.generate_response(
-            messages=[{"role": "user", "content": f"Extract from:\n```html\n{html}\n```"}],
+            messages=[{"role": "user", "content": f"```html\n{html}\n```"}],
             stream=False,
             endpoint_url=tool_config.llm_endpoint,
             model_override=tool_config.llm_model,
@@ -392,7 +380,7 @@ SOURCE: {url}"""
 
         extracted = llm.extract_text_content(response)
         if getattr(response, 'stop_reason', None) == "max_tokens":
-            extracted = "[Content truncated due to length]\n\n" + extracted
+            extracted += "\n\n[Extraction hit token limit — page content continues at source]"
         return extracted
 
     def _extract_title(self, html: str) -> str:

@@ -160,9 +160,6 @@ class SegmentTimeoutService:
 
         Returns:
             True if segment has timed out
-
-        Raises:
-            RuntimeError: If segment has no messages (data consistency violation)
         """
         # Query for last message in segment (avoids persisting end_time on every turn)
         end_time = self._get_last_message_time(
@@ -172,13 +169,10 @@ class SegmentTimeoutService:
         )
 
         if not end_time:
-            # Empty segment - likely from prepopulation before messages were added
-            # Log warning and skip timeout check rather than crash the job
-            logger.warning(
-                f"Segment {segment['id']} has no messages (empty segment from brand new account). "
-                f"Skipping timeout check for this segment."
-            )
-            return False
+            # No messages found — use sentinel creation time as last activity.
+            # Lets orphaned segments (empty, lost messages, race conditions)
+            # reach the collapse handler's tombstone circuit breaker naturally.
+            end_time = segment['created_at']
 
         # Calculate inactive duration
         inactive_duration = current_time - end_time
@@ -258,9 +252,6 @@ class SegmentTimeoutService:
         Args:
             segment: Segment data dict
             current_time: Current UTC time
-
-        Raises:
-            RuntimeError: If segment has no messages (data consistency violation)
         """
         metadata = segment['metadata']
         segment_id = metadata.get('segment_id')
@@ -273,12 +264,8 @@ class SegmentTimeoutService:
         )
 
         if not end_time:
-            # Empty segment - should have been caught by _is_timed_out, but handle defensively
-            logger.warning(
-                f"Cannot publish timeout event for segment {segment_id} - no messages found. "
-                f"This is an empty segment from a brand new account."
-            )
-            return
+            # No messages found — use sentinel creation time (same fallback as _is_timed_out)
+            end_time = segment['created_at']
 
         # Calculate inactive duration
         inactive_duration = current_time - end_time

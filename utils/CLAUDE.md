@@ -15,8 +15,9 @@
 - `database_session_manager.py` — Singleton PostgreSQL connection pool (`get_shared_session_manager()`); `LTMemorySession` enforces RLS, `AdminSession` bypasses it.
 - `perf.py` — Performance instrumentation; monkey-patches `execute_*` methods at startup via `install_db_instrumentation()`. Gated by `mira.perf` logger level.
 - `logging_config.py` — TOAST custom log level (60), `UserContextFilter` (injects user_id into all log records), `ColoredFormatter`, `setup_anthropic_sdk_logging()`.
-- `scheduled_tasks.py` — `get_users_due_for_job(interval)` use-day platform function; `initialize_all_scheduled_tasks()` entry point.
+- `scheduled_tasks.py` — `get_users_due_for_job(interval)` use-day platform function; `initialize_all_scheduled_tasks()` entry point; `register_sidebar_dispatcher_job()` called separately after tool_repo init.
 - `lt_memory_jobs.py` — APScheduler job registration for all LT_Memory periodic work (extraction retry, batch polling, consolidation, score recalc, GC, cleanup).
+- `sidebar_jobs.py` — APScheduler registration for the sidebar dispatcher poll loop. Creates `SidebarDispatcher`, registers configured triggers (IMAP), schedules `IntervalTrigger`.
 - `scheduler_service.py` — APScheduler wrapper; `register_job()` is the only job registration path.
 - `scheduled_task_monitor.py` — Tracks scheduled job execution history, durations, and failures.
 - `thread_monitor.py` — `@monitored_operation` decorator and `MonitoredThreadPoolExecutor`; thresholds: 30s slow, 300s stuck.

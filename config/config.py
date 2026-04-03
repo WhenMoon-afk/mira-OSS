@@ -582,3 +582,32 @@ class PeanutGalleryConfig(BaseModel):
         description="Number of turns guidance messages remain visible in HUD before expiring"
     )
 
+
+class SidebarDispatcherConfig(BaseModel):
+    """Sidebar agent dispatcher configuration."""
+    enabled: bool = Field(
+        default=False,
+        description="Enable the sidebar dispatcher polling loop",
+    )
+    poll_interval_minutes: int = Field(
+        default=5,
+        description="Minutes between dispatcher poll cycles",
+    )
+    max_concurrent_agents: int = Field(
+        default=3,
+        ge=1,
+        description="Maximum sidebar agent threads running simultaneously",
+    )
+
+
+class ImapTriggerConfig(BaseModel):
+    """IMAP email trigger configuration for sidebar agents."""
+    enabled: bool = Field(
+        default=False,
+        description="Enable IMAP polling for sidebar email agents",
+    )
+    watched_senders: List[str] = Field(
+        default_factory=list,
+        description="Email addresses to monitor (e.g. contactform@example.com)",
+    )
+

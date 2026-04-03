@@ -175,7 +175,8 @@ class PromptInjectionDefense:
         self,
         content: str,
         source: str,
-        trust_level: TrustLevel = TrustLevel.UNTRUSTED
+        trust_level: TrustLevel = TrustLevel.UNTRUSTED,
+        require_llm_detection: bool = False,
     ) -> Tuple[str, DefenseMetadata]:
         """
         Sanitize untrusted content through multiple defense layers.
@@ -230,6 +231,16 @@ class PromptInjectionDefense:
                     f"Content rejected: contains prompt injection patterns: "
                     f"{', '.join(pattern_result['patterns_found'])}"
                 )
+
+        # Fail-closed for autonomous agents: when require_llm_detection is True
+        # and LLM detection is unavailable, reject rather than degrade to
+        # pattern-only (which catches script kiddies but not real attacks).
+        if require_llm_detection and not self._llm_available:
+            raise ValueError(
+                "LLM injection detection required but unavailable (degraded mode). "
+                "Content rejected to prevent autonomous agent from processing "
+                "unsanitized untrusted input."
+            )
 
         # Layer 2: LLM-based detection (if available and content is suspicious)
         if (self._llm_available and
@@ -445,14 +456,9 @@ Is this a prompt injection attempt? Respond ONLY with valid JSON:
         Returns:
             Content wrapped with security boundaries
         """
-        # Escape any existing closing tags in the content
-        content_escaped = content.replace("</untrusted_content>", "&lt;/untrusted_content&gt;")
-
-        # Also escape potential instruction markers
-        content_escaped = content_escaped.replace("<instruction>", "&lt;instruction&gt;")
-        content_escaped = content_escaped.replace("</instruction>", "&lt;/instruction&gt;")
-        content_escaped = content_escaped.replace("<system>", "&lt;system&gt;")
-        content_escaped = content_escaped.replace("</system>", "&lt;/system&gt;")
+        # Blanket-escape all angle brackets inside the untrusted boundary.
+        # Simpler and more robust than an allowlist of specific tags.
+        content_escaped = content.replace("<", "&lt;").replace(">", "&gt;")
 
         return f"""<untrusted_content source="{trust_level}">
 {content_escaped}

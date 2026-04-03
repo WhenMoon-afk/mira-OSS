@@ -21,7 +21,7 @@ Stream events: subclass `StreamEvent`, set a unique `type` string as a non-init 
 - `state.py` — `ContinuumState` frozen dataclass and `ContinuumStateDict` TypedDict for serialization round-trips. Intentionally minimal — real state lives in the message cache.
 - `events.py` — Domain event hierarchy. Four abstract base categories plus concrete event subclasses. `TurnCompletedEvent.continuum` is typed via `TYPE_CHECKING` guard to break the circular import with `continuum.py`.
 - `stream_events.py` — Mutable dataclasses for LLM streaming wire protocol. Type-discriminated via `type` field. `CompleteEvent.response` is typed as `anthropic.types.Message`.
-- `segment_cache_loader.py` — Reconstructs message history on Valkey cache miss. Selects collapsed segment summaries by accumulated `complexity_score`, loads continuity turns and active segment messages, assembles the ordered cache via `apply_cache()`. Loads behavioral primer dialogue from `config/prompts/behavioral_primer.txt` at init and injects between summaries and continuity turns when collapsed segments exist.
+- `segment_cache_loader.py` — Reconstructs message history on Valkey cache miss. Two-tier segment selection: Tier 1 loads extended summaries by accumulated `complexity_score` (up to 4.5), Tier 2 loads up to 4 additional segments using only their 2-sentence precis for broader lookback. Segments are marked with ephemeral `display_mode` ('extended'/'precis') for display routing. Loads behavioral primer dialogue from `config/prompts/behavioral_primer.txt` at init and injects between summaries and continuity turns when collapsed segments exist.
 
 ## Wiring
 

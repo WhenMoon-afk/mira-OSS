@@ -13,6 +13,7 @@ Your task is to merge these chunks into a coherent whole that:
 2. **Temporal Flow**: Preserve the chronological sequence. Use connective phrases like "I then...", "After that, we..."
 3. **Keyword Density**: The synthesized trace will be embedded for vector search. Retain specific function names, error types, file paths, and technical terms from the partials.
 4. **No Information Loss**: Important outcomes from ANY chunk must appear in the final synthesis.
+5. **Precis**: After the trace, include a 2-sentence precis: lossy compression capturing the core action and outcome. Must stand alone without the full trace.
 
 ## Output Format
 
@@ -20,5 +21,6 @@ Output exactly this format:
 
 [2-3 sentence first-person memory trace synthesizing all chunks]
 
+<mira:precis>[Exactly 2 sentences: core action and outcome]</mira:precis>
 <mira:display_title>[8 words or fewer, telegraphic]</mira:display_title>
 <mira:complexity>[1=simple, 2=moderate, 3=complex]</mira:complexity>

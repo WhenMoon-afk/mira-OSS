@@ -35,6 +35,7 @@ SECTION_LAYOUT: Dict[str, List[str]] = {
     ],
     PLACEMENT_NOTIFICATION: [
         'datetime_section',
+        'async_activity',
         'active_reminders',
         'forage_results',
         'relevant_memories',

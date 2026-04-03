@@ -62,6 +62,7 @@ def create_segment_boundary_sentinel(
 def collapse_segment_sentinel(
     sentinel: Message,
     summary: str,
+    precis: str,
     display_title: str,
     embedding: list[float],
     inactive_duration_minutes: int,
@@ -78,6 +79,7 @@ def collapse_segment_sentinel(
     Args:
         sentinel: Segment boundary sentinel message
         summary: Generated telegraphic summary
+        precis: 2-sentence compressed summary
         display_title: Short telegraphic title for manifest display
         embedding: 768-dim embedding of summary
         inactive_duration_minutes: Minutes of inactivity that triggered collapse
@@ -97,6 +99,7 @@ def collapse_segment_sentinel(
         'inactive_duration_minutes': inactive_duration_minutes,
         'summary_generated_at': utc_now().isoformat(),
         'processing_failed': processing_failed,
+        'precis': precis,
         'display_title': display_title,
         'complexity_score': complexity_score
     }
@@ -130,36 +133,39 @@ def collapse_segment_sentinel(
     )
 
 
-def format_segment_for_display(sentinel: Message) -> str:
-    """
-    Format collapsed segment content for display in working memory.
+def _format_segment_display(sentinel: Message, label: str, body: str) -> str:
+    """Format a collapsed segment with label, timespan, and body content.
 
-    Adds display title, timespan, and formatting to the stored summary.
-    This separation keeps storage clean while allowing flexible display formatting.
+    Shared implementation for extended and precis display modes.
 
     Args:
-        sentinel: Collapsed segment sentinel message
+        sentinel: Collapsed segment sentinel
+        label: Display header label (e.g. "THIS IS AN EXTENDED SUMMARY OF")
+        body: Content body (synopsis or precis text)
 
     Returns:
-        Formatted content string with title, timespan, and summary
+        Formatted display string
 
     Raises:
-        KeyError: If required metadata is missing
-        ValueError: If timestamp format is invalid
+        KeyError: If required metadata (display_title, segment_start_time) is missing
     """
     from utils.timezone_utils import format_relative_time
 
     display_title = sentinel.metadata['display_title']
-    summary = sentinel.content
-    start_time_iso = sentinel.metadata['segment_start_time']
-
-    # Convert ISO timestamp to datetime object
-    start_time = parse_utc_time_string(start_time_iso)
-
-    # Format as relative time (grouped timeframe using segment start)
+    start_time = parse_utc_time_string(sentinel.metadata['segment_start_time'])
     relative_time = format_relative_time(start_time)
 
-    return f"THIS IS AN EXTENDED SUMMARY OF: {display_title}\nTIMESPAN: {relative_time}\n\n{summary}"
+    return f"{label}: {display_title}\nTIMESPAN: {relative_time}\n\n{body}"
+
+
+def format_segment_for_display(sentinel: Message) -> str:
+    """Format collapsed segment's full synopsis for display in working memory."""
+    return _format_segment_display(sentinel, "THIS IS AN EXTENDED SUMMARY OF", sentinel.content)
+
+
+def format_precis_for_display(sentinel: Message) -> str:
+    """Format collapsed segment's 2-sentence precis for compact display in session cache Tier 2."""
+    return _format_segment_display(sentinel, "PRECIS OF", sentinel.metadata['precis'])
 
 
 def create_collapse_marker() -> Message:

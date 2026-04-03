@@ -12,6 +12,11 @@ from dataclasses import dataclass, field
 import anthropic.types
 
 
+class GenerationCancelled(Exception):
+    """Raised when the user cancels generation midstream."""
+    pass
+
+
 @dataclass
 class StreamEvent:
     """Base event for all streaming events."""

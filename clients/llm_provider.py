@@ -69,8 +69,9 @@ from config import config
 from cns.core.stream_events import (
     StreamEvent, TextEvent, ThinkingEvent, ToolDetectedEvent, ToolExecutingEvent,
     ToolCompletedEvent, ToolErrorEvent, CompleteEvent, ErrorEvent,
-    CircuitBreakerEvent, FileArtifactEvent
+    CircuitBreakerEvent, FileArtifactEvent, GenerationCancelled,
 )
+from utils.user_context import check_cancelled, get_cancel_event
 from tools.repo import ANTHROPIC_BETA_FLAGS
 
 # Maximum file size for code execution artifacts (Anthropic server-enforced limit: 32MB)
@@ -660,6 +661,54 @@ class LLMProvider:
                 stripped.append(msg)
         return stripped
 
+    def _bill_cancelled_stream(
+        self,
+        stream: object,
+        streamed_output_chars: int,
+        model: str,
+        endpoint_url: Optional[str],
+        allow_negative: bool,
+    ) -> None:
+        """Record billing for a cancelled stream using snapshot input tokens and estimated output tokens."""
+        try:
+            from billing import get_billing_backend, UsageRecord
+            from billing.pricing import resolve_pricing_key
+            from utils.user_context import get_current_user_id, has_user_context
+
+            if not has_user_context():
+                return
+
+            snapshot = getattr(stream, 'current_message_snapshot', None)
+            if not snapshot or not getattr(snapshot, 'usage', None):
+                return
+
+            pricing_key = resolve_pricing_key(model, endpoint_url)
+            if not pricing_key:
+                return
+
+            estimated_output = max(streamed_output_chars // 4, 1)
+            billing = get_billing_backend()
+            billing.record_usage(
+                str(get_current_user_id()),
+                UsageRecord(
+                    pricing_key=pricing_key,
+                    model=model,
+                    input_tokens=snapshot.usage.input_tokens,
+                    output_tokens=estimated_output,
+                    cache_read_tokens=getattr(snapshot.usage, 'cache_read_input_tokens', 0) or 0,
+                    cache_write_tokens=getattr(snapshot.usage, 'cache_creation_input_tokens', 0) or 0,
+                ),
+                allow_negative=allow_negative,
+            )
+            self.logger.info(
+                f"Cancelled generation billed: in={snapshot.usage.input_tokens}, "
+                f"out~={estimated_output} (from {streamed_output_chars} chars)"
+            )
+        except ImportError:
+            pass  # OSS mode
+        except Exception as e:
+            self.logger.error(f"Billing on cancel failed: {e}", exc_info=True)
+
     def _write_firehose(
         self,
         system_prompt: Optional[Union[str, List[Dict]]],
@@ -973,6 +1022,8 @@ class LLMProvider:
                 from types import SimpleNamespace
 
                 while True:
+                    check_cancelled()
+
                     # Prepare for streaming
                     system_prompt, prepared_messages = self._prepare_messages(current_messages)
 
@@ -1352,6 +1403,8 @@ class LLMProvider:
                     allow_negative=allow_negative,
                 )
 
+        except GenerationCancelled:
+            raise
         except Exception as e:
             self.logger.error(f"LLM API request failed: {e}", exc_info=True)
             yield ErrorEvent(error=str(e))
@@ -1862,15 +1915,28 @@ class LLMProvider:
                         **stream_params,
                         betas=ANTHROPIC_BETA_FLAGS
                     ) as stream:
-                        # Stream events
+                        # Stream events — track output chars for cancel billing
+                        streamed_output_chars = 0
+
                         for event in stream:
+                            # Check cancellation between chunks
+                            cancel_evt = get_cancel_event()
+                            if cancel_evt is not None and cancel_evt.is_set():
+                                self._bill_cancelled_stream(
+                                    stream, streamed_output_chars,
+                                    selected_model, endpoint_url, allow_negative,
+                                )
+                                raise GenerationCancelled()
+
                             if event.type == "text":
+                                streamed_output_chars += len(event.text)
                                 yield TextEvent(content=event.text)
 
                             elif event.type == "content_block_delta":
                                 # Handle thinking deltas from extended thinking
                                 if hasattr(event, 'delta') and hasattr(event.delta, 'type'):
                                     if event.delta.type == "thinking_delta":
+                                        streamed_output_chars += len(event.delta.thinking)
                                         yield ThinkingEvent(content=event.delta.thinking)
 
                             elif event.type == "content_block_start":
@@ -2049,6 +2115,8 @@ class LLMProvider:
         selected_model = model_preference if model_preference else self.model
 
         while True:
+            check_cancelled()
+
             # Stream LLM response with selected model
             response = None
             for event in self._stream_response(
@@ -2062,6 +2130,7 @@ class LLMProvider:
                 api_key_override=api_key_override,
                 system_override=system_override,
                 allow_negative=allow_negative,
+                cancel_event=cancel_event,
             ):
                 if isinstance(event, CompleteEvent):
                     response = event.response
@@ -2102,6 +2171,8 @@ class LLMProvider:
                 self.logger.debug(f"Sequential tools: {[t['tool_name'] for t in sequential_tools]}")
             if parallel_tools:
                 self.logger.debug(f"Parallel tools: {[t['tool_name'] for t in parallel_tools]}")
+
+            check_cancelled()
 
             # Emit executing events for all tools
             for tool_call in local_tool_calls:

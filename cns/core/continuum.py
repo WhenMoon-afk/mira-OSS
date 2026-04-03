@@ -137,7 +137,7 @@ class Continuum:
         role="user" message with tool_result content blocks — the format
         the Anthropic API expects for multi-turn tool use history.
         """
-        from cns.services.segment_helpers import format_segment_for_display
+        from cns.services.segment_helpers import format_segment_for_display, format_precis_for_display
         from utils.timezone_utils import convert_from_utc
         from utils.user_context import get_user_preferences
 
@@ -178,7 +178,13 @@ class Continuum:
             # plain assistant messages — the model treats them as retrieved data.
             if (message.metadata.get('is_segment_boundary') and
                 message.metadata.get('status') == 'collapsed'):
-                summary_content = format_segment_for_display(message)
+                display_mode = message.metadata.get('display_mode', 'extended')
+                if display_mode == 'precis':
+                    summary_content = format_precis_for_display(message)
+                elif display_mode == 'extended':
+                    summary_content = format_segment_for_display(message)
+                else:
+                    raise ValueError(f"Unknown display_mode '{display_mode}' on segment {message.metadata.get('segment_id')}")
                 tool_use_id = f"toolu_seg_{message.metadata['segment_id'][:22]}"
 
                 formatted_messages.append({

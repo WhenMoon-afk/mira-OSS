@@ -64,6 +64,41 @@ class EmailToolConfig(BaseModel):
 registry.register("email_tool", EmailToolConfig)
 
 
+# Restricted schema for sidebar agents: reply_to_email only.
+# No send_email, search, read, or folder operations.
+SIDEBAR_EMAIL_SCHEMA = {
+    "name": "email_tool",
+    "description": (
+        "Reply to the email that triggered this agent. You can only reply "
+        "-- not send new emails, search, or read other emails."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "operation": {
+                "type": "string",
+                "enum": ["reply_to_email"],
+            },
+            "email_id": {
+                "type": "string",
+                "description": (
+                    "ID of the email to reply to (provided in your context)."
+                ),
+            },
+            "body": {
+                "type": "string",
+                "description": "Reply body text.",
+            },
+        },
+        "required": ["operation", "email_id", "body"],
+    },
+}
+
+# Sidebar send limits
+_SIDEBAR_MAX_SENDS_PER_TASK = 1
+_SIDEBAR_MAX_SENDS_PER_HOUR = 10
+
+
 class EmailTool(Tool):
     """
     Tool for accessing and managing email through IMAP/SMTP protocols.
@@ -1387,6 +1422,11 @@ class EmailTool(Tool):
                     raise ValueError(f"Failed to send email: {e}")
             
             elif operation == "reply_to_email":
+                # Sidebar agent guardrails: enforce send caps + audit
+                sidebar_task_id = kwargs.get("sidebar_task_id")
+                if sidebar_task_id:
+                    self._enforce_sidebar_send_caps(sidebar_task_id)
+
                 # Validate required parameters
                 if not email_id:
                     self.logger.error("Missing email_id for reply_to_email operation in email_tool")
@@ -1430,21 +1470,16 @@ class EmailTool(Tool):
                     # Set From
                     msg["From"] = self.email_address
                     
-                    # Set To (reply to sender by default)
-                    reply_to = original_msg.get("Reply-To")
-                    if reply_to:
-                        msg["To"] = reply_to
-                    else:
+                    # Set To — sidebar agents use From only (Reply-To is
+                    # attacker-controlled); normal replies use Reply-To→From
+                    if sidebar_task_id:
                         msg["To"] = original_msg.get("From", "")
-                    
-                    # Override To if specified
-                    if to:
-                        # Parse email addresses 
+                    elif to:
                         parsed_to = self._parse_email_addresses(to)
-                        if parsed_to:
-                            msg["To"] = parsed_to
-                        else:
-                            msg["To"] = original_msg.get("From", "")
+                        msg["To"] = parsed_to if parsed_to else original_msg.get("From", "")
+                    else:
+                        reply_to = original_msg.get("Reply-To")
+                        msg["To"] = reply_to if reply_to else original_msg.get("From", "")
                     
                     # Add CC/BCC if specified
                     if cc:
@@ -1494,11 +1529,19 @@ class EmailTool(Tool):
                     # Mark as answered
                     if not self._set_flag(email_id, "\\Answered", True):
                         self.logger.warning(f"Failed to mark email {email_id} as answered")
-                    
+
                     # Remove from later reply set if present
                     if email_id in self.emails_for_later_reply:
                         self.emails_for_later_reply.remove(email_id)
-                    
+
+                    # Sidebar audit trail
+                    if sidebar_task_id:
+                        self._write_sidebar_audit(
+                            sidebar_task_id, email_id,
+                            msg["To"], msg.get("Subject", ""),
+                            body,
+                        )
+
                     return {
                         "success": True,
                         "replied_to": email_id,
@@ -1734,6 +1777,73 @@ class EmailTool(Tool):
             self.logger.error(f"Error executing email_tool operation '{operation}': {e}")
             raise
     
+    # ------------------------------------------------------------------
+    # Sidebar agent guardrails
+    # ------------------------------------------------------------------
+
+    def _enforce_sidebar_send_caps(self, task_id: str) -> None:
+        """Check per-task and hourly send caps. Raises ValueError if exceeded."""
+        import hashlib
+        self._ensure_sidebar_audit_table()
+
+        # Per-task cap: 1 send per agent invocation
+        task_sends = self.db.select(
+            "sidebar_audit",
+            where="agent_id = :task_id",
+            params={'task_id': task_id},
+        )
+        if len(task_sends) >= _SIDEBAR_MAX_SENDS_PER_TASK:
+            raise ValueError(
+                f"Sidebar send cap exceeded: {_SIDEBAR_MAX_SENDS_PER_TASK} "
+                "email(s) per agent invocation"
+            )
+
+        # Hourly cap across all sidebar invocations
+        hourly_sends = self.db.select(
+            "sidebar_audit",
+            where="created_at > datetime('now', '-1 hour')",
+        )
+        if len(hourly_sends) >= _SIDEBAR_MAX_SENDS_PER_HOUR:
+            raise ValueError(
+                f"Sidebar hourly send cap exceeded: "
+                f"{_SIDEBAR_MAX_SENDS_PER_HOUR} emails/hour"
+            )
+
+    def _write_sidebar_audit(
+        self, task_id: str, email_id: str,
+        recipient: str, subject: str, body: str,
+    ) -> None:
+        """Log outbound sidebar email to audit trail."""
+        import hashlib
+        self._ensure_sidebar_audit_table()
+        self.db.execute(
+            "INSERT INTO sidebar_audit "
+            "(agent_id, inbound_item_id, recipient, subject, body_hash) "
+            "VALUES (:agent_id, :item_id, :recipient, :subject, :body_hash)",
+            {
+                'agent_id': task_id,
+                'item_id': email_id,
+                'recipient': recipient,
+                'subject': subject,
+                'body_hash': hashlib.sha256(body.encode()).hexdigest()[:16],
+            },
+        )
+
+    def _ensure_sidebar_audit_table(self) -> None:
+        """Create sidebar_audit table if it doesn't exist."""
+        if not hasattr(self, '_sidebar_audit_ready'):
+            self.db.execute(
+                "CREATE TABLE IF NOT EXISTS sidebar_audit ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "agent_id TEXT NOT NULL, "
+                "inbound_item_id TEXT NOT NULL, "
+                "recipient TEXT NOT NULL, "
+                "subject TEXT, "
+                "body_hash TEXT NOT NULL, "
+                "created_at TEXT NOT NULL DEFAULT (datetime('now')))"
+            )
+            self._sidebar_audit_ready = True
+
     def __del__(self):
         """Ensure we disconnect when the object is destroyed."""
         try:

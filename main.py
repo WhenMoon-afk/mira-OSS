@@ -319,8 +319,13 @@ async def lifespan(app: FastAPI):
     initialize_all_scheduled_tasks(scheduler_service)
 
     # Register segment timeout detection job (needs event_bus from orchestrator)
-    from utils.scheduled_tasks import register_segment_timeout_job
+    from utils.scheduled_tasks import register_segment_timeout_job, register_sidebar_dispatcher_job
     register_segment_timeout_job(scheduler_service, orchestrator.event_bus)
+
+    # Register sidebar dispatcher (needs tool_repo + event_bus)
+    register_sidebar_dispatcher_job(
+        scheduler_service, orchestrator.tool_repo, orchestrator.event_bus
+    )
 
     # Register billing daily drip job (skipped in OSS mode)
     try:

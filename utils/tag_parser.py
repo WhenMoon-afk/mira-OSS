@@ -88,6 +88,7 @@ class ParsedResponse(TypedDict):
     error_analysis: list
     referenced_memories: list[str]
     emotion: Optional[str]
+    precis: Optional[str]
     display_title: Optional[str]
     complexity: Optional[float]
     internal_monologue: Optional[str]
@@ -124,6 +125,11 @@ class TagParser:
     COMPLEXITY_PATTERN = re.compile(
         r'<mira:complexity>\s*(0\.5|[123])\s*</mira:complexity>',
         re.IGNORECASE
+    )
+    # Pattern for segment precis: <mira:precis>2-sentence summary</mira:precis>
+    PRECIS_PATTERN = re.compile(
+        r'<mira:precis>(.*?)</mira:precis>',
+        re.DOTALL | re.IGNORECASE
     )
     # Pattern for errant timestamps MIRA might add at message start
     # Matches: [5:48pm], (5:48pm), 5:48pm, [5:48 PM], etc.
@@ -186,6 +192,14 @@ class TagParser:
         if complexity_match:
             complexity = float(complexity_match.group(1))
 
+        # Extract precis (2-sentence compressed summary)
+        precis = None
+        precis_match = self.PRECIS_PATTERN.search(response_text)
+        if precis_match:
+            precis_text = precis_match.group(1).strip()
+            if precis_text:
+                precis = precis_text
+
         # Extract internal monologue (cognitive anchoring block)
         internal_monologue = None
         monologue_match = self.INTERNAL_MONOLOGUE_PATTERN.search(response_text)
@@ -203,6 +217,7 @@ class TagParser:
             'emotion': emotion,
             'display_title': display_title,
             'complexity': complexity,
+            'precis': precis,
             'internal_monologue': internal_monologue,
             'checkin_response': checkin_response,
             'clean_text': self.remove_all_tags(response_text, preserve_tags=preserve_tags)

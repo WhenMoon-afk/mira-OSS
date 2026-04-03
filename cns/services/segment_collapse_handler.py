@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 from cns.core.events import SegmentTimeoutEvent, SegmentCollapsedEvent, ManifestUpdatedEvent
 from cns.core.message import Message
 from cns.services.segment_helpers import collapse_segment_sentinel
-from cns.services.summary_generator import SummaryGenerator, SummaryType
+from cns.services.summary_generator import SummaryGenerator, SummaryResult, SummaryType
 from cns.infrastructure.continuum_repository import ContinuumRepository
 from clients.hybrid_embeddings_provider import HybridEmbeddingsProvider
 from clients.valkey_client import get_valkey_client
@@ -206,6 +206,7 @@ class SegmentCollapseHandler:
             tombstone = collapse_segment_sentinel(
                 sentinel,
                 summary="[Segment collapse failed after maximum retry attempts]",
+                precis="[Collapse Failed]",
                 display_title="[Collapse Failed]",
                 embedding=[0.0] * 768,
                 inactive_duration_minutes=event.inactive_duration_minutes,
@@ -243,8 +244,8 @@ class SegmentCollapseHandler:
                 f"The segment will collapse automatically once the conversation finishes."
             )
 
-        # Generate summary, display title, complexity, and embedding (raises on failure)
-        summary, display_title, complexity, embedding = self._generate_summary(
+        # Generate summary and embedding (raises on failure)
+        result, embedding = self._generate_summary(
             messages,
             sentinel,
             event.continuum_id
@@ -259,14 +260,15 @@ class SegmentCollapseHandler:
         # Collapse sentinel (returns new Message with collapsed state)
         collapsed_sentinel = collapse_segment_sentinel(
             sentinel,
-            summary=summary,
-            display_title=display_title,
+            summary=result.synopsis,
+            precis=result.precis,
+            display_title=result.display_title,
             embedding=embedding,
             inactive_duration_minutes=event.inactive_duration_minutes,
             processing_failed=False,  # Always False - failures raise instead of degrading
             tools_used=tools_used,
             segment_end_time=segment_end_time,
-            complexity_score=complexity
+            complexity_score=result.complexity
         )
 
         # Save collapsed sentinel to database
@@ -285,7 +287,7 @@ class SegmentCollapseHandler:
         self.event_bus.publish(SegmentCollapsedEvent.create(
             continuum_id=event.continuum_id,
             segment_id=event.segment_id,
-            summary=summary,
+            summary=result.synopsis,
             tools_used=tools_used
         ))
 
@@ -295,7 +297,7 @@ class SegmentCollapseHandler:
             event.segment_id,
             collapsed_sentinel,
             messages,
-            summary,
+            result.synopsis,
             force_immediate=force_immediate
         )
 
@@ -411,9 +413,9 @@ class SegmentCollapseHandler:
         messages: List[Message],
         sentinel: Message,
         continuum_id: str
-    ) -> tuple[str, str, float, list[float]]:
+    ) -> tuple[SummaryResult, list[float]]:
         """
-        Generate segment summary, complexity score, and embedding.
+        Generate segment summary and embedding.
 
         Fetches recent collapsed segments for narrative continuity - the summarizer
         can then use connective phrases like "Building on Tuesday's auth work..."
@@ -424,7 +426,7 @@ class SegmentCollapseHandler:
             continuum_id: Continuum ID for fetching previous summaries
 
         Returns:
-            Tuple of (summary_text, display_title, complexity_score, embedding)
+            Tuple of (SummaryResult, embedding)
 
         Raises:
             RuntimeError: If summary generation or embedding generation fails
@@ -454,7 +456,7 @@ class SegmentCollapseHandler:
             # Convert ndarray to list for JSON serialization (storage boundary)
             embedding_list = embedding.tolist()
 
-            return result.synopsis, result.display_title, result.complexity, embedding_list
+            return result, embedding_list
 
         except Exception as e:
             # Re-raise to fail the entire collapse operation

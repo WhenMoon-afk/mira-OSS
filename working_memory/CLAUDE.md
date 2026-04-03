@@ -17,6 +17,7 @@ Portrait injection (`{user_context}`) and `{first_name}` / `{relative time since
 - `core.py` — `WorkingMemory`: owns trinket registration, event subscriptions, portrait cache (`_portrait_cache`), and `TrinketState` retrieval from Valkey
 - `trinkets/base.py` — `EventAwareTrinket` (ABC) and `StatefulTrinket`; owns Valkey persistence (`TRINKET_KEY_PREFIX`) and `_clear_from_valkey()`
 - `trinkets/domaindoc_trinket.py` — domain knowledge document injection with per-document collapse/expand state
+- `trinkets/asyncactivity_trinket.py` — sidebar agent activity feed (`EventAwareTrinket`); SQLite-backed, reads from `sidebar_activity` on each render; items persist until dismissed via `sidebaragents_tool`
 - `trinkets/forage_trinket.py` — background forage agent results (`StatefulTrinket`, TTL-scoped errors, dismiss support)
 - `trinkets/location_trinket.py` — user location + weather from Valkey cache (`cache_policy=True`)
 - `trinkets/lora_trinket.py` — user model observations from the feedback synthesis pipeline

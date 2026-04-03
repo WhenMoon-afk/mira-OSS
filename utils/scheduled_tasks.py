@@ -118,6 +118,29 @@ def register_segment_timeout_job(scheduler_service, event_bus) -> None:
         raise RuntimeError(f"Failed to register segment timeout job: {e}") from e
 
 
+def register_sidebar_dispatcher_job(scheduler_service, tool_repo, event_bus) -> None:
+    """
+    Register sidebar dispatcher job (called separately after tool_repo initialization).
+
+    Args:
+        scheduler_service: System scheduler service
+        tool_repo: ToolRepository for sidebar agents
+        event_bus: CNS event bus for sidebar agents
+
+    Raises:
+        RuntimeError: If job registration fails
+    """
+    try:
+        from utils.sidebar_jobs import register_sidebar_jobs
+
+        register_sidebar_jobs(scheduler_service, tool_repo, event_bus)
+        logger.info("Successfully registered sidebar dispatcher job")
+
+    except Exception as e:
+        logger.error(f"Error registering sidebar dispatcher job: {e}", exc_info=True)
+        raise RuntimeError(f"Failed to register sidebar dispatcher job: {e}") from e
+
+
 def get_users_due_for_job(interval: int) -> list[dict]:
     """
     Get recently-active users whose cumulative_activity_days falls on the interval.

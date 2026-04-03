@@ -2,7 +2,7 @@
 Two-tier image compression for LLM inference and storage.
 
 Compresses images at validation time, returning both:
-- inference_image: 1200px max dimension, original format preserved
+- inference_image: 1568px max dimension, original format preserved
 - storage_image: 512px max dimension, WebP at 75% quality
 
 This enables multi-turn image context while optimizing for both
@@ -18,7 +18,7 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 # Compression configuration (hardcoded - these are known constraints)
-INFERENCE_MAX_DIMENSION = 1200  # Balances token cost with analysis quality
+INFERENCE_MAX_DIMENSION = 1568  # API auto-resize ceiling — no point capping below this
 STORAGE_MAX_DIMENSION = 512     # Aggressive compression for multi-turn context
 STORAGE_WEBP_QUALITY = 75       # WebP quality for storage tier
 

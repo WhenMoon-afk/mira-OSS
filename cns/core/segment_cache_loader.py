@@ -115,10 +115,13 @@ class SegmentCacheLoader:
 
     def _load_segment_summaries(self, continuum_id: str) -> list[Message]:
         """
-        Load recent collapsed segment sentinels using complexity-based selection.
+        Load recent collapsed segment sentinels using two-tier selection.
 
-        Queries the most recent segments and selects based on accumulated complexity
-        score to optimize information density within context window constraints.
+        Tier 1: Extended summaries selected by accumulated complexity score.
+        Tier 2: Additional segments using precis only for broader lookback.
+
+        Tier 2 entries are marked with display_mode='precis' in metadata
+        (ephemeral — not persisted) so the display layer formats them differently.
 
         Args:
             continuum_id: Continuum ID
@@ -132,42 +135,47 @@ class SegmentCacheLoader:
         from utils.user_context import get_current_user_id
         user_id = get_current_user_id()
 
-        messages = self._select_summaries_by_complexity(continuum_id, user_id)
+        tier1, tier2 = self._select_two_tier_summaries(continuum_id, user_id)
 
-        logger.debug(
-            f"Loaded {len(messages)} segment summaries for continuum {continuum_id} "
-            f"using complexity-based selection"
+        # Mark segments with display_mode for format routing (ephemeral, not persisted)
+        marked_tier1 = [s.with_metadata(display_mode='extended') for s in tier1]
+        marked_tier2 = [s.with_metadata(display_mode='precis') for s in tier2]
+
+        messages = marked_tier1 + marked_tier2
+
+        logger.info(
+            f"Loaded {len(tier1)} extended + {len(marked_tier2)} precis summaries "
+            f"for continuum {continuum_id}"
         )
         return messages
 
-    def _select_summaries_by_complexity(
+    def _select_two_tier_summaries(
         self,
         continuum_id: str,
         user_id: str
-    ) -> list[Message]:
+    ) -> tuple[list[Message], list[Message]]:
         """
-        Select segment summaries based on complexity score accumulation.
+        Two-tier segment selection for session cache.
 
-        Queries a window of recent collapsed segments and iteratively selects
-        them from newest to oldest, accumulating complexity scores until the
-        total exceeds the configured limit or max count is reached.
+        Tier 1: Extended summaries up to complexity limit (full synopsis).
+        Tier 2: Additional segments using precis only (broader lookback).
 
-        Complexity scores optimize information density - a few complex segments
-        provide more value than many simple ones within the same token budget.
+        Both tiers draw from the same candidate pool, newest-first.
+        Tier 2 picks up where Tier 1 stopped.
 
         Args:
             continuum_id: Continuum ID
             user_id: User ID
 
         Returns:
-            Selected segment summaries in chronological order (oldest to newest)
+            (tier1, tier2) — both in chronological order (oldest to newest)
 
         Raises:
             DatabaseError: If database query fails
         """
-        # Get configuration values
         complexity_limit = config.system.session_summary_complexity_limit
         max_count = config.system.session_summary_max_count
+        precis_max = config.system.session_precis_max_count
         query_window = config.system.session_summary_query_window
 
         # Query window of recent segments (returns oldest first, we reverse for selection)
@@ -179,45 +187,45 @@ class SegmentCacheLoader:
 
         if not candidates:
             logger.debug(f"No collapsed segments found for continuum {continuum_id}")
-            return []
+            return [], []
 
-        # Select segments by accumulating complexity
-        selected = []
+        # Tier 1: Extended summaries (newest first, complexity accumulation)
+        tier1 = []
         total_complexity = 0
+        tier1_stop_index = 0
 
-        for segment in reversed(candidates):
-            # Get complexity score, default to 2 (moderate) if missing
+        newest_first = list(reversed(candidates))
+        for i, segment in enumerate(newest_first):
             complexity = segment.metadata.get('complexity_score', 2)
 
-            # Check if adding this segment would exceed limit
-            # Allow if we have 0 segments (always include at least one)
-            if total_complexity + complexity > complexity_limit and len(selected) > 0:
-                logger.debug(
-                    f"Stopping selection: total_complexity={total_complexity}, "
-                    f"next_complexity={complexity} would exceed limit={complexity_limit}"
-                )
+            if total_complexity + complexity > complexity_limit and len(tier1) > 0:
+                tier1_stop_index = i
                 break
 
-            # Add segment
-            selected.append(segment)
+            tier1.append(segment)
             total_complexity += complexity
+            tier1_stop_index = i + 1
 
-            # Check if we've reached max count
-            if len(selected) >= max_count:
-                logger.debug(
-                    f"Stopping selection: reached max_count={max_count}"
-                )
+            if len(tier1) >= max_count:
+                break
+
+        # Tier 2: Precis-only (continue from where Tier 1 stopped)
+        tier2 = []
+        for segment in newest_first[tier1_stop_index:]:
+            precis = segment.metadata.get('precis', '')
+            if not precis:
+                continue
+            tier2.append(segment)
+            if len(tier2) >= precis_max:
                 break
 
         logger.info(
-            f"Selected {len(selected)}/{len(candidates)} segments "
-            f"(total_complexity={total_complexity}/{complexity_limit}, "
-            f"limit={'complexity' if len(selected) < max_count else 'count'})"
+            f"Selected {len(tier1)} extended (complexity={total_complexity}/{complexity_limit}) "
+            f"+ {len(tier2)} precis from {len(candidates)} candidates"
         )
 
-        # Return in chronological order (oldest first)
-        # Candidates are newest-first, so reverse the selected slice
-        return list(reversed(selected))
+        # Return both in chronological order (oldest first)
+        return list(reversed(tier1)), list(reversed(tier2))
 
     def _load_active_segment_messages(self, continuum_id: str) -> list[Message]:
         """

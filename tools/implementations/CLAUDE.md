@@ -22,7 +22,7 @@ Every `anthropic_schema` parameter description is an LLM caller contract. Use ex
 - `continuum_tool.py` — Conversation and segment operations (search, navigation) against the CNS continuum
 - `domaindoc_tool.py` — Domain knowledge document management; always-active essential tool; `anthropic_schema` is a `@property` that builds a live catalog from SQLite at schema-read time; `request_create`/`request_delete` return UI guidance only (noops)
 - `email_tool.py` — Email send/read via user-configured provider credential
-- `forage_tool.py` — Speculative background context gathering; fire-and-forget trigger that dispatches `agents/forage.py` agent loop; two params (`query` + `context`) to launch, `dismiss_task_id` to clear results; publishes to `ForageTrinket`
+- `forage_tool.py` — Speculative background context gathering; fire-and-forget trigger that dispatches `ForageAgent` via `agents/implementations/forage_agent.py`; two params (`query` + `context`) to launch, `dismiss_task_id` to clear results; publishes to `ForageTrinket`
 - `imagegen_tool.py` — Image generation/refinement via Google Gemini with Chat-based lineage; `generate` opens a new session, `refine` replays full history, `publish` emits `_image_artifact`; per-user API key via `UserCredentialService('google_genai')`; images uploaded to Anthropic Files API uncompressed
 - `invokeother_tool.py` — Meta-tool for on-demand loading of non-essential tools at runtime
 - `kasa_tool.py` — TP-Link Kasa smart home device control
@@ -34,4 +34,6 @@ Every `anthropic_schema` parameter description is an LLM caller contract. Use ex
 - `square_tool.py` — Square payment and POS integration
 - `weather_tool.py` — Weather data retrieval
 - `web_tool.py` — Web search (Kagi primary, DuckDuckGo fallback) and page scraping
+- `sidebar_tool.py` — Sidebar agent lifecycle: scratchpad (write/read/clear notes) and `complete_task` (writes to `sidebar_activity` SQLite). Disabled (`enabled: False`) — sidebar agents only, not main conversation
+- `sidebaragents_tool.py` — Main conversation tool for managing sidebar activity: `list_activity`, `get_details`, `dismiss`, `resolve`. Reads from same `sidebar_activity`/`scratchpad` tables that `sidebar_tool` writes. Takes `WorkingMemory` for event_bus access
 - `schemas/contacts_tool.sql` — DDL for the contacts SQLite schema owned by `contacts_tool.py`

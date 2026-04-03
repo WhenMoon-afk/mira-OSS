@@ -11,6 +11,7 @@ concurrent operations while working identically for single-threaded use.
 
 import contextvars
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -31,6 +32,34 @@ _current_segment_id: contextvars.ContextVar[Optional[str]] = contextvars.Context
     'current_segment_id',
     default=None
 )
+
+# Context variable for request cancellation (set by WebSocket handler, checked by LLM provider)
+_cancel_event: contextvars.ContextVar[Optional[threading.Event]] = contextvars.ContextVar(
+    'cancel_event',
+    default=None
+)
+
+
+def set_cancel_event(event: threading.Event) -> None:
+    """Set the cancellation event for the current request."""
+    _cancel_event.set(event)
+
+
+def get_cancel_event() -> Optional[threading.Event]:
+    """Get the cancellation event for the current request, or None if not set."""
+    return _cancel_event.get(None)
+
+
+def check_cancelled() -> None:
+    """Raise GenerationCancelled if the current request has been cancelled.
+
+    Lightweight check — call between stream chunks, before tool execution,
+    and at agentic loop boundaries.
+    """
+    evt = _cancel_event.get(None)
+    if evt is not None and evt.is_set():
+        from cns.core.stream_events import GenerationCancelled
+        raise GenerationCancelled()
 
 
 def set_current_user_id(user_id: str) -> None:

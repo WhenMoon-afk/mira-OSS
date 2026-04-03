@@ -1,13 +1,21 @@
-# agents/ — Background agent modules
+# agents/ — Autonomous sidebar agents
 
 ## Rules
 
-Agents are LLM-in-a-loop modules activated by tools. Each agent receives a task from the calling tool, uses ToolRepository tools to gather information, and publishes results to a trinket via EventBus. Agents run in background threads with copied user context (`contextvars.copy_context()`).
+Agents extend `SidebarAgent` (in `base.py`). The base class owns the LLM-in-a-loop mechanics: LLM init, tool schema assembly (always includes `sidebar_tool`), message loop with heartbeat, tool execution, `complete_task` detection, trace capture, and completion publishing via `on_completion()`.
 
-Agent modules export a `run()` function as their entry point. The calling tool handles thread spawning, context propagation, and event bus access — the agent module focuses on the loop logic.
+Implementations define: `agent_id`, `internal_llm_key`, `available_tools`, `get_agent_prompt()`, `build_initial_message()`. Override `on_completion()` to publish to a different trinket (see `ForageAgent`).
 
-Agents use the standard ToolRepository for tool access to avoid maintaining parallel search implementations. Tool schemas are extracted from the repository at runtime.
+Loop terminates when the LLM calls `sidebar_tool` with `operation: "complete_task"`. The base class enriches the call with `thread_id`, `interface_name`, `agent_id` from the WorkItem, executes the tool (writes to `sidebar_activity` SQLite), and exits.
+
+Agents are spawned in background threads with `contextvars.copy_context()`. Two spawn paths:
+1. **SidebarDispatcher** — polls registered `SidebarTrigger` instances on an APScheduler interval, spawns agents for new `WorkItem`s.
+2. **Direct invocation** — a tool (e.g. `ForageTool`) creates a `WorkItem` and calls `agent.run()` in a background thread.
 
 ## Files
 
-- `forage.py` — Background research agent for speculative context gathering. Loop: receives query + context, searches via continuum_tool/memory_tool/web_tool, produces written briefing. Heartbeat is "Continue." user message. Quality rubric gates output. Activated by `tools/implementations/forage_tool.py`, publishes to `ForageTrinket`.
+- `base.py` — `SidebarAgent` ABC. Shared loop mechanics, `ACTIVITY_TABLE_DDL`, trace TypedDicts (`ToolCallTrace`, `IterationTrace`, `AgentTrace`).
+- `sidebar.py` — `WorkItem` model, `SidebarTrigger` protocol, `SidebarDispatcher` (APScheduler poll loop).
+- `triggers/imap_trigger.py` — `ImapTrigger`: polls IMAP for emails from configured senders, dedup via Valkey, sanitizes content through `PromptInjectionDefense` with `require_llm_detection=True`. Sets `$MiraHandled` IMAP flag on processed messages.
+- `implementations/email_sidebar.py` — `EmailSidebarAgent`: handles RCWC contact form emails per business rubric. Tools: `email_tool`.
+- `implementations/forage_agent.py` — `ForageAgent`: background research. Overrides `on_completion()` to publish to `ForageTrinket`. Tools: `continuum_tool`, `memory_tool`, `web_tool`.

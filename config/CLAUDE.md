@@ -12,7 +12,7 @@
 
 ## Files
 
-- `config.py` — Pure Pydantic schema definitions for every config section (`ApiConfig`, `LTMemoryConfig`, `ScheduledJobsConfig`, etc.). No logic, no side effects.
+- `config.py` — Pure Pydantic schema definitions for every config section (`ApiConfig`, `LTMemoryConfig`, `ScheduledJobsConfig`, `SystemConfig`, `SidebarDispatcherConfig`, `ImapTriggerConfig`, etc.). `SystemConfig` includes two-tier session cache settings: `session_summary_complexity_limit` (Tier 1 extended), `session_precis_max_count` (Tier 2 precis). No logic, no side effects.
 - `config_manager.py` — `AppConfig` (root aggregate), `initialize_config()`, and the `config` singleton. Owns Vault property lookups and dynamic tool config via `__getattr__`.
 - `__init__.py` — Re-exports `config` and `AppConfig`; enforces registry-before-config import order.
 - `system_prompt.txt` — Mira's core identity prompt. Section order is semantics: foundational identity appears before behavioral directives because earlier tokens condition interpretation of later ones.

@@ -543,6 +543,35 @@ header h1 {
 }
 #oss-banner.hidden { display: none; }
 #oss-banner p { margin: 0; }
+#update-banner {
+  flex-shrink: 0;
+  max-width: min(80ch, calc(100vw - 32px));
+  margin: 12px auto 0;
+  padding: 12px 16px;
+  border: 1px solid rgba(255,255,0,0.3);
+  border-radius: 8px;
+  background: rgba(255,255,0,0.04);
+  font-size: 13px;
+  color: var(--text);
+  line-height: 1.5;
+  font-family: 'IBM Plex Mono', monospace;
+}
+#update-banner.hidden { display: none; }
+#update-banner a { color: var(--yellow); }
+#update-banner .update-version { color: var(--yellow); font-weight: 600; }
+#update-banner .update-current { color: var(--text-dim); }
+#update-banner .banner-btn {
+  background: none;
+  border: 1px solid rgba(255,255,0,0.2);
+  color: var(--text-dim);
+  padding: 2px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: 'IBM Plex Mono', monospace;
+  margin-left: 8px;
+}
+#update-banner .banner-btn:hover { color: var(--yellow); border-color: rgba(255,255,0,0.4); }
 .banner-actions {
   display: flex;
   gap: 8px;
@@ -588,6 +617,8 @@ header h1 {
     <div id="auth-error"></div>
   </div>
 </div>
+
+<div id="update-banner" class="hidden"></div>
 
 <div id="oss-banner" class="hidden">
   <p>This is a basic web UI for the open-source version of MIRA. If you have improvements, please submit them as a PR — I'm open to a community UI.</p>
@@ -1037,6 +1068,25 @@ document.addEventListener('keydown', e => {
   }
 });
 
+// ─── Update Check ───────────────────────────────
+async function checkForUpdate() {
+  try {
+    const r = await fetch(`${API}/check_remote_update`);
+    if (!r.ok) return;
+    const data = await r.json();
+    if (!data.update_available || !data.latest_version) return;
+    if (localStorage.getItem('mira_dismiss_update') === data.latest_version) return;
+    const banner = document.getElementById('update-banner');
+    const current = data.current_version || '?';
+    banner.innerHTML = `Update available: <span class="update-current">${current}</span> → <span class="update-version">${data.latest_version}</span> — <a href="https://miraos.org" target="_blank">miraos.org</a> <button class="banner-btn" onclick="dismissUpdate('${data.latest_version}')">Dismiss</button>`;
+    banner.classList.remove('hidden');
+  } catch {}
+}
+function dismissUpdate(version) {
+  document.getElementById('update-banner').classList.add('hidden');
+  localStorage.setItem('mira_dismiss_update', version);
+}
+
 // ─── OSS Banner ─────────────────────────────────
 function showBannerIfNeeded() {
   if (localStorage.getItem('mira_hide_banner')) return;
@@ -1053,6 +1103,7 @@ function dismissBanner(permanent) {
     loadHistory();
     fetchDomains();
     showBannerIfNeeded();
+    checkForUpdate();
   }
 })();
 </script>

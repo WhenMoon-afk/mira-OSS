@@ -171,6 +171,7 @@ class CNSIntegrationFactory:
             from working_memory.trinkets.forage_trinket import ForageTrinket
             from working_memory.trinkets.lora_trinket import LoraTrinket
             from working_memory.trinkets.location_trinket import LocationTrinket
+            from working_memory.trinkets.asyncactivity_trinket import AsyncActivityTrinket
 
             # Trinkets self-register with working memory
             TimeManager(event_bus, self._working_memory)
@@ -181,6 +182,7 @@ class CNSIntegrationFactory:
             ForageTrinket(event_bus, self._working_memory)
             LoraTrinket(event_bus, self._working_memory)
             LocationTrinket(event_bus, self._working_memory)
+            AsyncActivityTrinket(event_bus, self._working_memory)
 
             logger.info("Event-driven working memory initialized with trinkets")
         return self._working_memory

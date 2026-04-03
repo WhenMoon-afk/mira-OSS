@@ -22,7 +22,6 @@ class ManifestSegment(TypedDict):
     """Segment data returned by ManifestQueryService for manifest display."""
     id: str
     display_title: str
-    synopsis: str
     status: str
     start_time: str | None
     end_time: str | None
@@ -120,7 +119,6 @@ class ManifestQueryService:
             List of segment dictionaries with keys:
             - id: Segment ID
             - display_title: Title for display
-            - synopsis: Full synopsis content
             - status: 'active' or 'collapsed'
             - start_time: ISO format start time
             - end_time: ISO format end time
@@ -184,7 +182,6 @@ class ManifestQueryService:
             segments.append({
                 'id': str(msg.id),
                 'display_title': display_title,
-                'synopsis': msg.content,  # Full synopsis available if needed
                 'status': metadata.get('status', 'unknown'),
                 'start_time': metadata.get('segment_start_time'),
                 'end_time': metadata.get('segment_end_time'),

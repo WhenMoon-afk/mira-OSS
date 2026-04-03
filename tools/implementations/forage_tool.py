@@ -41,18 +41,6 @@ class ForageToolConfig(BaseModel):
         default=120,
         description="Maximum wall-clock seconds before the agent reports timeout",
     )
-    llm_model: str = Field(
-        default="qwen/qwen3-32b",
-        description="Model for the forage agent",
-    )
-    llm_endpoint: str = Field(
-        default="https://api.groq.com/openai/v1/chat/completions",
-        description="LLM endpoint for the forage agent",
-    )
-    llm_api_key_name: Optional[str] = Field(
-        default="subcortical_key",
-        description="Vault key name for the LLM API key. None for local providers (Ollama).",
-    )
 
 
 registry.register("forage_tool", ForageToolConfig)
@@ -205,20 +193,23 @@ class ForageTool(Tool):
     def _run_agent(self, task_id: str, continuum_id: str, query: str,
                    context: str, previous_result: Optional[str] = None,
                    trace_dir: Optional[str] = None) -> None:
-        """Background thread entry point — delegates to the forage agent module."""
-        from agents.forage import run as forage_run
+        """Background thread entry point — runs ForageAgent."""
+        from agents.implementations.forage_agent import ForageAgent
+        from agents.sidebar import WorkItem
 
-        forage_run(
+        agent = ForageAgent(
             query=query,
             context=context,
-            task_id=task_id,
-            continuum_id=continuum_id,
-            tool_repo=self.tool_repo,
-            event_bus=self.event_bus,
-            config=self.config,
             previous_result=previous_result,
-            trace_dir=trace_dir,
         )
+
+        work_item = WorkItem(
+            item_id=task_id,
+            interface_name="forage",
+            context={"query": query, "context": context},
+        )
+
+        agent.run(work_item, self.tool_repo, self.event_bus)
 
     def _dismiss(self, task_id: str) -> Dict[str, Any]:
         """Remove a forage result from the context window."""
