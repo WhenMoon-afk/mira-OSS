@@ -8,8 +8,9 @@
 
 set -e
 
-# Source output helpers for consistent formatting
+# Source helper libraries for consistent formatting and utility functions
 source /opt/mira/app/deploy/lib/output.sh
+source /opt/mira/app/deploy/lib/services.sh
 LOUD_MODE=false
 
 # =============================================================================

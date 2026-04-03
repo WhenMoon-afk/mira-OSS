@@ -10,7 +10,7 @@ export VAULT_ADDR="http://127.0.0.1:8200"
 echo "Waiting for Vault to be unsealed..."
 attempts=0
 while true; do
-    SEALED=$(curl -s http://127.0.0.1:8200/v1/sys/health | jq -r '.sealed // "error"')
+    SEALED=$(curl -sf http://127.0.0.1:8200/v1/sys/health | jq -r '.sealed' 2>/dev/null || echo "error")
     if [ "$SEALED" = "false" ]; then
         echo "Vault is unsealed"
         break
@@ -33,5 +33,8 @@ export VAULT_ROLE_ID=$(cat /opt/vault/role-id.txt)
 export VAULT_SECRET_ID=$(cat /opt/vault/secret-id.txt)
 
 # Change to app directory and run as mira user
+# Set HOME and HF_HOME so sentence-transformers finds the cached model
+export HOME=/home/mira
+export HF_HOME=/home/mira/.cache/huggingface
 cd /opt/mira/app
 exec s6-setuidgid mira /opt/mira/venv/bin/python3 main.py

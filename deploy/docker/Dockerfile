@@ -30,7 +30,12 @@ COPY deploy/docker/scripts/container-setup.sh /opt/mira/container-setup.sh
 COPY deploy/docker/scripts/healthcheck.sh /opt/mira/healthcheck.sh
 COPY deploy/docker/scripts/vault-unseal.sh /opt/mira/app/deploy/docker/scripts/vault-unseal.sh
 RUN chmod +x /init-mira.sh /opt/mira/container-setup.sh /opt/mira/healthcheck.sh \
-    /opt/mira/app/deploy/docker/scripts/vault-unseal.sh
+    /opt/mira/app/deploy/docker/scripts/vault-unseal.sh \
+    && chmod +x /etc/s6-overlay/s6-rc.d/mira/run \
+                /etc/s6-overlay/s6-rc.d/vault/run \
+                /etc/s6-overlay/s6-rc.d/valkey/run \
+                /etc/s6-overlay/s6-rc.d/postgresql/run \
+                /etc/s6-overlay/s6-rc.d/vault-init/up
 
 # Expose ports
 EXPOSE 1993
