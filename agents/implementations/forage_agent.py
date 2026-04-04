@@ -89,10 +89,12 @@ class ForageAgent(SidebarAgent):
         self,
         query: str,
         context: str,
+        continuum_id: str = 'sidebar',
         previous_result: str | None = None,
     ):
         self.query = query
         self.context = context
+        self.continuum_id = continuum_id
         self.previous_result = previous_result
 
     def get_agent_prompt(self) -> str:
@@ -147,9 +149,12 @@ class ForageAgent(SidebarAgent):
 
         try:
             event_bus.publish(UpdateTrinketEvent.create(
-                continuum_id='sidebar',
+                continuum_id=self.continuum_id,
                 target_trinket='ForageTrinket',
                 context=context,
             ))
         except Exception as e:
-            logger.error(f"ForageAgent: failed to publish to ForageTrinket: {e}")
+            logger.error(
+                f"ForageAgent: failed to publish to ForageTrinket: {e}",
+                exc_info=True,
+            )

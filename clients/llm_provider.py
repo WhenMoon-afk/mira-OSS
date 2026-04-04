@@ -2130,7 +2130,6 @@ class LLMProvider:
                 api_key_override=api_key_override,
                 system_override=system_override,
                 allow_negative=allow_negative,
-                cancel_event=cancel_event,
             ):
                 if isinstance(event, CompleteEvent):
                     response = event.response

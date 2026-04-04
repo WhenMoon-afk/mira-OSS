@@ -1041,10 +1041,11 @@ class EmailTool(Tool):
         cc: Optional[str] = None,
         bcc: Optional[str] = None,
         destination_folder: Optional[str] = None,
+        sidebar_task_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute an email operation.
-        
+
         Args:
             operation: The operation to perform (get_emails, get_email_content, etc.)
             folder: Email folder to access (default: "INBOX")
@@ -1423,7 +1424,6 @@ class EmailTool(Tool):
             
             elif operation == "reply_to_email":
                 # Sidebar agent guardrails: enforce send caps + audit
-                sidebar_task_id = kwargs.get("sidebar_task_id")
                 if sidebar_task_id:
                     self._enforce_sidebar_send_caps(sidebar_task_id)
 

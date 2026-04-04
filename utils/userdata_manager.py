@@ -408,11 +408,13 @@ class UserDataManager:
         self.connection.commit()
         return str(cursor.lastrowid)
 
-    def select(self, table_name: str, where: str = None, params: Optional[Dict] = None) -> List[Dict[str, Any]]:
+    def select(self, table_name: str, where: str = None, params: Optional[Dict] = None, order_by: str = None) -> List[Dict[str, Any]]:
         """Select and decrypt rows from table."""
         query = f"SELECT * FROM {table_name}"
         if where:
             query += f" WHERE {where}"
+        if order_by:
+            query += f" ORDER BY {order_by}"
         rows = self.fetchall(query, params)
         return [self._decrypt_dict(row) for row in rows]
 

@@ -6,7 +6,7 @@ Agents extend `SidebarAgent` (in `base.py`). The base class owns the LLM-in-a-lo
 
 Implementations define: `agent_id`, `internal_llm_key`, `available_tools`, `get_agent_prompt()`, `build_initial_message()`. Override `on_completion()` to publish to a different trinket (see `ForageAgent`).
 
-Loop terminates when the LLM calls `sidebar_tool` with `operation: "complete_task"`. The base class enriches the call with `thread_id`, `interface_name`, `agent_id` from the WorkItem, executes the tool (writes to `sidebar_activity` SQLite), and exits.
+The base class injects `thread_id` into ALL `sidebar_tool` calls (scratchpad and completion) — thread identity is a system concern, never passed by the LLM. For `complete_task`, it also injects `interface_name` and `agent_id`. Loop terminates when the LLM calls `complete_task`, which writes to `sidebar_activity` SQLite and exits.
 
 Agents are spawned in background threads with `contextvars.copy_context()`. Two spawn paths:
 1. **SidebarDispatcher** — polls registered `SidebarTrigger` instances on an APScheduler interval, spawns agents for new `WorkItem`s.

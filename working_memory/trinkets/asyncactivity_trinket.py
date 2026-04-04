@@ -50,8 +50,8 @@ class AsyncActivityTrinket(EventAwareTrinket):
             lines = self._render_items(rows)
             return "<async_activity>\n" + "\n".join(lines) + "\n</async_activity>"
 
-        except Exception:
-            logger.debug("AsyncActivityTrinket: sidebar_activity unavailable")
+        except Exception as e:
+            logger.error(f"AsyncActivityTrinket: failed to render: {e}", exc_info=True)
             return ""
 
     def _render_items(self, rows: list[dict]) -> list[str]:

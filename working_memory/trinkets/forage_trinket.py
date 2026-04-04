@@ -48,7 +48,6 @@ class ForageTrinket(StatefulTrinket):
         ]
         for task_id in expired:
             del self.active_results[task_id]
-            logger.debug(f"Expired forage error for task {task_id[:8]}")
         return bool(expired)
 
     def _clear_all_state(self) -> None:

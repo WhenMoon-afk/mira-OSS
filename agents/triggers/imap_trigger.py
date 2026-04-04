@@ -10,7 +10,10 @@ import email.utils
 import hashlib
 import imaplib
 import logging
+from datetime import timedelta
 from typing import TYPE_CHECKING
+
+from utils.timezone_utils import utc_now
 
 from agents.sidebar import WorkItem
 
@@ -38,8 +41,9 @@ class ImapTrigger:
         from agents.implementations.email_sidebar import EmailSidebarAgent
         return EmailSidebarAgent
 
-    def __init__(self, watched_senders: list[str]):
+    def __init__(self, watched_senders: list[str], max_age_hours: int = 24):
         self.watched_senders = [s.lower() for s in watched_senders]
+        self.max_age_hours = max_age_hours
         # Maps item_id → email UID for IMAP flag setting in mark_processed
         self._uid_map: dict[str, int] = {}
 
@@ -49,6 +53,9 @@ class ImapTrigger:
 
         try:
             conn = self._connect(user_id)
+        except (KeyError, ValueError, TypeError):
+            # User has no email credentials configured — not an error
+            return []
         except Exception as e:
             logger.error(f"IMAP connection failed for user {user_id}: {e}")
             return []
@@ -93,7 +100,8 @@ class ImapTrigger:
         user_id: str,
     ) -> list[WorkItem]:
         """Search for unprocessed emails from a single sender."""
-        criteria = f'FROM "{sender}"'
+        since_date = (utc_now() - timedelta(hours=self.max_age_hours)).strftime("%d-%b-%Y")
+        criteria = f'FROM "{sender}" SINCE {since_date}'
         typ, data = conn.uid("SEARCH", None, criteria)
         if typ != "OK" or not data or not data[0]:
             return []
@@ -116,6 +124,13 @@ class ImapTrigger:
             # Fetch full message
             msg = self._fetch_message(conn, uid)
             if msg is None:
+                continue
+
+            # Verify sender matches watched address — some IMAP servers
+            # don't reliably filter by FROM in SEARCH results
+            _, from_addr = email.utils.parseaddr(msg.get("From", ""))
+            if from_addr.lower() != sender:
+                valkey.set(dedup_key, "skipped", ex=_DEDUP_TTL_SECONDS)
                 continue
 
             # Build work item with sanitized content
@@ -259,16 +274,23 @@ class ImapTrigger:
         return email.message_from_string(raw)
 
     def _connect(self, user_id: str) -> imaplib.IMAP4_SSL:
-        """Connect to IMAP using the user's email_tool credentials."""
-        from config.config_manager import config
-        email_config = config.email_tool
+        """Connect to IMAP using the user's per-user email_tool credentials."""
+        import json
+        from utils.user_credentials import UserCredentialService
+
+        credential_service = UserCredentialService()
+        config_json = credential_service.get_credential(
+            credential_type="tool_config",
+            service_name="email_tool",
+        )
+        creds = json.loads(config_json)
 
         conn = imaplib.IMAP4_SSL(
-            email_config.imap_server,
-            email_config.imap_port,
+            creds["imap_server"],
+            creds.get("imap_port", 993),
             timeout=30,
         )
-        conn.login(email_config.email_address, email_config.password)
+        conn.login(creds["email_address"], creds["password"])
         return conn
 
     def _set_handled_flag(

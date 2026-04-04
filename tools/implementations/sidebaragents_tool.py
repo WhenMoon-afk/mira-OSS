@@ -11,6 +11,7 @@ from typing import Dict, Any, TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from agents.base import ACTIVITY_TABLE_DDL, ACTIVITY_INDEX_DDL
+from tools.implementations.sidebar_tool import SCRATCHPAD_TABLE_DDL, SCRATCHPAD_INDEX_DDL
 from tools.repo import Tool
 from tools.registry import registry
 
@@ -92,6 +93,8 @@ class SidebarAgentsTool(Tool):
             return
         self.db.execute(ACTIVITY_TABLE_DDL)
         self.db.execute(ACTIVITY_INDEX_DDL)
+        self.db.execute(SCRATCHPAD_TABLE_DDL)
+        self.db.execute(SCRATCHPAD_INDEX_DDL)
         self._schema_ensured = True
 
     def run(self, **params) -> Dict[str, Any]:

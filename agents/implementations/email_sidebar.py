@@ -130,7 +130,6 @@ class EmailSidebarAgent(SidebarAgent):
             f"{sanitized}"
             f"{thread_info}"
             f"{warning_text}\n\n"
-            f"Your thread_id for scratchpad operations: {work_item.item_id}\n"
             f"Email ID for reply_to_email: {email_id}\n"
             f"{prior_notes}\n"
             "Review this email and respond per your rubric. Write "

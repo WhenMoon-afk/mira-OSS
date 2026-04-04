@@ -72,9 +72,9 @@ class SidebarTool(Tool):
         "description": (
             "Manage your working state and signal task completion.\n\n"
             "SCRATCHPAD — persistent notes between your iterations:\n"
-            "  write_note(thread_id, note): Save an observation or plan.\n"
-            "  read_notes(thread_id): Retrieve your prior notes.\n"
-            "  clear_notes(thread_id): Remove notes for a resolved thread.\n\n"
+            "  write_note(note): Save an observation or plan.\n"
+            "  read_notes(): Retrieve your prior notes.\n"
+            "  clear_notes(): Remove notes for a resolved thread.\n\n"
             "COMPLETION — call when your task is done:\n"
             "  complete_task(summary, status): Write a one-line summary "
             "and set status to 'handled' or 'escalated'. If escalating, "
@@ -91,14 +91,6 @@ class SidebarTool(Tool):
                         "clear_notes",
                         "complete_task",
                     ],
-                },
-                "thread_id": {
-                    "type": "string",
-                    "description": (
-                        "Thread identifier. Required for write_note, "
-                        "read_notes, clear_notes. Injected automatically "
-                        "for complete_task."
-                    ),
                 },
                 "note": {
                     "type": "string",

@@ -304,21 +304,24 @@ class SidebarAgent(ABC):
                 completed = False
 
                 for tc in tool_calls:
+                    # Inject identity into all sidebar_tool calls —
+                    # thread_id is a system concern, not an LLM decision
+                    is_sidebar = tc['tool_name'] == 'sidebar_tool'
                     is_complete = (
-                        tc['tool_name'] == 'sidebar_tool'
+                        is_sidebar
                         and tc['input'].get('operation') == 'complete_task'
                     )
-                    if is_complete:
+                    if is_sidebar:
                         tc['input']['thread_id'] = work_item.item_id
-                        tc['input']['interface_name'] = work_item.interface_name
-                        tc['input']['agent_id'] = self.agent_id
+                        if is_complete:
+                            tc['input']['interface_name'] = work_item.interface_name
+                            tc['input']['agent_id'] = self.agent_id
 
                     # Enrich email_tool replies with task ID for guardrails
-                    is_sidebar_reply = (
+                    if (
                         tc['tool_name'] == 'email_tool'
                         and tc['input'].get('operation') == 'reply_to_email'
-                    )
-                    if is_sidebar_reply:
+                    ):
                         tc['input']['sidebar_task_id'] = work_item.item_id
 
                     result = _execute_tool_call(

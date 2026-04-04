@@ -194,22 +194,34 @@ class ForageTool(Tool):
                    context: str, previous_result: Optional[str] = None,
                    trace_dir: Optional[str] = None) -> None:
         """Background thread entry point — runs ForageAgent."""
-        from agents.implementations.forage_agent import ForageAgent
-        from agents.sidebar import WorkItem
+        try:
+            from agents.implementations.forage_agent import ForageAgent
+            from agents.sidebar import WorkItem
 
-        agent = ForageAgent(
-            query=query,
-            context=context,
-            previous_result=previous_result,
-        )
+            agent = ForageAgent(
+                query=query,
+                context=context,
+                continuum_id=continuum_id,
+                previous_result=previous_result,
+            )
 
-        work_item = WorkItem(
-            item_id=task_id,
-            interface_name="forage",
-            context={"query": query, "context": context},
-        )
+            work_item = WorkItem(
+                item_id=task_id,
+                interface_name="forage",
+                context={"query": query, "context": context},
+            )
 
-        agent.run(work_item, self.tool_repo, self.event_bus)
+            agent.run(work_item, self.tool_repo, self.event_bus)
+
+        except Exception as e:
+            self.logger.error(
+                f"Forage agent thread crashed for task {task_id[:8]}: {e}",
+                exc_info=True,
+            )
+            self._publish_event(continuum_id, task_id, 'failed', {
+                'error': str(e),
+                'error_type': 'ThreadCrash',
+            })
 
     def _dismiss(self, task_id: str) -> Dict[str, Any]:
         """Remove a forage result from the context window."""

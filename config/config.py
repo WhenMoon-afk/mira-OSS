@@ -57,7 +57,7 @@ class ToolConfig(BaseModel):
     """Tool-related configuration settings."""
 
     essential_tools: List[str] = Field(
-        default=["web_tool", "invokeother_tool", "continuum_tool", "reminder_tool", "memory_tool", "domaindoc_tool", "forage_tool"],
+        default=["web_tool", "invokeother_tool", "continuum_tool", "reminder_tool", "memory_tool", "domaindoc_tool", "forage_tool", "sidebaragents_tool"],
         description="List of essential tools (warns if disabled)"
     )
 
@@ -586,11 +586,11 @@ class PeanutGalleryConfig(BaseModel):
 class SidebarDispatcherConfig(BaseModel):
     """Sidebar agent dispatcher configuration."""
     enabled: bool = Field(
-        default=False,
+        default=True,
         description="Enable the sidebar dispatcher polling loop",
     )
     poll_interval_minutes: int = Field(
-        default=5,
+        default=1,
         description="Minutes between dispatcher poll cycles",
     )
     max_concurrent_agents: int = Field(
@@ -603,11 +603,15 @@ class SidebarDispatcherConfig(BaseModel):
 class ImapTriggerConfig(BaseModel):
     """IMAP email trigger configuration for sidebar agents."""
     enabled: bool = Field(
-        default=False,
+        default=True,
         description="Enable IMAP polling for sidebar email agents",
     )
     watched_senders: List[str] = Field(
-        default_factory=list,
+        default=["hello@rocketcitywindowcleaning.com"],
         description="Email addresses to monitor (e.g. contactform@example.com)",
+    )
+    max_age_hours: int = Field(
+        default=24,
+        description="Ignore emails older than this many hours. Prevents processing the entire inbox on first boot.",
     )
 
