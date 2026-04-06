@@ -1,16 +1,12 @@
 # Python
 __pycache__/
-*.pyc
-*.pyo
-.mypy_cache/
-.pytest_cache/
 .mypy/
 .pytests/
 
 # Github
 .github/
 
-# IDE files
+# IDE/OS files
 .DS_Store
 
 # Project specific
@@ -23,10 +19,22 @@ vault_data/
 
 # Persistent and generated data
 data/users/
+data/tuning_test_results/
+logs/
 *.log
+
+# Scratch files
+junk_drawer/
 
 # Backup/deprecated files
 *.dep
 *.bak
 *.old
 *.backup
+backups/
+
+# Git worktrees
+.worktrees/
+
+# Xcode user data
+xcuserdata/

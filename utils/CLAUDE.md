@@ -17,7 +17,7 @@
 - `logging_config.py` — TOAST custom log level (60), `UserContextFilter` (injects user_id into all log records), `ColoredFormatter`, `setup_anthropic_sdk_logging()`.
 - `scheduled_tasks.py` — `get_users_due_for_job(interval)` use-day platform function; `initialize_all_scheduled_tasks()` entry point; `register_sidebar_dispatcher_job()` called separately after tool_repo init.
 - `lt_memory_jobs.py` — APScheduler job registration for all LT_Memory periodic work (extraction retry, batch polling, consolidation, score recalc, GC, cleanup).
-- `sidebar_jobs.py` — APScheduler registration for the sidebar dispatcher poll loop. Creates `SidebarDispatcher`, registers configured triggers (IMAP), schedules `IntervalTrigger`.
+- `sidebar_jobs.py` — APScheduler registration for the sidebar dispatcher poll loop. Creates `SidebarDispatcher`, registers configured triggers (IMAP). Trigger enablement is in `ImapTriggerConfig`; which items to match is per-user via `trigger_rules` table.
 - `scheduler_service.py` — APScheduler wrapper; `register_job()` is the only job registration path.
 - `scheduled_task_monitor.py` — Tracks scheduled job execution history, durations, and failures.
 - `thread_monitor.py` — `@monitored_operation` decorator and `MonitoredThreadPoolExecutor`; thresholds: 30s slow, 300s stuck.
@@ -25,7 +25,7 @@
 - `distributed_lock.py` — Valkey-backed `DistributedLock` for cross-process coordination via atomic SET NX.
 - `user_credentials.py` — `UserCredentialService` bridging tool credential storage to `UserDataManager`'s encrypted SQLite.
 - `user_activity.py` — `increment_user_activity_day()` (use-day clock); first-message-of-day hook point.
-- `userdata_manager.py` — Per-user encrypted SQLite (`UserDataManager`); one persistent connection per user, cached at module level.
+- `userdata_manager.py` — Per-user encrypted SQLite (`UserDataManager`); one persistent connection per user, cached at module level. Owns `trigger_rules` table schema (sidebar trigger filter rules — trigger_id, scope, field, pattern, prompt, enabled).
 - `tag_parser.py` — Extracts structured tags from LLM responses; owns `format_memory_id()` / `parse_memory_id()` and the `mem_XXXXXXXX` short-ID format.
 - `text_sanitizer.py` — Text cleaning and sanitization utilities.
 - `document_processing.py` — Document parsing and text extraction.

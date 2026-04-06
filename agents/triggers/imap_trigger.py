@@ -1,37 +1,32 @@
 """
-IMAP Trigger -- Polls for new emails from configured senders.
+IMAP Trigger -- Polls for new emails matching per-user trigger rules.
 
-Connects using the user's email_tool credentials. Dedup via Valkey
-with 30-day TTL on Message-ID. Sanitizes content through
-PromptInjectionDefense before building WorkItems.
+Connects using the user's email_tool credentials. Rules are stored in
+the user's SQLite DB (trigger_rules table) with trigger_id='imap_email'.
+Each rule specifies a scope (IMAP folder), field (from/subject/body),
+and regex pattern. Discovery only -- dedup handled by SidebarDispatcher
+via sidebar_activity.
 """
 import email
 import email.utils
-import hashlib
 import imaplib
 import logging
+import re
 from datetime import timedelta
-from typing import TYPE_CHECKING
+from typing import Any
 
 from utils.timezone_utils import utc_now
 
 from agents.sidebar import WorkItem
 
-if TYPE_CHECKING:
-    from agents.implementations.email_sidebar import EmailSidebarAgent
-
 logger = logging.getLogger(__name__)
 
-# Valkey key prefix for dedup. TTL = 30 days.
-_DEDUP_PREFIX = "sidebar:processed:imap"
-_DEDUP_TTL_SECONDS = 30 * 24 * 3600
-
-# Truncate email body before injecting into agent context
-_BODY_MAX_CHARS = 8000
+# Valid field values for IMAP trigger rules
+VALID_FIELDS = {"from", "subject", "body"}
 
 
 class ImapTrigger:
-    """Polls IMAP for new emails from watched sender addresses."""
+    """Polls IMAP for new emails matching per-user trigger rules."""
 
     trigger_id = "imap_email"
     interface_name = "email_watcher"
@@ -41,14 +36,15 @@ class ImapTrigger:
         from agents.implementations.email_sidebar import EmailSidebarAgent
         return EmailSidebarAgent
 
-    def __init__(self, watched_senders: list[str], max_age_hours: int = 24):
-        self.watched_senders = [s.lower() for s in watched_senders]
+    def __init__(self, max_age_hours: int = 24):
         self.max_age_hours = max_age_hours
-        # Maps item_id → email UID for IMAP flag setting in mark_processed
-        self._uid_map: dict[str, int] = {}
 
     def check_for_new_items(self, user_id: str) -> list[WorkItem]:
-        if not self.watched_senders:
+        rules = self._load_rules(user_id)
+        if not rules:
+            logger.warning(
+                f"IMAP trigger active for user {user_id} but no rules configured"
+            )
             return []
 
         try:
@@ -62,10 +58,14 @@ class ImapTrigger:
 
         items: list[WorkItem] = []
         try:
-            conn.select("INBOX")
-            for sender in self.watched_senders:
+            # Group rules by folder (scope)
+            folders: dict[str, list[dict]] = {}
+            for rule in rules:
+                folders.setdefault(rule["scope"], []).append(rule)
+
+            for folder, folder_rules in folders.items():
                 items.extend(
-                    self._check_sender(conn, sender, user_id)
+                    self._check_folder(conn, folder, folder_rules)
                 )
         except Exception as e:
             logger.error(f"IMAP search failed: {e}", exc_info=True)
@@ -77,132 +77,227 @@ class ImapTrigger:
 
         return items
 
-    def mark_processed(self, user_id: str, item_id: str) -> None:
-        valkey = self._get_valkey()
-        key = f"{_DEDUP_PREFIX}:{user_id}:{item_id}"
-        valkey.set(key, "1", ex=_DEDUP_TTL_SECONDS)
+    def on_dispatched(self, user_id: str, item_id: str) -> None:
+        """Set $MiraHandled IMAP flag. Idempotent -- safe on retries."""
+        folder, uid = self._parse_item_id(item_id)
+        try:
+            conn = self._connect(user_id)
+            conn.select(folder)
+            self._set_handled_flag(conn, uid)
+            conn.logout()
+        except Exception as e:
+            logger.debug(
+                f"Failed to set $MiraHandled on UID {uid}: {e}"
+            )
 
-        # Set $MiraHandled IMAP flag for visibility in email clients
-        uid = self._uid_map.pop(item_id, None)
-        if uid:
-            try:
-                conn = self._connect(user_id)
-                conn.select("INBOX")
-                self._set_handled_flag(conn, uid)
-                conn.logout()
-            except Exception as e:
-                logger.debug(f"Failed to set $MiraHandled on UID {uid}: {e}")
+    # ------------------------------------------------------------------
+    # Conflict logging
+    # ------------------------------------------------------------------
 
-    def _check_sender(
+    def _write_conflict(self, item_id: str, description: str) -> None:
+        """Write a conflict record to sidebar_activity for visibility."""
+        try:
+            from utils.userdata_manager import get_user_data_manager
+            from utils.user_context import get_current_user_id
+            from agents.base import ensure_activity_schema
+
+            db = get_user_data_manager(get_current_user_id())
+            ensure_activity_schema(db)
+            db.execute(
+                "INSERT INTO sidebar_activity "
+                "(interface_name, thread_id, agent_id, summary, status, "
+                "run_count, updated_at) "
+                "VALUES (:interface_name, :thread_id, :agent_id, :summary, "
+                ":status, :run_count, datetime('now')) "
+                "ON CONFLICT(interface_name, thread_id) DO UPDATE SET "
+                "summary = excluded.summary, status = excluded.status, "
+                "updated_at = datetime('now')",
+                {
+                    'interface_name': self.interface_name,
+                    'thread_id': item_id,
+                    'agent_id': 'imap_email',
+                    'summary': description,
+                    'status': 'conflict',
+                    'run_count': 0,
+                },
+            )
+        except Exception as e:
+            logger.error(f"Failed to write conflict record: {e}")
+
+    # ------------------------------------------------------------------
+    # Rule loading
+    # ------------------------------------------------------------------
+
+    def _load_rules(self, user_id: str) -> list[dict]:
+        """Load enabled trigger rules for this trigger from the user's DB."""
+        from uuid import UUID
+        from utils.userdata_manager import get_user_data_manager
+
+        db = get_user_data_manager(UUID(user_id))
+        return db.select(
+            "trigger_rules",
+            where="trigger_id = :trigger_id AND enabled = 1",
+            params={"trigger_id": self.trigger_id},
+        )
+
+    # ------------------------------------------------------------------
+    # Per-folder polling
+    # ------------------------------------------------------------------
+
+    def _check_folder(
         self,
         conn: imaplib.IMAP4_SSL,
-        sender: str,
-        user_id: str,
+        folder: str,
+        rules: list[dict],
     ) -> list[WorkItem]:
-        """Search for unprocessed emails from a single sender."""
-        since_date = (utc_now() - timedelta(hours=self.max_age_hours)).strftime("%d-%b-%Y")
-        criteria = f'FROM "{sender}" SINCE {since_date}'
-        typ, data = conn.uid("SEARCH", None, criteria)
+        """Fetch recent emails in a folder and apply rules."""
+        try:
+            typ, _ = conn.select(folder)
+            if typ != "OK":
+                logger.warning(f"Could not select folder {folder}")
+                return []
+        except imaplib.IMAP4.error as e:
+            logger.warning(f"IMAP folder select failed for '{folder}': {e}")
+            return []
+
+        since_date = (
+            utc_now() - timedelta(hours=self.max_age_hours)
+        ).strftime("%d-%b-%Y")
+        typ, data = conn.uid("SEARCH", None, f"SINCE {since_date}")
         if typ != "OK" or not data or not data[0]:
             return []
 
         uids = data[0].decode("utf-8").split()
-        valkey = self._get_valkey()
         items: list[WorkItem] = []
 
         for uid_str in uids:
             uid = int(uid_str)
-            msg_id = self._get_message_id(conn, uid)
-            if not msg_id:
-                continue
+            item_id = f"{folder}:{uid}"
 
-            # Dedup check
-            dedup_key = f"{_DEDUP_PREFIX}:{user_id}:{msg_id}"
-            if valkey.exists(dedup_key):
-                continue
-
-            # Fetch full message
             msg = self._fetch_message(conn, uid)
             if msg is None:
                 continue
 
-            # Verify sender matches watched address — some IMAP servers
-            # don't reliably filter by FROM in SEARCH results
-            _, from_addr = email.utils.parseaddr(msg.get("From", ""))
-            if from_addr.lower() != sender:
-                valkey.set(dedup_key, "skipped", ex=_DEDUP_TTL_SECONDS)
-                continue
-
-            # Build work item with sanitized content
-            try:
-                item = self._build_work_item(msg, uid, msg_id, conn)
-                self._uid_map[msg_id] = uid
-                items.append(item)
-            except ValueError as e:
-                # Injection defense rejected content
-                logger.warning(
-                    f"Email from {sender} rejected by injection defense: {e}"
+            matched_rule, conflict = self._find_matching_rule(msg, rules)
+            if conflict:
+                self._write_conflict(item_id, conflict)
+            elif matched_rule is not None:
+                items.append(
+                    self._build_work_item(msg, uid, item_id, folder, matched_rule)
                 )
-                # Mark as processed so we don't retry
-                valkey.set(dedup_key, "rejected", ex=_DEDUP_TTL_SECONDS)
 
         return items
+
+    # ------------------------------------------------------------------
+    # Rule matching
+    # ------------------------------------------------------------------
+
+    def _find_matching_rule(
+        self,
+        msg: email.message.Message,
+        rules: list[dict],
+    ) -> tuple[dict | None, str | None]:
+        """Return (matched_rule, None) or (None, conflict_description).
+
+        Collects all rules that match the email. If multiple rules match
+        with different prompts, the match is ambiguous — skip the email
+        and return a conflict description for activity logging.
+        Multiple matches with the same prompt (or no prompt) are fine.
+        """
+        cached_body: str | None = None
+        matched: list[dict] = []
+
+        for rule in rules:
+            field = rule["field"]
+            pattern = rule["pattern"]
+
+            if field == "from":
+                _, addr = email.utils.parseaddr(msg.get("From", ""))
+                raw_from = msg.get("From", "")
+                target = f"{raw_from}\n{addr}"
+            elif field == "subject":
+                target = msg.get("Subject", "")
+            elif field == "body":
+                if cached_body is None:
+                    cached_body = self._extract_body(msg)
+                target = cached_body
+            else:
+                continue
+
+            try:
+                if re.search(pattern, target, re.IGNORECASE):
+                    matched.append(rule)
+            except re.error as e:
+                logger.warning(
+                    f"Invalid regex in trigger rule {rule.get('id')}: "
+                    f"{pattern!r} — {e}"
+                )
+
+        if not matched:
+            return None, None
+
+        if len(matched) == 1:
+            return matched[0], None
+
+        # Multiple matches — check for prompt conflict
+        distinct_prompts = {r.get("prompt") or "" for r in matched}
+        if len(distinct_prompts) <= 1:
+            return matched[0], None
+
+        rule_ids = [r.get("id") for r in matched]
+        subject = msg.get("Subject", "(no subject)")
+        conflict = (
+            f"Email '{subject}' matched {len(matched)} rules with "
+            f"conflicting prompts (rule IDs: {rule_ids}). "
+            f"Fix rule overlap so match is unambiguous."
+        )
+        logger.warning(f"IMAP trigger: {conflict}")
+        return None, conflict
+
+    # ------------------------------------------------------------------
+    # WorkItem construction
+    # ------------------------------------------------------------------
 
     def _build_work_item(
         self,
         msg: email.message.Message,
         uid: int,
-        msg_id: str,
-        conn: imaplib.IMAP4_SSL,
+        item_id: str,
+        folder: str,
+        matched_rule: dict,
     ) -> WorkItem:
-        """Extract email content, sanitize, and assemble into WorkItem.
+        """Extract email content and metadata into a WorkItem.
 
-        All attacker-controlled fields (subject, from, body) are run through
-        injection defense as a single unit. ValueError propagates to caller
-        for rejection + dedup marking.
+        Returns raw (unsanitized) content. Injection defense runs at the
+        agent boundary (SidebarAgent.sanitize_untrusted_input) before the
+        content enters any LLM context.
         """
-        from utils.prompt_injection_defense import (
-            PromptInjectionDefense,
-            TrustLevel,
-        )
-
         raw_subject = msg.get("Subject", "(no subject)")
         raw_from = msg.get("From", "")
         date = msg.get("Date", "")
         raw_body = self._extract_body(msg)
 
-        # Sanitize all attacker-controlled content as one unit
         full_content = (
             f"From: {raw_from}\n"
             f"Subject: {raw_subject}\n\n"
             f"{raw_body}"
         )
 
-        defense = PromptInjectionDefense()
-        sanitized, metadata = defense.sanitize_untrusted_content(
-            content=full_content,
-            source="email",
-            trust_level=TrustLevel.UNTRUSTED,
-            require_llm_detection=True,
-        )
-
-        # Truncate for agent context
-        if len(sanitized) > _BODY_MAX_CHARS:
-            sanitized = sanitized[:_BODY_MAX_CHARS] + "\n[truncated]"
-
-        # Thread context from headers
         thread = self._assemble_thread_context(msg, raw_subject, raw_from, date)
 
+        context: dict[str, Any] = {
+            "raw_content": full_content,
+            "date": date,
+            "thread": thread,
+        }
+        rule_prompt = matched_rule.get("prompt")
+        if rule_prompt:
+            context["agent_prompt"] = rule_prompt
+
         return WorkItem(
-            item_id=msg_id,
+            item_id=item_id,
             interface_name=self.interface_name,
-            context={
-                "sanitized_content": sanitized,
-                "date": date,
-                "thread": thread,
-                "email_id": f"INBOX:{uid}",
-                "injection_warnings": metadata.warnings or [],
-            },
+            context=context,
         )
 
     def _assemble_thread_context(
@@ -221,6 +316,10 @@ class ImapTrigger:
             "in_reply_to": msg.get("In-Reply-To", ""),
             "references": msg.get("References", ""),
         }]
+
+    # ------------------------------------------------------------------
+    # Email body extraction
+    # ------------------------------------------------------------------
 
     def _extract_body(self, msg: email.message.Message) -> str:
         """Extract plain text body from email message."""
@@ -246,20 +345,15 @@ class ImapTrigger:
                 return payload.decode(charset, errors="replace")
         return ""
 
-    def _get_message_id(
-        self, conn: imaplib.IMAP4_SSL, uid: int
-    ) -> str | None:
-        """Fetch just the Message-ID header for a UID."""
-        typ, data = conn.uid(
-            "FETCH", str(uid), "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"
-        )
-        if typ != "OK" or not data or not data[0]:
-            return None
-        header_data = data[0][1] if isinstance(data[0], tuple) else data[0]
-        if isinstance(header_data, bytes):
-            header_data = header_data.decode("utf-8", errors="replace")
-        msg = email.message_from_string(header_data)
-        return msg.get("Message-ID")
+    # ------------------------------------------------------------------
+    # IMAP helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_item_id(item_id: str) -> tuple[str, int]:
+        """Parse a folder:uid item_id back to (folder, uid)."""
+        last_colon = item_id.rfind(":")
+        return item_id[:last_colon], int(item_id[last_colon + 1:])
 
     def _fetch_message(
         self, conn: imaplib.IMAP4_SSL, uid: int
@@ -302,6 +396,3 @@ class ImapTrigger:
         except Exception as e:
             logger.debug(f"Failed to set $MiraHandled flag on UID {uid}: {e}")
 
-    def _get_valkey(self):
-        from clients.valkey_client import get_valkey_client
-        return get_valkey_client()

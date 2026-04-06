@@ -10,7 +10,7 @@ from typing import Dict, Any, TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from agents.base import ACTIVITY_TABLE_DDL, ACTIVITY_INDEX_DDL
+from agents.base import ensure_activity_schema
 from tools.implementations.sidebar_tool import SCRATCHPAD_TABLE_DDL, SCRATCHPAD_INDEX_DDL
 from tools.repo import Tool
 from tools.registry import registry
@@ -91,8 +91,7 @@ class SidebarAgentsTool(Tool):
     def _ensure_schema(self) -> None:
         if self._schema_ensured:
             return
-        self.db.execute(ACTIVITY_TABLE_DDL)
-        self.db.execute(ACTIVITY_INDEX_DDL)
+        ensure_activity_schema(self.db)
         self.db.execute(SCRATCHPAD_TABLE_DDL)
         self.db.execute(SCRATCHPAD_INDEX_DDL)
         self._schema_ensured = True
@@ -137,6 +136,7 @@ class SidebarAgentsTool(Tool):
                 "summary": r['summary'],
                 "status": r['status'],
                 "escalation_reason": r.get('escalation_reason'),
+                "run_count": r.get('run_count', 1),
                 "updated_at": r['updated_at'],
             }
             for r in rows

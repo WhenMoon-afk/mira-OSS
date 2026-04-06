@@ -14,7 +14,6 @@ from typing import Dict, Any
 
 from pydantic import BaseModel, Field
 
-from agents.base import ACTIVITY_TABLE_DDL, ACTIVITY_INDEX_DDL
 from tools.repo import Tool
 from tools.registry import registry
 
@@ -134,8 +133,8 @@ class SidebarTool(Tool):
             return
         self.db.execute(SCRATCHPAD_TABLE_DDL)
         self.db.execute(SCRATCHPAD_INDEX_DDL)
-        self.db.execute(ACTIVITY_TABLE_DDL)
-        self.db.execute(ACTIVITY_INDEX_DDL)
+        from agents.base import ensure_activity_schema
+        ensure_activity_schema(self.db)
         self.db.execute(AUDIT_TABLE_DDL)
         self._schema_ensured = True
 
@@ -204,10 +203,11 @@ class SidebarTool(Tool):
     # ------------------------------------------------------------------
 
     def _complete_task(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Write activity record to SQLite.
+        """Write activity record to SQLite via UPSERT.
 
         The SidebarAgent base class enriches params with thread_id,
-        interface_name, and agent_id from the WorkItem before execution.
+        interface_name, agent_id, and run_count from the WorkItem
+        before execution.
         """
         summary = params.get("summary")
         status = params.get("status", "handled")
@@ -218,13 +218,18 @@ class SidebarTool(Tool):
         interface_name = params.get("interface_name", "unknown")
         agent_id = params.get("agent_id", "unknown")
         escalation_reason = params.get("escalation_reason")
+        run_count = params.get("run_count", 1)
 
         self.db.execute(
-            "INSERT OR REPLACE INTO sidebar_activity "
+            "INSERT INTO sidebar_activity "
             "(interface_name, thread_id, agent_id, summary, status, "
-            "escalation_reason, updated_at) "
+            "escalation_reason, run_count, updated_at) "
             "VALUES (:interface_name, :thread_id, :agent_id, :summary, "
-            ":status, :escalation_reason, datetime('now'))",
+            ":status, :escalation_reason, :run_count, datetime('now')) "
+            "ON CONFLICT(interface_name, thread_id) DO UPDATE SET "
+            "agent_id = excluded.agent_id, summary = excluded.summary, "
+            "status = excluded.status, escalation_reason = excluded.escalation_reason, "
+            "run_count = excluded.run_count, updated_at = datetime('now')",
             {
                 'interface_name': interface_name,
                 'thread_id': thread_id,
@@ -232,6 +237,7 @@ class SidebarTool(Tool):
                 'summary': summary,
                 'status': status,
                 'escalation_reason': escalation_reason,
+                'run_count': run_count,
             },
         )
 

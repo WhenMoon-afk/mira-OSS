@@ -34,9 +34,8 @@ class AsyncActivityTrinket(EventAwareTrinket):
 
             db = get_user_data_manager(get_current_user_id())
 
-            from agents.base import ACTIVITY_TABLE_DDL, ACTIVITY_INDEX_DDL
-            db.execute(ACTIVITY_TABLE_DDL)
-            db.execute(ACTIVITY_INDEX_DDL)
+            from agents.base import ensure_activity_schema
+            ensure_activity_schema(db)
 
             rows = db.select(
                 "sidebar_activity",
@@ -71,7 +70,12 @@ class AsyncActivityTrinket(EventAwareTrinket):
                 updated = item['updated_at']
 
                 age = self._format_age(updated)
-                prefix = "ESCALATION: " if status == 'escalated' else ""
+                if status == 'escalated':
+                    prefix = "ESCALATION: "
+                elif status == 'conflict':
+                    prefix = "RULE CONFLICT: "
+                else:
+                    prefix = ""
                 escalation = ""
                 if status == 'escalated' and item.get('escalation_reason'):
                     escalation = f" Reason: {html.escape(item['escalation_reason'])}"

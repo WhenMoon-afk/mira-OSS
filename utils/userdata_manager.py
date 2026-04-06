@@ -118,6 +118,9 @@ class UserDataManager:
         # Initialize Domaindoc schema
         self._init_domaindoc_schema()
 
+        # Initialize trigger rules schema (sidebar agent trigger filters)
+        self._init_trigger_rules_schema()
+
         logger.info("Tool schemas initialized successfully")
     
     def _init_pager_schema(self):
@@ -311,6 +314,36 @@ class UserDataManager:
             )
             self.connection.commit()
             logger.info("Migrated domaindoc_sections: added pinned column")
+
+    def _init_trigger_rules_schema(self):
+        """Initialize trigger_rules table for per-user sidebar trigger filters.
+
+        Each row is a filter rule scoped to a specific trigger type. The trigger
+        reads its own rules by filtering on trigger_id. Field names and scope
+        semantics are trigger-specific (e.g. IMAP: scope=folder, field=from/subject/body;
+        a future Slack trigger: scope=channel, field=author/text).
+        """
+        cursor = self.connection.cursor()
+
+        rules_sql = """
+        CREATE TABLE IF NOT EXISTS trigger_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            trigger_id TEXT NOT NULL,
+            scope TEXT NOT NULL DEFAULT 'INBOX',
+            field TEXT NOT NULL,
+            pattern TEXT NOT NULL,
+            prompt TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+        cursor.execute(rules_sql)
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_trigger_rules_trigger "
+            "ON trigger_rules(trigger_id, enabled)"
+        )
+        self.connection.commit()
 
     def _encrypt_value(self, value: Any) -> str:
         """Encrypt a value for storage."""

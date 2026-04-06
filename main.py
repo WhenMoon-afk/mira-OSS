@@ -24,7 +24,7 @@ from pydantic import ValidationError
 
 from config.config_manager import config
 from config.announcement import load_announcement
-from cns.api import data, actions, health, tool_config, update
+from cns.api import data, actions, health, websocket_chat, tool_config, trigger_rules, demo, update, federation as federation_api
 from cns.api import chat as chat_api
 from cns.api import files as files_api
 from cns.api import location
@@ -558,6 +558,7 @@ def create_app() -> FastAPI:
     app.include_router(data.router, prefix="/v0/api", tags=["data"])
     app.include_router(actions.router, prefix="/v0/api", tags=["actions"])
     app.include_router(tool_config.router, prefix="/v0/api", tags=["tool_config"])
+    app.include_router(trigger_rules.router, prefix="/v0/api", tags=["trigger_rules"])
     app.include_router(files_api.router, prefix="/v0/api", tags=["files"])
     app.include_router(location.router, prefix="/v0/api", tags=["location"])
 

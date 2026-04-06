@@ -601,14 +601,15 @@ class SidebarDispatcherConfig(BaseModel):
 
 
 class ImapTriggerConfig(BaseModel):
-    """IMAP email trigger configuration for sidebar agents."""
+    """IMAP email trigger configuration for sidebar agents.
+
+    Which emails to act on is now per-user via trigger_rules in the user's
+    SQLite DB (trigger_id='imap_email'). This config controls only
+    whether polling is active and the discovery time window.
+    """
     enabled: bool = Field(
         default=True,
         description="Enable IMAP polling for sidebar email agents",
-    )
-    watched_senders: List[str] = Field(
-        default=["hello@rocketcitywindowcleaning.com"],
-        description="Email addresses to monitor (e.g. contactform@example.com)",
     )
     max_age_hours: int = Field(
         default=24,

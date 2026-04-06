@@ -19,6 +19,8 @@ from typing_extensions import TypedDict
 from clients.llm_provider import LLMProvider
 from utils.timezone_utils import utc_now, format_utc_iso
 
+_AGENT_PROMPTS_DIR = Path("config/prompts/agents")
+
 if TYPE_CHECKING:
     from agents.sidebar import WorkItem
     from tools.repo import ToolRepository
@@ -28,26 +30,15 @@ logger = logging.getLogger(__name__)
 
 
 # -----------------------------------------------------------------------
-# Base prompt -- prepended when inherit_base_prompt is True.
-# Describes the loop mechanics so the LLM knows how the agent works.
-# Agent-specific rubric from get_agent_prompt() is appended after.
+# Prompt loading
 # -----------------------------------------------------------------------
 
-_BASE_PROMPT = """\
-You are Mira, operating as an autonomous sidebar agent -- handling a \
-specific task independently while the main conversation may or may not \
-be active.
-
-You operate in a loop. After each round of tool calls, you will receive \
-"Continue." as a user message. This is your signal to keep working -- \
-review results, take further action, or finish up.
-
-When you have completed your task, you MUST call sidebar_tool with \
-operation "complete_task" and provide a summary of what you did plus a \
-status. This is the only way to finish -- the absence of tool calls \
-does NOT signal completion.
-
-Maintain Mira's voice: direct, warm, human. Not corporate, not generic."""
+def load_agent_prompt(filename: str) -> str:
+    """Load a prompt file from config/prompts/agents/."""
+    path = _AGENT_PROMPTS_DIR / filename
+    if not path.exists():
+        raise FileNotFoundError(f"Agent prompt not found at {path}")
+    return path.read_text().strip()
 
 
 # -----------------------------------------------------------------------
@@ -64,6 +55,7 @@ CREATE TABLE IF NOT EXISTS sidebar_activity (
     summary TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'handled',
     escalation_reason TEXT,
+    run_count INTEGER NOT NULL DEFAULT 1,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(interface_name, thread_id)
@@ -72,6 +64,24 @@ CREATE TABLE IF NOT EXISTS sidebar_activity (
 ACTIVITY_INDEX_DDL = """\
 CREATE INDEX IF NOT EXISTS idx_activity_interface
 ON sidebar_activity(interface_name)"""
+
+# Migration for existing tables that lack the run_count column.
+_ACTIVITY_MIGRATION_RUN_COUNT = """\
+ALTER TABLE sidebar_activity ADD COLUMN run_count INTEGER NOT NULL DEFAULT 1"""
+
+
+def ensure_activity_schema(db) -> None:
+    """Create sidebar_activity table and apply pending migrations.
+
+    Safe to call repeatedly -- CREATE IF NOT EXISTS + ALTER wrapped in
+    try/except for the already-exists case.
+    """
+    db.execute(ACTIVITY_TABLE_DDL)
+    db.execute(ACTIVITY_INDEX_DDL)
+    try:
+        db.execute(_ACTIVITY_MIGRATION_RUN_COUNT)
+    except Exception:
+        pass  # Column already exists
 
 
 # -----------------------------------------------------------------------
@@ -134,6 +144,8 @@ class SidebarAgent(ABC):
     inherit_base_prompt: bool = True
     max_iterations: int = 5
     timeout_seconds: int = 120
+    sanitize_untrusted_input: bool = False
+    max_retries: int = 0  # 0 = fire-and-forget, no retry on failure
 
     # Per-tool schema overrides. Maps tool name → custom anthropic_schema.
     # Used to restrict tool capabilities for sidebar agents (e.g.
@@ -141,8 +153,12 @@ class SidebarAgent(ABC):
     tool_schema_overrides: dict[str, dict] = {}
 
     @abstractmethod
-    def get_agent_prompt(self) -> str:
-        """Return the agent-specific system prompt / rubric."""
+    def get_agent_prompt(self, work_item: 'WorkItem') -> str:
+        """Return the agent-specific system prompt / rubric.
+
+        Receives the work_item so implementations can use per-rule prompts
+        from work_item.context['agent_prompt'] when available.
+        """
         ...
 
     @abstractmethod
@@ -153,6 +169,18 @@ class SidebarAgent(ABC):
     def get_heartbeat(self, iteration: int) -> str:
         """Heartbeat injected as user message between iterations."""
         return "Continue."
+
+    def build_recovery_context(self, prior_run: dict) -> str | None:
+        """Build recovery context from a prior failed run.
+
+        Called by the base class before the LLM loop when retrying a
+        previously failed item. Override in subclasses to provide
+        failure-aware initial context. The prior_run dict contains the
+        sidebar_activity row (summary, status, run_count, etc.).
+
+        Returns text prepended to the initial message, or None (default).
+        """
+        return None
 
     # ------------------------------------------------------------------
     # Completion publication -- override to target a different trinket
@@ -176,11 +204,41 @@ class SidebarAgent(ABC):
     # System prompt assembly
     # ------------------------------------------------------------------
 
-    def _build_system_prompt(self) -> str:
-        agent_prompt = self.get_agent_prompt()
+    def _build_system_prompt(self, work_item: 'WorkItem') -> str:
+        agent_prompt = self.get_agent_prompt(work_item)
         if not self.inherit_base_prompt:
             return agent_prompt
-        return f"{_BASE_PROMPT}\n\n{agent_prompt}"
+        base = load_agent_prompt("base_system.txt")
+        return f"{base}\n\n{agent_prompt}"
+
+    # ------------------------------------------------------------------
+    # Input sanitization
+    # ------------------------------------------------------------------
+
+    def _sanitize_work_item(self, work_item: 'WorkItem') -> None:
+        """Run injection defense on raw_content, write sanitized_content back.
+
+        Called when sanitize_untrusted_input is True, before the LLM loop.
+        Raises ValueError if content is rejected (agent exits cleanly).
+        """
+        from utils.prompt_injection_defense import (
+            PromptInjectionDefense,
+            TrustLevel,
+        )
+
+        raw = work_item.context.get("raw_content", "")
+        defense = PromptInjectionDefense()
+        sanitized, metadata = defense.sanitize_untrusted_content(
+            content=raw,
+            source=work_item.interface_name,
+            trust_level=TrustLevel.UNTRUSTED,
+            require_llm_detection=True,
+        )
+        if len(sanitized) > 8000:
+            sanitized = sanitized[:8000] + "\n[truncated]"
+
+        work_item.context["sanitized_content"] = sanitized
+        work_item.context["injection_warnings"] = metadata.warnings or []
 
     # ------------------------------------------------------------------
     # Tool schema assembly
@@ -222,7 +280,8 @@ class SidebarAgent(ABC):
                 logger.warning(f"{self.agent_id}: No tools available")
                 trace['status'] = 'failed'
                 _write_failure_activity(
-                    work_item, self.agent_id, 'No tools available'
+                    work_item, self.agent_id, 'No tools available',
+                    run_count=work_item.context.get('run_count', 1),
                 )
                 self.on_completion(
                     event_bus, work_item, 'failed', 'No tools available'
@@ -238,10 +297,35 @@ class SidebarAgent(ABC):
             llm = LLMProvider(max_tokens=llm_cfg.max_tokens)
             trace['model'] = llm_cfg.model
 
-            system_prompt = self._build_system_prompt()
+            # Injection defense gate — runs before content enters LLM context
+            if self.sanitize_untrusted_input:
+                try:
+                    self._sanitize_work_item(work_item)
+                except ValueError as e:
+                    logger.warning(f"{self.agent_id}: Input rejected: {e}")
+                    trace['status'] = 'rejected'
+                    _write_failure_activity(
+                        work_item, self.agent_id, f'Input rejected: {e}',
+                        run_count=work_item.context.get('run_count', 1),
+                    )
+                    self.on_completion(
+                        event_bus, work_item, 'rejected', str(e)
+                    )
+                    return
+
+            system_prompt = self._build_system_prompt(work_item)
+            initial_message = self.build_initial_message(work_item)
+
+            # Inject recovery context for retries
+            prior_run = work_item.context.get('prior_run')
+            if prior_run:
+                recovery = self.build_recovery_context(prior_run)
+                if recovery:
+                    initial_message = f"{recovery}\n\n{initial_message}"
+
             messages: list[dict[str, Any]] = [{
                 "role": "user",
-                "content": self.build_initial_message(work_item),
+                "content": initial_message,
             }]
 
             for iteration in range(1, self.max_iterations + 1):
@@ -255,6 +339,7 @@ class SidebarAgent(ABC):
                     timeout_msg = f'Agent timed out after {elapsed:.0f}s'
                     _write_failure_activity(
                         work_item, self.agent_id, timeout_msg,
+                        run_count=work_item.context.get('run_count', 1),
                     )
                     self.on_completion(
                         event_bus, work_item, 'timeout', timeout_msg
@@ -316,6 +401,7 @@ class SidebarAgent(ABC):
                         if is_complete:
                             tc['input']['interface_name'] = work_item.interface_name
                             tc['input']['agent_id'] = self.agent_id
+                            tc['input']['run_count'] = work_item.context.get('run_count', 1)
 
                     # Enrich email_tool replies with task ID for guardrails
                     if (
@@ -385,6 +471,7 @@ class SidebarAgent(ABC):
             cap_msg = 'Agent hit iteration cap without completing'
             _write_failure_activity(
                 work_item, self.agent_id, cap_msg,
+                run_count=work_item.context.get('run_count', 1),
             )
             self.on_completion(event_bus, work_item, 'failed', cap_msg)
 
@@ -393,7 +480,8 @@ class SidebarAgent(ABC):
             trace['status'] = 'failed'
             err_msg = f'Agent error: {e}'
             _write_failure_activity(
-                work_item, self.agent_id, err_msg
+                work_item, self.agent_id, err_msg,
+                run_count=work_item.context.get('run_count', 1),
             )
             self.on_completion(event_bus, work_item, 'failed', err_msg)
 
@@ -491,26 +579,32 @@ def _write_failure_activity(
     work_item: 'WorkItem',
     agent_id: str,
     summary: str,
+    run_count: int = 1,
 ) -> None:
-    """Write a failure activity record to SQLite."""
+    """Write a failure activity record to SQLite via UPSERT."""
     try:
         from utils.userdata_manager import get_user_data_manager
         from utils.user_context import get_current_user_id
 
         db = get_user_data_manager(get_current_user_id())
-        db.execute(ACTIVITY_TABLE_DDL)
-        db.execute(ACTIVITY_INDEX_DDL)
+        ensure_activity_schema(db)
         db.execute(
-            "INSERT OR REPLACE INTO sidebar_activity "
-            "(interface_name, thread_id, agent_id, summary, status, updated_at) "
+            "INSERT INTO sidebar_activity "
+            "(interface_name, thread_id, agent_id, summary, status, "
+            "run_count, updated_at) "
             "VALUES (:interface_name, :thread_id, :agent_id, :summary, "
-            ":status, datetime('now'))",
+            ":status, :run_count, datetime('now')) "
+            "ON CONFLICT(interface_name, thread_id) DO UPDATE SET "
+            "agent_id = excluded.agent_id, summary = excluded.summary, "
+            "status = excluded.status, run_count = excluded.run_count, "
+            "updated_at = datetime('now')",
             {
                 'interface_name': work_item.interface_name,
                 'thread_id': work_item.item_id,
                 'agent_id': agent_id,
                 'summary': summary,
                 'status': 'failed',
+                'run_count': run_count,
             },
         )
     except Exception as e:

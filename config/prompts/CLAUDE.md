@@ -6,6 +6,7 @@
 - Template variables use Python `.format()` syntax: `{variable_name}`. Literal braces in JSON examples require doubling: `{{` / `}}`. See `entity_gc_user.txt`.
 - Wrap runtime data in descriptive XML tags within user templates: `<conversation>`, `<entity_groups>`, `<candidate_memories>`, etc. — not bare text.
 - Each consuming service loads its own prompts in `__init__` via `open(Path("config/prompts") / "feature_system.txt")`. There is no centralized loader. Missing files raise `FileNotFoundError` — do not add fallbacks.
+- `agents/` holds prompts for autonomous sidebar agents. `base_system.txt` is the shared loop-mechanics preamble; agent-specific rubrics are `{agent_id}_system.txt`. Loaded via `agents.base.load_agent_prompt()`.
 - `variants/` holds experimental subcortical prompt variants for tuning. Nothing in `variants/` is loaded in production.
 
 ## Files
@@ -26,3 +27,6 @@
 - `peanutgallery_prerunner.txt` — Fast memory filter stage: selects seed memories relevant for metacognitive oversight. Variables: `{formatted_conversation}`, `{indexed_memories}`. Consumer: `cns/services/peanutgallery_model.py`.
 - `peanutgallery_system.txt` / `peanutgallery_user.txt` — Metacognitive observer: receives conversation + memory context, emits noop/compaction/concern/coaching signal. Consumer: `cns/services/peanutgallery_model.py`.
 - `behavioral_primer.txt` — Static synthetic dialogue (4 turns, user/assistant/user/assistant) injected between collapsed segment summaries and continuity messages as ambient behavioral priming for authenticity directives. Role-delimited format: `[role]` header + content, `---` separator. No template variables. Consumer: `cns/core/segment_cache_loader.py`.
+- `agents/base_system.txt` — Shared agent loop preamble: identity, loop mechanics, complete_task requirement. Prepended to agent-specific prompts when `inherit_base_prompt=True`. Consumer: `agents/base.py`.
+- `agents/email_sidebar_system.txt` — Generic fallback email agent prompt (workflow + escalation). Used only when no per-rule prompt is configured. Consumer: `agents/implementations/email_sidebar.py`.
+- `agents/forage_system.txt` — Background research agent rubric: tool descriptions, quality rubric, output format. Consumer: `agents/implementations/forage_agent.py`.
