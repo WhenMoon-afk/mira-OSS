@@ -32,8 +32,15 @@ class EmailSidebarAgent(SidebarAgent):
     }
 
     def get_agent_prompt(self, work_item: 'WorkItem') -> str:
-        return work_item.context.get("agent_prompt") or load_agent_prompt(
-            "email_sidebar_system.txt"
+        base = load_agent_prompt("email_sidebar_system.txt")
+        rule_prompt = work_item.context.get("agent_prompt")
+        if rule_prompt:
+            return f"{base}\n\n<rule_instructions>\n{rule_prompt}\n</rule_instructions>"
+        return (
+            f"{base}\n\n"
+            "No per-rule instructions configured for this trigger. "
+            "Escalate all emails — call complete_task with status "
+            "\"escalated\" and reason \"no rule prompt configured\"."
         )
 
     def build_initial_message(self, work_item: 'WorkItem') -> str:
@@ -74,9 +81,7 @@ class EmailSidebarAgent(SidebarAgent):
             f"{warning_text}\n\n"
             f"Email ID for reply_to_email: {email_id}\n"
             f"{prior_notes}\n"
-            "Review this email and respond per your rubric. Write "
-            "observations to your scratchpad before acting, then "
-            "reply or escalate."
+            "Review this email and respond per your rubric."
         )
 
     def _read_prior_notes(self, thread_id: str) -> str:
