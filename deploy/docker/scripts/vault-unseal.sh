@@ -2,8 +2,6 @@
 # Vault unseal script for s6-overlay container restarts
 # Simplified version without fancy output functions
 
-set -e
-
 export VAULT_ADDR="http://127.0.0.1:8200"
 
 echo "vault-unseal: Checking Vault status..."
@@ -16,6 +14,7 @@ fi
 
 # Check seal status using vault status exit codes
 # 0 = unsealed, 2 = sealed, 1 = error
+# Note: do NOT use set -e because vault status returns 2 when sealed (expected)
 vault status > /dev/null 2>&1
 STATUS=$?
 
