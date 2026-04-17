@@ -12,7 +12,7 @@ from cns.core.events import SegmentTimeoutEvent
 from cns.integration.event_bus import EventBus
 from cns.infrastructure.continuum_repository import ActiveSegmentRow, get_continuum_repository
 from utils.database_session_manager import get_shared_session_manager
-from utils.timezone_utils import utc_now, convert_from_utc
+from utils.timezone_utils import utc_now, convert_from_utc, parse_utc_time_string
 from config import config
 
 logger = logging.getLogger(__name__)
@@ -173,6 +173,16 @@ class SegmentTimeoutService:
             # Lets orphaned segments (empty, lost messages, race conditions)
             # reach the collapse handler's tombstone circuit breaker naturally.
             end_time = segment['created_at']
+
+        # Race condition guard: increment_segment_turn() stamps last_turn_at
+        # atomically when a user message arrives, BEFORE the message is committed
+        # via uow.commit(). Without this, a segment resumed after a long pause
+        # appears timed-out because the last committed message is hours old.
+        last_turn_at_str = segment['metadata'].get('last_turn_at')
+        if last_turn_at_str:
+            last_turn_at = parse_utc_time_string(last_turn_at_str)
+            if last_turn_at > end_time:
+                end_time = last_turn_at
 
         # Calculate inactive duration
         inactive_duration = current_time - end_time

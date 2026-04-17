@@ -369,12 +369,10 @@ class MemoryTool(Tool):
         # Link traversal on top results
         if include_link_traversal:
             from lt_memory.linking import LinkingService
-            from config.config import LinkingConfig
             from lt_memory.vector_ops import VectorOps
 
             vector_ops = VectorOps(self._embeddings_provider, self._memory_db)
             linking_service = LinkingService(
-                config=LinkingConfig(),
                 vector_ops=vector_ops,
                 db=self._memory_db
             )

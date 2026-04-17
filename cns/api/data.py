@@ -219,8 +219,9 @@ class DataEndpoint(BaseHandler):
         }
 
     def _get_domains(self, **params) -> dict[str, Any]:
-        """Get domaindocs from SQLite storage."""
+        """Get domaindocs from SQLite storage, including shared docs from other users."""
         from utils.userdata_manager import get_user_data_manager
+        from utils.domaindoc_shares import resolve_domaindoc, get_accepted_shares
 
         user_id = get_current_user_id()
         db = get_user_data_manager(user_id)
@@ -228,29 +229,26 @@ class DataEndpoint(BaseHandler):
         label = params.get('label')
 
         if label:
-            # Get specific domaindoc with sections
-            results = db.select("domaindocs", "label = :label", {"label": label})
-            if not results:
+            try:
+                resolved = resolve_domaindoc(user_id, label, require_enabled=False)
+            except ValueError:
                 raise NotFoundError("domaindoc", label)
 
-            doc = results[0]
-
-            # Get sections for this domaindoc
-            sections = db.fetchall(
+            doc = resolved.doc
+            sections = resolved.db.fetchall(
                 "SELECT header, encrypted__content, encrypted__summary, sort_order, collapsed, parent_section_id "
                 "FROM domaindoc_sections WHERE domaindoc_id = :doc_id ORDER BY sort_order",
                 {"doc_id": doc["id"]}
             )
 
-            # Build content from sections
             content_parts = []
             for sec in sections:
-                decrypted = db._decrypt_dict(sec)
+                decrypted = resolved.db._decrypt_dict(sec)
                 header = decrypted.get("header", "")
                 section_content = decrypted.get("encrypted__content", "")
                 content_parts.append(f"## {header}\n{section_content}")
 
-            return {
+            result = {
                 "label": label,
                 "name": doc.get("name", label),
                 "content": "\n\n".join(content_parts),
@@ -258,10 +256,19 @@ class DataEndpoint(BaseHandler):
                 "archived": doc.get("archived", False),
                 "description": doc.get("description"),
                 "created_at": doc.get("created_at"),
-                "updated_at": doc.get("updated_at")
+                "updated_at": doc.get("updated_at"),
+                "shared": resolved.is_shared
             }
+            if resolved.is_shared:
+                # Look up owner display name from the share records
+                shares = get_accepted_shares(user_id)
+                for s in shares:
+                    if s.collaborator_label == label:
+                        result["shared_by"] = s.owner_display_name
+                        break
+            return result
 
-        # List domaindocs — filter by archived status
+        # List domaindocs — own docs + shared docs
         show_archived = params.get('archived', False)
         if show_archived:
             all_docs = db.fetchall("SELECT * FROM domaindocs WHERE archived = TRUE ORDER BY label")
@@ -276,10 +283,36 @@ class DataEndpoint(BaseHandler):
                 "enabled": doc.get("enabled", False),
                 "archived": doc.get("archived", False),
                 "created_at": doc.get("created_at"),
-                "updated_at": doc.get("updated_at")
+                "updated_at": doc.get("updated_at"),
+                "shared": False
             }
             for doc in all_docs
         ]
+
+        # Add shared docs (only for non-archived view)
+        if not show_archived:
+            shares = get_accepted_shares(user_id)
+            for share in shares:
+                try:
+                    owner_db = get_user_data_manager(share.owner_user_id)
+                    owner_docs = owner_db.select("domaindocs", "label = :label AND enabled = TRUE AND archived = FALSE", {"label": share.domaindoc_label})
+                    if owner_docs:
+                        owner_doc = owner_db._decrypt_dict(owner_docs[0])
+                        domain_list.append({
+                            "label": share.collaborator_label,
+                            "name": owner_doc.get("name", share.domaindoc_label),
+                            "description": owner_doc.get("encrypted__description", ""),
+                            "enabled": True,
+                            "archived": False,
+                            "created_at": owner_doc.get("created_at"),
+                            "updated_at": owner_doc.get("updated_at"),
+                            "shared": True,
+                            "shared_by": share.owner_display_name
+                        })
+                except Exception:
+                    logger.warning(f"Failed to load shared domaindoc '{share.domaindoc_label}' from owner {share.owner_user_id}", exc_info=True)
+                    continue
+
         enabled_count = sum(1 for d in domain_list if d.get("enabled", False))
 
         return {

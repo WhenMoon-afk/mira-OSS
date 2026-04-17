@@ -34,10 +34,11 @@ def register_lt_memory_jobs(scheduler_service, lt_memory_factory) -> None:
     Raises:
         RuntimeError: If job registration fails
     """
+    from config import config
     extraction_orchestrator = lt_memory_factory.extraction_orchestrator
     batch_coordinator = lt_memory_factory.batch_coordinator
     post_processing = lt_memory_factory.post_processing_orchestrator
-    jobs_config = lt_memory_factory.config.scheduled_jobs
+    jobs_config = config.scheduled_jobs
 
     # ================================================================
     # Calendar-based jobs (not use-day gated)

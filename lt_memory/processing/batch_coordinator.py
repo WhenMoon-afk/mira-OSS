@@ -16,10 +16,16 @@ import anthropic
 
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.models import ExtractionBatch, PostProcessingBatch
-from config.config import BatchingConfig
 from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
+
+# Batch processing limits
+BATCH_EXPIRY_HOURS = 24              # Hours before Anthropic batch expires
+BATCH_MAX_AGE_HOURS = 48             # Max age for batches to poll (Anthropic results expire after 24h)
+MAX_RETRY_COUNT = 3                  # Max retry attempts before permanent failure
+MAX_BATCHES_PER_POLL = 3             # Max batch IDs to process per poll cycle
+BATCH_PROCESSING_TIMEOUT_SECONDS = 300  # Max seconds per single batch result (5 minutes)
 
 
 class BatchResultProcessor(ABC):
@@ -74,19 +80,9 @@ class BatchCoordinator:
 
     def __init__(
         self,
-        config: BatchingConfig,
         db: LTMemoryDB,
         anthropic_client: anthropic.Anthropic
     ):
-        """
-        Initialize batch coordinator.
-
-        Args:
-            config: Batching configuration
-            db: Database access for batch tracking
-            anthropic_client: Anthropic client for API calls
-        """
-        self.config = config
         self.db = db
         self.anthropic_client = anthropic_client
 
@@ -169,7 +165,7 @@ class BatchCoordinator:
         logger.info(f"Polling {batch_type} batches: {len(pending_batches)} pending")
 
         # Filter out batches older than max age (Anthropic results expire after 24h)
-        batch_age_cutoff = utc_now() - timedelta(hours=self.config.batch_max_age_hours)
+        batch_age_cutoff = utc_now() - timedelta(hours=BATCH_MAX_AGE_HOURS)
         fresh_batches = []
         for batch in pending_batches:
             if batch.created_at < batch_age_cutoff:
@@ -177,7 +173,7 @@ class BatchCoordinator:
                 update_status_fn(
                     batch.id,
                     "expired",
-                    error_message=f"Batch older than {self.config.batch_max_age_hours}h - Anthropic results expired",
+                    error_message=f"Batch older than {BATCH_MAX_AGE_HOURS}h - Anthropic results expired",
                     user_id=batch.user_id
                 )
                 stats["expired"] += 1
@@ -198,9 +194,9 @@ class BatchCoordinator:
 
         groups_processed = 0
         for batch_id, batches in batch_groups.items():
-            if groups_processed >= self.config.max_batches_per_poll:
+            if groups_processed >= MAX_BATCHES_PER_POLL:
                 logger.info(
-                    f"Reached per-cycle limit ({self.config.max_batches_per_poll}), "
+                    f"Reached per-cycle limit ({MAX_BATCHES_PER_POLL}), "
                     f"deferring {len(batch_groups) - groups_processed} remaining batch groups"
                 )
                 break
@@ -226,11 +222,11 @@ class BatchCoordinator:
                     increment_retry_fn(b.id, b.user_id)
 
                     # Fail permanently after max retries
-                    if b.retry_count + 1 >= self.config.max_retry_count:
+                    if b.retry_count + 1 >= MAX_RETRY_COUNT:
                         update_status_fn(
                             b.id,
                             "failed",
-                            error_message=f"Failed after {self.config.max_retry_count} retries: {str(e)}",
+                            error_message=f"Failed after {MAX_RETRY_COUNT} retries: {str(e)}",
                             user_id=b.user_id
                         )
                         stats["failed"] += 1
@@ -262,7 +258,7 @@ class BatchCoordinator:
                         executor = ThreadPoolExecutor(max_workers=1)
                         future = executor.submit(result_processor.process_result, batch_id, b)
                         try:
-                            if future.result(timeout=self.config.batch_processing_timeout_seconds):
+                            if future.result(timeout=BATCH_PROCESSING_TIMEOUT_SECONDS):
                                 stats["completed"] += 1
                                 any_succeeded = True
                                 delete_batch_fn(b.id, b.user_id)
@@ -270,7 +266,7 @@ class BatchCoordinator:
                                 raise RuntimeError("Processing returned False")
                         except FuturesTimeoutError:
                             raise TimeoutError(
-                                f"Batch processing exceeded {self.config.batch_processing_timeout_seconds}s timeout"
+                                f"Batch processing exceeded {BATCH_PROCESSING_TIMEOUT_SECONDS}s timeout"
                             )
                         finally:
                             # Shutdown WITHOUT waiting - don't block if thread is stuck
@@ -292,11 +288,11 @@ class BatchCoordinator:
                         increment_retry_fn(b.id, b.user_id)
 
                         # Fail permanently after max retries
-                        if b.retry_count + 1 >= self.config.max_retry_count:
+                        if b.retry_count + 1 >= MAX_RETRY_COUNT:
                             update_status_fn(
                                 b.id,
                                 "failed",
-                                error_message=f"Failed after {self.config.max_retry_count} retries: {str(e)}",
+                                error_message=f"Failed after {MAX_RETRY_COUNT} retries: {str(e)}",
                                 user_id=b.user_id
                             )
                         stats["failed"] += 1

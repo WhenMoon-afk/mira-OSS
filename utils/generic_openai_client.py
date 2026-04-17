@@ -257,6 +257,11 @@ class GenericOpenAIClient:
             payload["reasoning"] = {"effort": thinking_effort}
             logger.debug(f"Reasoning enabled for generic provider (effort={thinking_effort})")
 
+        # Traffic tap: log request before sending
+        from utils.llm_tap import is_active as _tap_active, log_request as _tap_request
+        if _tap_active():
+            _tap_request(provider="generic", endpoint=self.endpoint, model=self.model, body=payload)
+
         # Make HTTP request
         try:
             logger.debug(f"Generic OpenAI client request to {self.endpoint} with model {self.model}")
@@ -364,6 +369,11 @@ class GenericOpenAIClient:
                 headers["anthropic-version"] = "2023-06-01"
             else:
                 headers["Authorization"] = f"Bearer {self.api_key}"
+
+        # Traffic tap: log streaming request before sending
+        from utils.llm_tap import is_active as _tap_active, log_request as _tap_request
+        if _tap_active():
+            _tap_request(provider="generic", endpoint=self.endpoint, model=self.model, body=payload)
 
         logger.debug(f"Starting streaming request to {self.endpoint}")
 

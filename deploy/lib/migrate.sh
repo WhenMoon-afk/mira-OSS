@@ -637,12 +637,12 @@ verify_vault_snapshot() {
 # Format: "table:order_by_col:col1,col2,col3"
 # order_by_col is the column to ORDER BY (usually primary key)
 DB_STRUCTURAL_TABLES=(
-    "users:id:id,email,first_name,last_name,timezone,llm_tier,is_active,memory_manipulation_enabled,cumulative_activity_days"
+    "users:id:id,email,first_name,last_name,timezone,conversation_llm,is_active,memory_manipulation_enabled,cumulative_activity_days"
     "continuums:id:id,user_id,last_message_position"
     "api_tokens:id:id,user_id,name,token_hash"
     "domain_knowledge_blocks:id:id,user_id,domain_label,domain_name,enabled"
     "entities:id:id,user_id,name,entity_type"
-    "account_tiers:name:name,model,provider,endpoint_url,api_key_name"
+    "conversation_llm:name:name,model,provider,endpoint_url,api_key_name"
     "internal_llm:name:name,model,endpoint_url,api_key_name"
 )
 
@@ -680,8 +680,8 @@ capture_database_snapshot() {
     echo '  "row_counts": {' >> "$snapshot_file"
 
     # Capture row counts for all backed up tables (must match backup_postgresql_data tables)
-    # Includes account_tiers and internal_llm because offline mode customizes them
-    local all_tables="users continuums messages memories entities api_tokens user_activity_days domain_knowledge_blocks domain_knowledge_block_content extraction_batches post_processing_batches account_tiers internal_llm"
+    # Includes conversation_llm and internal_llm because offline mode customizes them
+    local all_tables="users continuums messages memories entities api_tokens user_activity_days domain_knowledge_blocks domain_knowledge_block_content extraction_batches post_processing_batches conversation_llm internal_llm"
     local first=true
 
     for table in $all_tables; do
@@ -967,7 +967,7 @@ verify_database_snapshot() {
                         if [ "$orig_user" != "$curr_user" ]; then
                             echo -e "${YELLOW}  ~ User CHANGED: ${email}${RESET}"
                             # Show which fields changed
-                            local fields="timezone llm_tier first_name last_name"
+                            local fields="timezone conversation_llm first_name last_name"
                             for field in $fields; do
                                 local orig_val curr_val
                                 orig_val=$(echo "$orig_user" | jq -r ".$field // empty" 2>/dev/null)
@@ -1192,8 +1192,8 @@ backup_postgresql_data() {
     echo -ne "${DIM}${ARROW}${RESET} Backing up PostgreSQL data... "
 
     # Tables to backup (user data + system config that may be customized)
-    # account_tiers and internal_llm are included because offline mode customizes them
-    local tables="users continuums messages memories entities user_activity_days domain_knowledge_blocks domain_knowledge_block_content api_tokens extraction_batches post_processing_batches account_tiers internal_llm"
+    # conversation_llm and internal_llm are included because offline mode customizes them
+    local tables="users continuums messages memories entities user_activity_days domain_knowledge_blocks domain_knowledge_block_content api_tokens extraction_batches post_processing_batches conversation_llm internal_llm"
 
     # Build table arguments for pg_dump
     local table_args=""

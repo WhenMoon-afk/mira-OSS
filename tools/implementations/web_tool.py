@@ -3,7 +3,7 @@ Web tool providing search, fetch, and HTTP request capabilities.
 
 Three operations:
 - search: Query Kagi search API for current information
-- fetch: Compress webpage to faithful text extract via LLM (no options — URL in, text out)
+- fetch: Extract webpage content via trafilatura (HTTP first, Playwright escalation for JS-heavy pages)
 - http: Make direct HTTP requests to APIs
 """
 import re
@@ -34,6 +34,12 @@ try:
 except ImportError:
     BS4_AVAILABLE = False
 
+try:
+    import trafilatura
+    TRAFILATURA_AVAILABLE = True
+except ImportError:
+    TRAFILATURA_AVAILABLE = False
+
 
 # --- Configuration ---
 
@@ -42,10 +48,10 @@ class WebToolConfig(BaseModel):
     enabled: bool = Field(default=True, description="Whether this tool is enabled")
     default_timeout: int = Field(default=30, description="Default timeout in seconds")
     max_timeout: int = Field(default=120, description="Maximum allowed timeout")
-    # LLM config for content extraction (self-contained - not database-backed)
-    llm_model: str = Field(default="openai/gpt-oss-120b", description="Model for content extraction")
-    llm_endpoint: str = Field(default="https://api.groq.com/openai/v1/chat/completions", description="LLM endpoint")
-    llm_api_key_name: Optional[str] = Field(default="subcortical_key", description="Vault key name for API key")
+    # LLM config for synthesis of long pages (trafilatura text in, compressed text out)
+    synthesis_model: str = Field(default="openai/gpt-oss-120b", description="Model for content synthesis")
+    synthesis_endpoint: str = Field(default="https://api.groq.com/openai/v1/chat/completions", description="Synthesis LLM endpoint")
+    synthesis_api_key_name: Optional[str] = Field(default="subcortical_key", description="Vault key name for API key")
 
 
 registry.register("web_tool", WebToolConfig)
@@ -64,6 +70,7 @@ class SearchInput(BaseModel):
 class FetchInput(BaseModel):
     """Input for webpage fetch operation."""
     url: str = Field(..., description="URL to fetch")
+    focus: Optional[str] = Field(default=None, description="What to look for on the page (used when content is long)")
     include_metadata: bool = Field(default=False, description="Include page metadata")
     timeout: Optional[int] = Field(default=None, ge=1, description="Request timeout in seconds")
 
@@ -119,7 +126,7 @@ class WebTool(Tool):
 
     Operations:
     - search: Query Kagi for current web information
-    - fetch: URL in, compressed text out (fixed LLM extraction, no caller options)
+    - fetch: URL in, extracted text out (trafilatura; HTTP first, Playwright for JS-heavy pages)
     - http: Make direct HTTP requests to APIs
     """
 
@@ -135,11 +142,12 @@ class WebTool(Tool):
                 "operation": {
                     "type": "string",
                     "enum": ["search", "fetch", "http"],
-                    "description": "'search' = web search, 'fetch' = compressed text extraction from a URL (no options — just pass url), 'http' = direct HTTP API request"
+                    "description": "'search' = web search, 'fetch' = extract webpage content (pass url, optionally focus), 'http' = direct HTTP API request"
                 },
                 "query": {"type": "string", "description": "Web search query. Only used with operation='search'. Min 1 character"},
                 "max_results": {"type": "integer", "description": "Number of search results to return (1-20, default 5). Ignored unless operation='search'"},
                 "url": {"type": "string", "description": "HTTP or HTTPS URL to request. Required for 'fetch' and 'http'. Private/internal network addresses are blocked"},
+                "focus": {"type": "string", "description": "What to look for on the page. Guides content selection when the page is long. For 'fetch' only. Examples: 'pricing details', 'API rate limits', 'installation instructions'"},
                 "method": {"type": "string", "enum": ["GET", "POST", "PUT", "DELETE"], "description": "HTTP verb: GET, POST, PUT, or DELETE. Required for 'http' operation"},
                 "query_params": {"type": "object", "description": "Key-value pairs appended as ?key=value query parameters. Only used with operation='http'"},
                 "headers": {"type": "object", "description": "Custom HTTP request headers as {name: value} pairs. For 'http' operation. Do not set auth headers here — use credential_name instead"},
@@ -250,50 +258,88 @@ class WebTool(Tool):
 
     # --- Fetch Operation ---
 
+    # Minimum extracted text length before escalating to Playwright.
+    # Below this threshold, the page likely needs JS rendering (SPA shell, JS loader).
+    _MIN_EXTRACT_LENGTH = 150
+
+    # Below this, return trafilatura output as-is (faithful dump).
+    # Above this, send to LLM for intelligent synthesis.
+    _MAX_FAITHFUL_LENGTH = 5000
+
+    # Absolute cap on LLM input to stay within model context.
+    _MAX_SYNTHESIS_INPUT = 80000
+
+    _SYNTHESIS_PROMPT = (
+        "You are reading the extracted text of a webpage. "
+        "Select and return the most important content. "
+        "Preserve: names, dates, numbers, prices, URLs, code, key facts. "
+        "Drop: repetitive content, boilerplate, low-value sections. "
+        "No summaries. No commentary. Return the actual content, condensed."
+    )
+
     def _fetch(self, input: FetchInput) -> Dict[str, Any]:
-        """Fetch webpage, clean HTML, compress to text via LLM."""
+        """Fetch webpage and extract content. HTTP+trafilatura first, Playwright escalation."""
         self._validate_url(input.url)
         timeout = self._get_timeout(input.timeout)
 
-        html, response_info = self._fetch_page(input.url, timeout)
-        if html is None:
-            return {"success": False, "url": input.url, **response_info}
+        # Tier 1: HTTP GET + trafilatura
+        html, response_info = self._fetch_http(input.url, timeout)
+        if html is not None:
+            extracted = self._extract_content(html)
+            if self._extraction_sufficient(extracted):
+                return self._build_fetch_result(input, html, extracted, response_info)
 
-        cleaned_html = self._clean_html(html)
-        extracted = self._extract_with_llm(cleaned_html, input.url)
+        # Tier 2: Playwright + trafilatura
+        pw_html, pw_info = self._fetch_playwright(input.url, timeout)
+        if pw_html is not None:
+            extracted = self._extract_content(pw_html)
+            if extracted:
+                return self._build_fetch_result(input, pw_html, extracted, pw_info)
 
-        result = {"success": True, "url": input.url, "content": extracted}
+            # Tier 3: Playwright HTML + BeautifulSoup fallback
+            extracted = self._fallback_text_extract(pw_html)
+            if extracted:
+                return self._build_fetch_result(input, pw_html, extracted, pw_info)
 
+        # All tiers failed — report the most relevant error
+        error_info = pw_info or response_info or {}
+        if "error" in error_info:
+            return {"success": False, "url": input.url, **error_info}
+        return {"success": False, "url": input.url, "error": "extraction_failed",
+                "message": "Could not extract content from page"}
+
+    def _build_fetch_result(self, input: FetchInput, html: str, content: str,
+                            response_info: dict) -> Dict[str, Any]:
+        """Build the standard fetch result dict. Long pages or focused queries get LLM synthesis."""
+        if input.focus or len(content) > self._MAX_FAITHFUL_LENGTH:
+            synthesized = self._synthesize_content(content, input.url, input.focus)
+            if synthesized:
+                content = synthesized + "\n\n[Page content was condensed. Re-fetch with focus='...' to target specific content]"
+            else:
+                # Synthesis failed — hard truncate as fallback
+                content = content[:self._MAX_FAITHFUL_LENGTH] + "\n\n[Truncated — full page at source]"
+        result = {"success": True, "url": input.url, "content": content}
         if input.include_metadata:
             result["title"] = self._extract_title(html)
             result["metadata"] = {
                 "content_type": response_info.get("content_type", "text/html"),
                 "size": len(html),
             }
-
         return result
 
-    def _fetch_page(self, url: str, timeout: int) -> tuple:
-        """Fetch page via Playwright or HTTP fallback. Returns (html, info_dict)."""
-        # Try Playwright first
-        try:
-            from utils.playwright_service import PlaywrightService
-            playwright = PlaywrightService.get_instance()
-            html = playwright.fetch_rendered_html(url, timeout=timeout)
-            return html, {"content_type": "text/html"}
-        except ImportError:
-            self.logger.info("Playwright not available, using HTTP fallback")
-        except RuntimeError as e:
-            if "chromium" in str(e).lower() or "executable" in str(e).lower():
-                self.logger.info("Chromium not installed, using HTTP fallback")
-            else:
-                return None, {"error": "playwright_error", "message": str(e)}
-        except TimeoutError as e:
-            return None, {"error": "timeout", "message": str(e)}
-        except Exception as e:
-            self.logger.warning(f"Playwright failed: {e}, trying HTTP fallback")
+    def _extraction_sufficient(self, extracted: Optional[str]) -> bool:
+        """Check if extraction produced enough content to skip Playwright."""
+        if not extracted:
+            return False
+        if len(extracted) < self._MIN_EXTRACT_LENGTH:
+            self.logger.info(
+                f"Extraction too short ({len(extracted)} chars) — escalating to Playwright"
+            )
+            return False
+        return True
 
-        # HTTP fallback for static pages
+    def _fetch_http(self, url: str, timeout: int) -> tuple:
+        """Fetch page via HTTP GET. Returns (html, info_dict) or (None, info_dict)."""
         try:
             response = http_client.get(
                 url,
@@ -310,78 +356,105 @@ class WebTool(Tool):
         except Exception as e:
             return None, {"error": "request_error", "message": str(e)}
 
-    def _clean_html(self, html: str) -> str:
-        """Remove scripts, styles, and non-content elements."""
+    def _fetch_playwright(self, url: str, timeout: int) -> tuple:
+        """Fetch page via Playwright for JS rendering. Returns (html, info_dict) or (None, info_dict)."""
+        try:
+            from utils.playwright_service import PlaywrightService
+            playwright = PlaywrightService.get_instance()
+            html = playwright.fetch_rendered_html(url, timeout=timeout)
+            return html, {"content_type": "text/html"}
+        except ImportError:
+            self.logger.info("Playwright not available, cannot escalate")
+            return None, {"error": "playwright_unavailable", "message": "Playwright not installed"}
+        except RuntimeError as e:
+            if "chromium" in str(e).lower() or "executable" in str(e).lower():
+                self.logger.info("Chromium not installed, cannot escalate")
+                return None, {"error": "chromium_unavailable", "message": "Chromium not installed"}
+            return None, {"error": "playwright_error", "message": str(e)}
+        except TimeoutError as e:
+            return None, {"error": "timeout", "message": str(e)}
+        except Exception as e:
+            self.logger.warning(f"Playwright failed: {e}")
+            return None, {"error": "playwright_error", "message": str(e)}
+
+    def _extract_content(self, html: str) -> Optional[str]:
+        """Extract main content from HTML using trafilatura."""
+        if not TRAFILATURA_AVAILABLE:
+            self.logger.warning("trafilatura not available, skipping extraction")
+            return None
+        try:
+            return trafilatura.extract(
+                html,
+                include_links=True,
+                include_tables=True,
+                include_comments=False,
+                output_format="txt",
+            )
+        except Exception as e:
+            self.logger.warning(f"trafilatura extraction failed: {e}")
+            return None
+
+    def _fallback_text_extract(self, html: str) -> Optional[str]:
+        """Last-resort extraction: strip tags, return plain text via BeautifulSoup."""
         if not BS4_AVAILABLE:
-            self.logger.warning("BeautifulSoup not available, returning raw HTML")
-            return html
+            self.logger.warning("BeautifulSoup not available for fallback extraction")
+            return None
+        try:
+            soup = BeautifulSoup(html, "html.parser")
+            for tag in soup.find_all(["script", "style", "noscript", "iframe", "object", "embed"]):
+                tag.decompose()
+            for comment in soup.find_all(string=lambda t: isinstance(t, Comment)):
+                comment.extract()
+            text = soup.get_text(separator='\n', strip=True)
+            return text if text else None
+        except Exception as e:
+            self.logger.warning(f"Fallback text extraction failed: {e}")
+            return None
 
-        soup = BeautifulSoup(html, "html.parser")
-
-        # Remove non-content elements
-        if soup.head:
-            soup.head.decompose()
-        for tag in soup.find_all(["script", "style", "noscript", "iframe", "object", "embed"]):
-            tag.decompose()
-        for comment in soup.find_all(string=lambda t: isinstance(t, Comment)):
-            comment.extract()
-
-        return str(soup)
-
-    # ~40k chars leaves room for system prompt + response within the 120B model's context
-    _MAX_HTML_LENGTH = 40000
-
-    # Fixed extraction prompt — no caller-directed options.
-    # The extraction LLM is a compressor: faithful text selection with aggressive pruning.
-    # Caller intelligence (instructions, focus) belongs in forage_tool, not here.
-    _EXTRACTION_PROMPT = (
-        "You are a text extractor. Output only text that appears on the page. "
-        "Preserve: proper nouns, dates, numbers, prices, URLs, code, tables, lists. "
-        "Preserve the page's original ordering. "
-        "Drop: navigation, headers/footers, sidebars, ads, cookie banners, related links, boilerplate. "
-        "No summaries. No introductions. No commentary. No interpretation. No added text. "
-        "If content was truncated, extract what is present without noting the truncation."
-    )
-
-    def _extract_with_llm(self, html: str, url: str) -> str:
-        """Compress cleaned HTML to faithful text via LLM."""
+    def _synthesize_content(self, text: str, url: str, focus: Optional[str] = None) -> Optional[str]:
+        """Compress long page content via LLM. Receives clean text, returns condensed text."""
         from config import config
         from clients.vault_client import get_api_key
         from clients.llm_provider import LLMProvider
 
         tool_config = config.web_tool
 
-        if tool_config.llm_api_key_name:
-            api_key = get_api_key(tool_config.llm_api_key_name)
+        if tool_config.synthesis_api_key_name:
+            api_key = get_api_key(tool_config.synthesis_api_key_name)
             if not api_key:
-                raise RuntimeError(f"API key '{tool_config.llm_api_key_name}' not found in Vault")
+                self.logger.warning(f"API key '{tool_config.synthesis_api_key_name}' not found — skipping synthesis")
+                return None
         else:
             api_key = None
 
-        truncated = False
-        original_length = len(html)
-        if original_length > self._MAX_HTML_LENGTH:
-            html = html[:self._MAX_HTML_LENGTH]
-            truncated = True
-            self.logger.info(f"Truncated HTML from {original_length} to {self._MAX_HTML_LENGTH} chars")
+        if len(text) > self._MAX_SYNTHESIS_INPUT:
+            text = text[:self._MAX_SYNTHESIS_INPUT]
+            self.logger.info(f"Truncated synthesis input to {self._MAX_SYNTHESIS_INPUT} chars")
 
-        truncation_note = "\nContent was truncated." if truncated else ""
-        system_prompt = f"{self._EXTRACTION_PROMPT}\n\nSource: {url}{truncation_note}"
+        # Build user message: directive fenced above the content firehose
+        if focus:
+            user_message = (
+                f"\U0001F6A8 FOCUS: {focus} \U0001F6A8\n"
+                f"{'=' * 60}\n\n"
+                f"{text}"
+            )
+        else:
+            user_message = text
 
-        llm = LLMProvider(max_tokens=2048)
-        response = llm.generate_response(
-            messages=[{"role": "user", "content": f"```html\n{html}\n```"}],
-            stream=False,
-            endpoint_url=tool_config.llm_endpoint,
-            model_override=tool_config.llm_model,
-            api_key_override=api_key,
-            system_override=system_prompt
-        )
-
-        extracted = llm.extract_text_content(response)
-        if getattr(response, 'stop_reason', None) == "max_tokens":
-            extracted += "\n\n[Extraction hit token limit — page content continues at source]"
-        return extracted
+        try:
+            llm = LLMProvider(max_tokens=2048)
+            response = llm.generate_response(
+                messages=[{"role": "user", "content": user_message}],
+                stream=False,
+                endpoint_url=tool_config.synthesis_endpoint,
+                model_override=tool_config.synthesis_model,
+                api_key_override=api_key,
+                system_override=f"{self._SYNTHESIS_PROMPT}\n\nSource: {url}"
+            )
+            return llm.extract_text_content(response)
+        except Exception as e:
+            self.logger.warning(f"Content synthesis failed: {e}")
+            return None
 
     def _extract_title(self, html: str) -> str:
         """Extract page title from HTML."""

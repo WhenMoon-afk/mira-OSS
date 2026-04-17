@@ -20,7 +20,10 @@ from cns.core.events import TurnCompletedEvent, UpdateTrinketEvent
 from cns.integration.event_bus import EventBus
 from cns.infrastructure.valkey_message_cache import ValkeyMessageCache
 from cns.services.peanutgallery_model import PeanutGalleryModel, PeanutGalleryResult
-from config.config import PeanutGalleryConfig
+# Peanut Gallery tuning
+PG_TRIGGER_INTERVAL = 10     # Run observer every N turns
+PG_SEED_MEMORY_COUNT = 10    # Seed memories for prerunner relevance selection
+PG_GUIDANCE_TTL_TURNS = 5    # Turns before guidance expires from HUD
 from lt_memory.models import MemoryDict
 from lt_memory.proactive import ProactiveService
 from utils.timezone_utils import format_utc_iso, utc_now
@@ -49,23 +52,11 @@ class PeanutGalleryService:
         model: PeanutGalleryModel,
         valkey_cache: ValkeyMessageCache,
         event_bus: EventBus,
-        config: PeanutGalleryConfig,
         proactive_service: ProactiveService
     ):
-        """
-        Initialize Peanut Gallery service.
-
-        Args:
-            model: Two-stage LLM model for evaluation
-            valkey_cache: Valkey message cache for reading/writing messages
-            event_bus: Event bus for subscribing to turn events
-            config: PeanutGallery configuration
-            proactive_service: For curating seed memories
-        """
         self.model = model
         self.valkey_cache = valkey_cache
         self.event_bus = event_bus
-        self.config = config
         self.proactive = proactive_service
 
         # Thread pool for async execution (single worker - one observation at a time)
@@ -79,7 +70,7 @@ class PeanutGalleryService:
 
         logger.info(
             f"PeanutGalleryService initialized: "
-            f"trigger_interval={config.trigger_interval}"
+            f"trigger_interval={PG_TRIGGER_INTERVAL}"
         )
 
     def _handle_turn_completed(self, event: TurnCompletedEvent) -> None:
@@ -89,11 +80,7 @@ class PeanutGalleryService:
         Runs every N turns based on segment_turn_number.
         Fire-and-forget async execution to avoid blocking the conversation.
         """
-        if not self.config.enabled:
-            return
-
-        # Check if we should trigger (every N turns)
-        if event.segment_turn_number % self.config.trigger_interval != 0:
+        if event.segment_turn_number % PG_TRIGGER_INTERVAL != 0:
             return
 
         logger.debug(
@@ -165,7 +152,7 @@ class PeanutGalleryService:
         return self.proactive.search_with_embedding(
             embedding=query_embedding,
             query_expansion=last_user_content[:500],
-            limit=self.config.seed_memory_count
+            limit=PG_SEED_MEMORY_COUNT
         )
 
     def _apply_result(
@@ -184,8 +171,18 @@ class PeanutGalleryService:
             logger.debug("Peanut Gallery: noop (no action needed)")
             return
 
-        if result.action_type == "compaction":
-            self._apply_compaction(result, messages)
+        # DISABLED: Compaction breaks the Anthropic cache prefix because it rewrites
+        # conversation history. The Anthropic API caches requests based on a prefix
+        # derived from the message sequence. When compaction replaces a range of
+        # messages with a synopsis, subsequent requests no longer match the cached
+        # prefix, causing cache misses and potentially confusing the model with
+        # the reflowed history.
+        # FUTURE: Refactor to work like Windows Defragment - reorganize blocks across
+        # the whole context window rather than collapsing ranges inline. This would
+        # preserve cache prefix integrity by keeping message boundaries stable while
+        # still making room in the context window. That is a larger project for later.
+        # if result.action_type == "compaction":
+        #     self._apply_compaction(result, messages)
 
         elif result.action_type in ("concern", "coaching"):
             self._inject_guidance(result.action_type, result.guidance)
@@ -293,7 +290,7 @@ class PeanutGalleryService:
                 "action": "add_guidance",
                 "type": guidance_type,
                 "text": guidance_text,
-                "ttl": self.config.guidance_ttl_turns
+                "ttl": PG_GUIDANCE_TTL_TURNS
             }
         ))
 

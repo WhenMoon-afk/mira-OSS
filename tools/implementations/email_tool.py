@@ -63,9 +63,18 @@ class EmailToolConfig(BaseModel):
 # Register with registry
 registry.register("email_tool", EmailToolConfig)
 
+# Operations that modify mailbox state — these require a reasoning parameter
+_MUTATING_OPERATIONS = frozenset({
+    'send_email', 'reply_to_email', 'create_draft',
+    'delete_email', 'move_email', 'mark_as_read', 'mark_as_unread',
+})
 
-# Restricted schema for sidebar agents: reply_to_email only.
-# No send_email, search, read, or folder operations.
+# Restricted schema — currently unused.
+# Retained as a template for incremental autonomy: when the mailroom agent
+# earns enough trust (via audited action+reasoning logs) to act on emails
+# autonomously, this schema constrains it to reply-only — no send, search,
+# or read. Each autonomy expansion adds operations to the enum; the schema
+# is the safety boundary, not the trigger rules.
 SIDEBAR_EMAIL_SCHEMA = {
     "name": "email_tool",
     "description": (
@@ -94,9 +103,6 @@ SIDEBAR_EMAIL_SCHEMA = {
     },
 }
 
-# Sidebar send limits
-_SIDEBAR_MAX_SENDS_PER_TASK = 1
-_SIDEBAR_MAX_SENDS_PER_HOUR = 10
 
 
 class EmailTool(Tool):
@@ -272,6 +278,10 @@ class EmailTool(Tool):
                     "destination_folder": {
                         "type": "string",
                         "description": "Destination folder for move_email operation"
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "One-sentence explanation of WHY you are performing this action. Required for send_email, reply_to_email, create_draft, delete_email, move_email, mark_as_read, mark_as_unread. Logged for audit."
                     }
                 },
                 "required": ["operation"]
@@ -1041,7 +1051,7 @@ class EmailTool(Tool):
         cc: Optional[str] = None,
         bcc: Optional[str] = None,
         destination_folder: Optional[str] = None,
-        sidebar_task_id: Optional[str] = None,
+        reasoning: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Execute an email operation.
@@ -1085,6 +1095,13 @@ class EmailTool(Tool):
                     self.logger.error(f"Failed to select folder '{folder}' in email_tool")
                     raise ValueError(f"Failed to select folder '{folder}'")
             
+            # Validate reasoning for mutating operations
+            if operation in _MUTATING_OPERATIONS and not (reasoning and reasoning.strip()):
+                raise ValueError(
+                    f"reasoning is required for '{operation}'. "
+                    "Explain why you are performing this action."
+                )
+
             # Set default max_emails if not provided and convert to int if it's a string
             if max_emails is None:
                 max_emails = self.default_max_emails
@@ -1230,14 +1247,16 @@ class EmailTool(Tool):
                 
                 if not success:
                     self.logger.error(f"Failed to mark email {email_id} as read in email_tool")
+                    self._log_audit("mark_as_read", f"mark_as_read {email_id}", reasoning, "failed", f"Failed to mark email {email_id} as read")
                     raise ValueError(f"Failed to mark email {email_id} as read")
-                
+
+                self._log_audit("mark_as_read", f"mark_as_read {email_id}", reasoning, "success")
                 return {
                     "success": True,
                     "email_id": email_id,
                     "operation": "mark_as_read"
                 }
-            
+
             elif operation == "mark_as_unread":
                 # Validate required parameters
                 if not email_id:
@@ -1248,14 +1267,16 @@ class EmailTool(Tool):
                 
                 if not success:
                     self.logger.error(f"Failed to mark email {email_id} as unread in email_tool")
+                    self._log_audit("mark_as_unread", f"mark_as_unread {email_id}", reasoning, "failed", f"Failed to mark email {email_id} as unread")
                     raise ValueError(f"Failed to mark email {email_id} as unread")
-                
+
+                self._log_audit("mark_as_unread", f"mark_as_unread {email_id}", reasoning, "success")
                 return {
                     "success": True,
                     "email_id": email_id,
                     "operation": "mark_as_unread"
                 }
-            
+
             elif operation == "delete_email":
                 # Validate required parameters
                 if not email_id:
@@ -1282,6 +1303,7 @@ class EmailTool(Tool):
                     if email_id in self.emails_for_later_reply:
                         self.emails_for_later_reply.remove(email_id)
 
+                    self._log_audit("delete_email", f"delete {email_id}", reasoning, "success")
                     return {
                         "success": True,
                         "email_id": email_id,
@@ -1289,6 +1311,7 @@ class EmailTool(Tool):
                     }
                 except Exception as e:
                     self.logger.error(f"Failed to delete email {email_id} in email_tool: {e}")
+                    self._log_audit("delete_email", f"delete {email_id}", reasoning, "failed", str(e))
                     raise ValueError(f"Failed to delete email {email_id}: {e}")
             
             elif operation == "move_email":
@@ -1331,6 +1354,7 @@ class EmailTool(Tool):
                     if email_id in self.emails_for_later_reply:
                         self.emails_for_later_reply.remove(email_id)
 
+                    self._log_audit("move_email", f"move {email_id} to {destination_folder}", reasoning, "success")
                     return {
                         "success": True,
                         "email_id": email_id,
@@ -1339,6 +1363,7 @@ class EmailTool(Tool):
                     }
                 except Exception as e:
                     self.logger.error(f"Failed to move email {email_id} to {destination_folder} in email_tool: {e}")
+                    self._log_audit("move_email", f"move {email_id} to {destination_folder}", reasoning, "failed", str(e))
                     raise ValueError(f"Failed to move email {email_id} to {destination_folder}: {e}")
             
             elif operation == "send_email":
@@ -1412,6 +1437,7 @@ class EmailTool(Tool):
                     except Exception as e:
                         self.logger.warning(f"Failed to save to sent folder: {e}")
                     
+                    self._log_audit("send_email", f"to={to}, subject={subject}", reasoning, "success")
                     return {
                         "success": True,
                         "to": to,
@@ -1420,13 +1446,10 @@ class EmailTool(Tool):
                     }
                 except Exception as e:
                     self.logger.error(f"Failed to send email in email_tool: {e}")
+                    self._log_audit("send_email", f"to={to}, subject={subject}", reasoning, "failed", str(e))
                     raise ValueError(f"Failed to send email: {e}")
             
             elif operation == "reply_to_email":
-                # Sidebar agent guardrails: enforce send caps + audit
-                if sidebar_task_id:
-                    self._enforce_sidebar_send_caps(sidebar_task_id)
-
                 # Validate required parameters
                 if not email_id:
                     self.logger.error("Missing email_id for reply_to_email operation in email_tool")
@@ -1470,11 +1493,8 @@ class EmailTool(Tool):
                     # Set From
                     msg["From"] = self.email_address
                     
-                    # Set To — sidebar agents use From only (Reply-To is
-                    # attacker-controlled); normal replies use Reply-To→From
-                    if sidebar_task_id:
-                        msg["To"] = original_msg.get("From", "")
-                    elif to:
+                    # Set To
+                    if to:
                         parsed_to = self._parse_email_addresses(to)
                         msg["To"] = parsed_to if parsed_to else original_msg.get("From", "")
                     else:
@@ -1534,14 +1554,7 @@ class EmailTool(Tool):
                     if email_id in self.emails_for_later_reply:
                         self.emails_for_later_reply.remove(email_id)
 
-                    # Sidebar audit trail
-                    if sidebar_task_id:
-                        self._write_sidebar_audit(
-                            sidebar_task_id, email_id,
-                            msg["To"], msg.get("Subject", ""),
-                            body,
-                        )
-
+                    self._log_audit("reply_to_email", f"reply to {email_id}", reasoning, "success")
                     return {
                         "success": True,
                         "replied_to": email_id,
@@ -1550,6 +1563,7 @@ class EmailTool(Tool):
                     }
                 except Exception as e:
                     self.logger.error(f"Failed to reply to email in email_tool: {e}")
+                    self._log_audit("reply_to_email", f"reply to {email_id}", reasoning, "failed", str(e))
                     raise ValueError(f"Failed to reply to email: {e}")
             
             elif operation == "create_draft":
@@ -1595,6 +1609,7 @@ class EmailTool(Tool):
                     # Append to drafts folder with \Draft flag
                     self.connection.append(self.drafts_folder, "\\Draft", None, msg.as_bytes())
                     
+                    self._log_audit("create_draft", f"draft to={to}, subject={subject}", reasoning, "success")
                     return {
                         "success": True,
                         "to": to,
@@ -1603,6 +1618,7 @@ class EmailTool(Tool):
                     }
                 except Exception as e:
                     self.logger.error(f"Failed to create draft in email_tool: {e}")
+                    self._log_audit("create_draft", f"draft to={to}, subject={subject}", reasoning, "failed", str(e))
                     raise ValueError(f"Failed to create draft: {e}")
             
             elif operation == "search_emails":
@@ -1778,71 +1794,42 @@ class EmailTool(Tool):
             raise
     
     # ------------------------------------------------------------------
-    # Sidebar agent guardrails
+    # Action audit log
     # ------------------------------------------------------------------
 
-    def _enforce_sidebar_send_caps(self, task_id: str) -> None:
-        """Check per-task and hourly send caps. Raises ValueError if exceeded."""
-        import hashlib
-        self._ensure_sidebar_audit_table()
-
-        # Per-task cap: 1 send per agent invocation
-        task_sends = self.db.select(
-            "sidebar_audit",
-            where="agent_id = :task_id",
-            params={'task_id': task_id},
+    def _ensure_audit_table(self) -> None:
+        """Create email_action_audit table if it doesn't exist. Idempotent."""
+        self.db.create_table(
+            "email_action_audit",
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+            "timestamp TEXT NOT NULL DEFAULT (datetime('now')), "
+            "operation TEXT NOT NULL, "
+            "encrypted__target_summary TEXT, "
+            "encrypted__reasoning TEXT NOT NULL, "
+            "status TEXT NOT NULL, "
+            "encrypted__error_message TEXT",
         )
-        if len(task_sends) >= _SIDEBAR_MAX_SENDS_PER_TASK:
-            raise ValueError(
-                f"Sidebar send cap exceeded: {_SIDEBAR_MAX_SENDS_PER_TASK} "
-                "email(s) per agent invocation"
-            )
 
-        # Hourly cap across all sidebar invocations
-        hourly_sends = self.db.select(
-            "sidebar_audit",
-            where="created_at > datetime('now', '-1 hour')",
-        )
-        if len(hourly_sends) >= _SIDEBAR_MAX_SENDS_PER_HOUR:
-            raise ValueError(
-                f"Sidebar hourly send cap exceeded: "
-                f"{_SIDEBAR_MAX_SENDS_PER_HOUR} emails/hour"
-            )
-
-    def _write_sidebar_audit(
-        self, task_id: str, email_id: str,
-        recipient: str, subject: str, body: str,
+    def _log_audit(
+        self,
+        operation: str,
+        target_summary: str,
+        reasoning: str,
+        status: str,
+        error_message: str | None = None,
     ) -> None:
-        """Log outbound sidebar email to audit trail."""
-        import hashlib
-        self._ensure_sidebar_audit_table()
-        self.db.execute(
-            "INSERT INTO sidebar_audit "
-            "(agent_id, inbound_item_id, recipient, subject, body_hash) "
-            "VALUES (:agent_id, :item_id, :recipient, :subject, :body_hash)",
-            {
-                'agent_id': task_id,
-                'item_id': email_id,
-                'recipient': recipient,
-                'subject': subject,
-                'body_hash': hashlib.sha256(body.encode()).hexdigest()[:16],
-            },
-        )
-
-    def _ensure_sidebar_audit_table(self) -> None:
-        """Create sidebar_audit table if it doesn't exist."""
-        if not hasattr(self, '_sidebar_audit_ready'):
-            self.db.execute(
-                "CREATE TABLE IF NOT EXISTS sidebar_audit ("
-                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                "agent_id TEXT NOT NULL, "
-                "inbound_item_id TEXT NOT NULL, "
-                "recipient TEXT NOT NULL, "
-                "subject TEXT, "
-                "body_hash TEXT NOT NULL, "
-                "created_at TEXT NOT NULL DEFAULT (datetime('now')))"
-            )
-            self._sidebar_audit_ready = True
+        """Log email action to audit table. Non-critical — swallows exceptions."""
+        try:
+            self._ensure_audit_table()
+            self.db.insert("email_action_audit", {
+                "operation": operation,
+                "encrypted__target_summary": target_summary,
+                "encrypted__reasoning": reasoning,
+                "status": status,
+                "encrypted__error_message": error_message,
+            })
+        except Exception as e:
+            self.logger.error(f"Failed to log email audit: {e}")
 
     def __del__(self):
         """Ensure we disconnect when the object is destroyed."""

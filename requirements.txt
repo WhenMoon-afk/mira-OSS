@@ -51,6 +51,7 @@ google-genai     # Google Gemini GenAI SDK - imagegen_tool.py
 kasa             # TP-Link Kasa smart devices - kasa_tool.py
 kagiapi          # Kagi search API - web_tool.py (primary search provider)
 ddgs             # DuckDuckGo search - web_tool.py (fallback search provider)
+trafilatura      # Deterministic web content extraction - web_tool.py (replaces LLM extraction)
 hvac             # HashiCorp Vault client - vault_client.py
 
 # == BILLING & PAYMENTS ==

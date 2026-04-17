@@ -1,7 +1,7 @@
 """
 File serving endpoints for code execution artifacts and tool-generated images.
 
-Serves files from data/users/{user_id}/tmp/{file_id}/ that were eagerly
+Serves files from data/users/{user_id}/artifacts/{file_id}/ that were eagerly
 downloaded from Anthropic during response processing. Security layers:
 1. Auth gate (Depends(get_current_user)) scopes to user's directory
 2. file_id regex validation (alphanumeric + hyphen/underscore only)
@@ -30,13 +30,13 @@ async def download_file(
 ) -> FileResponse:
     """Download a code execution file artifact.
 
-    Files are stored during response processing and cleaned up at segment collapse.
+    Files are stored during response processing and persist across segments.
     """
     if not FILE_ID_PATTERN.match(file_id):
         raise HTTPException(status_code=400, detail="Invalid file ID")
 
     user_id = current_user.user_id
-    base_dir = (Path("data/users") / user_id / "tmp" / file_id).resolve()
+    base_dir = (Path("data/users") / user_id / "artifacts" / file_id).resolve()
 
     if not base_dir.is_dir():
         raise HTTPException(status_code=404, detail="File not found")
@@ -81,7 +81,7 @@ async def view_image(
         raise HTTPException(status_code=400, detail="Invalid file ID")
 
     user_id = current_user.user_id
-    base_dir = (Path("data/users") / user_id / "tmp" / file_id).resolve()
+    base_dir = (Path("data/users") / user_id / "artifacts" / file_id).resolve()
 
     if not base_dir.is_dir():
         raise HTTPException(status_code=404, detail="Image not found")

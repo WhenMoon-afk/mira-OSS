@@ -16,7 +16,9 @@ from uuid import UUID
 
 from cns.core.message import Message, preprocess_content_blocks
 from clients.llm_provider import LLMProvider
-from config.config import PeanutGalleryConfig
+# Peanut Gallery model tuning
+PG_PRERUNNER_MAX_TOKENS = 100
+PG_MESSAGE_WINDOW_PAIRS = 10
 from lt_memory.linking import LinkingService
 from lt_memory.models import MemoryDict, TraversalResult
 
@@ -51,19 +53,9 @@ class PeanutGalleryModel:
 
     def __init__(
         self,
-        config: PeanutGalleryConfig,
         llm_provider: LLMProvider,
         linking_service: LinkingService
     ):
-        """
-        Initialize Peanut Gallery model.
-
-        Args:
-            config: PeanutGallery configuration
-            llm_provider: LLM provider for model calls
-            linking_service: For traversing memory links
-        """
-        self.config = config
         self.llm_provider = llm_provider
         self.linking = linking_service
 
@@ -142,7 +134,7 @@ class PeanutGalleryModel:
             messages=[{"role": "user", "content": prerunner_prompt}],
             stream=False,
             internal_llm='analysis',
-            max_tokens=self.config.prerunner_max_tokens
+            max_tokens=PG_PRERUNNER_MAX_TOKENS
         )
 
         response_text = self.llm_provider.extract_text_content(response).strip()
@@ -260,7 +252,7 @@ class PeanutGalleryModel:
         """
         # Extract message pairs for observer
         pairs = self._extract_message_pairs(messages)
-        recent_pairs = pairs[-self.config.message_window_pairs:]
+        recent_pairs = pairs[-PG_MESSAGE_WINDOW_PAIRS:]
 
         if len(recent_pairs) < 3:
             logger.debug("Not enough message pairs for observer evaluation")

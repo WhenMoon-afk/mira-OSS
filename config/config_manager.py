@@ -14,16 +14,10 @@ from pydantic import BaseModel, Field
 from config.config import (
     ApiConfig,
     ApiServerConfig,
-    ToolConfig,
     SystemConfig,
-    EmbeddingsConfig,
-    LTMemoryConfig,
+    ScheduledJobsConfig,
     LatticeConfig,
-    ContextConfig,
-    PeanutGalleryConfig,
-    ToolResultDisplayConfig,
     SidebarDispatcherConfig,
-    ImapTriggerConfig,
 )
 
 # Import the registry from tools package
@@ -35,16 +29,11 @@ class AppConfig(BaseModel):
     
     api: ApiConfig = Field(default_factory=ApiConfig)
     api_server: ApiServerConfig = Field(default_factory=ApiServerConfig)
-    tools: ToolConfig = Field(default_factory=ToolConfig)
     system: SystemConfig = Field(default_factory=SystemConfig)
-    embeddings: EmbeddingsConfig = Field(default_factory=EmbeddingsConfig)
-    lt_memory: LTMemoryConfig = Field(default_factory=LTMemoryConfig)
+    scheduled_jobs: ScheduledJobsConfig = Field(default_factory=ScheduledJobsConfig)
     lattice: LatticeConfig = Field(default_factory=LatticeConfig)
-    context: ContextConfig = Field(default_factory=ContextConfig)
-    peanutgallery: PeanutGalleryConfig = Field(default_factory=PeanutGalleryConfig)
-    tool_result_display: ToolResultDisplayConfig = Field(default_factory=ToolResultDisplayConfig)
     sidebar_dispatcher: SidebarDispatcherConfig = Field(default_factory=SidebarDispatcherConfig)
-    imap_trigger: ImapTriggerConfig = Field(default_factory=ImapTriggerConfig)
+
 
     # System prompt loaded once at startup
     system_prompt_text: str = Field(default="", exclude=True)

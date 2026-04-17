@@ -61,10 +61,7 @@ The agent's `complete_task` call is the **only** way to exit the loop. The base 
 |---------|---------------|---------------|
 | **Base class** | `agents/base.py` | SidebarAgent ABC, loop mechanics, trace capture |
 | **Dispatcher** | `agents/sidebar.py` | WorkItem, SidebarTrigger protocol, thread spawning |
-| **Trigger (IMAP)** | `agents/triggers/imap_trigger.py` | Polling, cheap discovery (no LLM), `on_dispatched` side effects |
-| **Action agent** | `agents/implementations/email_sidebar.py` | Rubric, tool schema restriction, scratchpad pre-read |
 | **Research agent** | `agents/implementations/forage_agent.py` | `inherit_base_prompt=False`, custom `on_completion()` |
-| **Tool schema override** | `email_sidebar.py:90-92` | Restricting tool operations for safety |
 | **Sidebar tool** | `tools/implementations/sidebar_tool.py` | Scratchpad + complete_task, SQLite schema |
 | **Direct invocation** | `tools/implementations/forage_tool.py:193-214` | Spawning agent from a tool (not dispatcher) |
 | **Scheduler wiring** | `utils/sidebar_jobs.py` | APScheduler registration, trigger setup |
@@ -155,9 +152,7 @@ class MyAgent(SidebarAgent):
     }
 ```
 
-**See:** `email_sidebar.py:90-92` -- restricts `email_tool` to `reply_to_email` only, omitting `send_email`, `search`, `read`, etc. The restricted schema is defined in the tool module itself (`email_tool.py:69-95`).
-
-This is your primary security boundary for tool misuse. An injected agent cannot call operations whose schemas aren't in its context.
+The restricted schema pattern (defining a narrowed `input_schema` with a subset of operations) is your primary security boundary for tool misuse. An injected agent cannot call operations whose schemas aren't in its context. See `email_tool.py:SIDEBAR_EMAIL_SCHEMA` for a template.
 
 ### Step 4: Override `on_completion()` (If Needed)
 
@@ -210,7 +205,7 @@ class MyTrigger:
 - `check_for_new_items()` must be **idempotent** and **cheap** -- safe to call repeatedly with no LLM calls. All LLM work (including injection defense) belongs in the agent, not the trigger.
 - **Dedup is handled by the dispatcher** via `sidebar_activity` SQLite. Triggers return all discovered items and the dispatcher decides what to act on (first dispatch, retry, or skip).
 - `on_dispatched()` is for domain-specific side effects only (e.g. setting an IMAP flag). It must be idempotent because it's called on retries too.
-- Handle your own errors. The dispatcher wraps each trigger in try/except, but your trigger should fail gracefully (return `[]` on connection errors, not crash).
+- **Error handling distinction**: Return `[]` to signal "no work found" (not an error). Raise `Exception` only for actual failures (connection errors, programming bugs). The dispatcher lets exceptions propagate — if a trigger has a bug, operators need to know via error logs, not silent `[]` returns.
 - Store untrusted content as `"raw_content"` in the WorkItem context. Set `sanitize_untrusted_input = True` on the agent class to have the base class sanitize it before the LLM loop.
 
 Register your trigger in `utils/sidebar_jobs.py`:
@@ -279,6 +274,51 @@ def build_recovery_context(self, prior_run: dict) -> str | None:
 ```
 
 If `build_recovery_context` returns `None` (default), the retry starts with the same initial message as the first run.
+
+### Step 9: Add a Sentry Gate (Optional)
+
+For agents triggered by periodic/speculative checks — where most evaluations result in "nothing to do" — the **sentry gate** prevents burning expensive main-loop tokens on idle polls. A cheap model (Haiku) makes a binary proceed/skip decision before the main loop runs.
+
+Set `sentry_llm_key` and override `build_sentry_message()`:
+
+```python
+class MyAgent(SidebarAgent):
+    sentry_llm_key = "my_sentry"     # internal_llm row for cheap model
+    sentry_max_tokens = 150          # Hard cap (default 150)
+
+    def build_sentry_message(self, work_item: 'WorkItem') -> str:
+        ctx = work_item.context
+        return (
+            "Evaluate whether action is needed:\n\n"
+            f"Current state: {ctx.get('state_summary', '(unknown)')}\n\n"
+            "Respond with:\n"
+            "<decision>proceed</decision> or <decision>skip</decision>\n"
+            "<reason>Brief explanation</reason>"
+        )
+```
+
+**How it works:**
+- Runs after injection defense, before the main LLM loop
+- One-shot LLM call — no tools, no system prompt, no loop
+- Default `parse_sentry_response()` expects `<decision>proceed|skip</decision>` and `<reason>...</reason>` XML tags. Override for custom formats.
+- If skip: writes `sidebar_activity` with `status='dismissed'`, calls `on_completion(status='skipped')`, exits. No main loop tokens burned.
+- **Fails open**: LLM errors, parse failures → proceed to main loop. The sentry is an optimization, not a safety gate.
+
+**When to use:**
+- Periodic triggers where most polls find nothing actionable (home automation, monitoring)
+- High-frequency triggers where the full agent is expensive
+- Any agent where a cheap model can reliably distinguish "worth investigating" from "nothing to do"
+
+**When NOT to use:**
+- Discrete-event agents (email, webhook) where every item needs handling
+- Directly invoked agents (forage) where the user explicitly requested work
+
+**DB setup:** Add an `internal_llm` row for the sentry model:
+
+```sql
+INSERT INTO internal_llm (name, tier, model, endpoint_url, api_key_name, max_tokens)
+VALUES ('my_sentry', 'cof', 'claude-haiku-4-5-20251001', 'https://api.anthropic.com', 'anthropic', 200);
+```
 
 ## Alternative: Direct Invocation (No Dispatcher)
 
@@ -380,6 +420,8 @@ The base class `run()` loop (you should not override this):
 - [ ] Trigger registered in `utils/sidebar_jobs.py`
 - [ ] Config in `config/config.py` and `config_manager.py`
 - [ ] `internal_llm` DB row for the agent's LLM config
+- [ ] `sentry_llm_key` + `build_sentry_message()` if agent needs a cheap pre-filter (Step 9)
+- [ ] `internal_llm` DB row for the sentry model (if using sentry)
 - [ ] `agents/CLAUDE.md` updated with new files
 - [ ] `tools/implementations/CLAUDE.md` updated if new tools were added
 
@@ -387,5 +429,4 @@ The base class `run()` loop (you should not override this):
 
 | Agent | Type | Key Patterns |
 |-------|------|--------------|
-| `email_sidebar.py` | Action (customer-facing) | Rubric, tool restriction, scratchpad pre-read, sanitized input |
 | `forage_agent.py` | Research (internal) | No base prompt, custom `on_completion()`, direct invocation |

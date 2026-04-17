@@ -9,7 +9,6 @@ import logging
 from typing import Optional
 
 from clients.vault_client import get_api_key
-from config.config import LTMemoryConfig
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.vector_ops import VectorOps
 from lt_memory.linking import LinkingService
@@ -35,6 +34,9 @@ from utils.database_session_manager import LTMemorySessionManager, get_shared_se
 
 logger = logging.getLogger(__name__)
 
+# Vault key name for Anthropic Batch API (separate from chat to isolate rate limits)
+BATCH_API_KEY_NAME = "anthropic_batch_key"
+
 # Singleton instance
 _lt_memory_factory_instance: Optional['LTMemoryFactory'] = None
 
@@ -43,73 +45,39 @@ class LTMemoryFactory:
     """
     Creates and manages all LT_Memory service instances with explicit dependencies.
 
-    Usage:
-        # Application initialization
-        factory = LTMemoryFactory(
-            config=config,
-            session_manager=session_manager,
-            embeddings_provider=embeddings,
-            llm_provider=llm,
-            conversation_repo=repo
-        )
+    Services use module-level constants for algorithm tuning (no config injection).
+    The factory wires infrastructure dependencies (DB, embeddings, LLM provider)
+    and manages service lifecycle.
 
-        # Access services
-        similar = factory.vector_ops.find_similar_memories(query)
-        factory.extraction_orchestrator.submit_segment_extraction(...)
-
-        # Cleanup on shutdown
-        factory.cleanup()
-
-    Benefits over singleton pattern:
-    - Explicit dependencies (no hidden global state)
-    - Testable (create fresh instances with mocks)
-    - Clear lifecycle (construct -> use -> cleanup)
-    - Each factory instance is independent (thread-safe within instance)
-
-    Note:
-        The Batch API client is created internally using the api_key_name from
-        config.batching. This isolates batch operations (memory extraction,
-        relationship classification) from interactive chat API usage.
+    The Batch API client is created internally using BATCH_API_KEY_NAME to isolate
+    batch operations from interactive chat API rate limits and costs.
     """
 
     def __init__(
         self,
-        config: LTMemoryConfig,
         session_manager: LTMemorySessionManager,
         embeddings_provider,
         llm_provider,
         conversation_repo
     ):
-        """
-        Initialize LT_Memory factory and create all service instances.
-
-        Args:
-            config: LT_Memory configuration
-            session_manager: Database session manager
-            embeddings_provider: Embeddings provider (mdbr-leaf-ir-asym 768d)
-            llm_provider: LLM provider for extraction/linking
-            conversation_repo: Continuum repository for message loading
-
-        Note:
-            The Batch API client is created internally using config.batching.api_key_name
-            to isolate batch operations from chat API rate limits and costs.
-        """
         logger.info("Initializing LTMemoryFactory")
 
-        self.config = config
         self._session_manager = session_manager
         self._embeddings_provider = embeddings_provider
         self._llm_provider = llm_provider
         self._conversation_repo = conversation_repo
 
-        # Create dedicated Anthropic client for Batch API operations
-        # Separate from chat client to isolate rate limits and enable independent cost tracking
-        batch_api_key = get_api_key(config.batching.api_key_name)
+        # Dedicated Anthropic client for Batch API (isolated rate limits and cost tracking)
+        batch_api_key = get_api_key(BATCH_API_KEY_NAME)
         self._batch_anthropic_client = anthropic.Anthropic(
             api_key=batch_api_key,
-            timeout=120.0  # Prevent indefinite hangs on streaming/paginated calls
+            timeout=120.0
         )
-        logger.info(f"Batch API client initialized with key '{config.batching.api_key_name}'")
+        logger.info(f"Batch API client initialized with key '{BATCH_API_KEY_NAME}'")
+
+        # Instrument batch client for SDK log correlation and traffic tap
+        from utils.logging_config import instrument_anthropic_client
+        instrument_anthropic_client(self._batch_anthropic_client)
 
         # Track initialization order for reverse cleanup
         self._service_init_order = []
@@ -135,8 +103,6 @@ class LTMemoryFactory:
             self.vector_ops = VectorOps(
                 embeddings_provider=self._embeddings_provider,
                 db=self.db,
-                vector_search_config=self.config.vector_search,
-                hybrid_search_config=self.config.hybrid_search
             )
             self._service_init_order.append(self.vector_ops)
         except Exception as e:
@@ -146,7 +112,6 @@ class LTMemoryFactory:
             # Layer 3: Core services (depend on db + vector_ops)
             logger.debug("Initializing LinkingService...")
             self.linking = LinkingService(
-                config=self.config.linking,
                 vector_ops=self.vector_ops,
                 db=self.db,
                 llm_provider=self._llm_provider
@@ -158,7 +123,6 @@ class LTMemoryFactory:
         try:
             logger.debug("Initializing RefinementService...")
             self.refinement = RefinementService(
-                config=self.config.refinement,
                 vector_ops=self.vector_ops,
                 db=self.db
             )
@@ -170,21 +134,18 @@ class LTMemoryFactory:
             # Layer 3.5: New processing components (depend on db + vector_ops)
             logger.debug("Initializing MemoryProcessor...")
             self.memory_processor = MemoryProcessor(
-                config=self.config.extraction,
                 vector_ops=self.vector_ops
             )
             self._service_init_order.append(self.memory_processor)
 
             logger.debug("Initializing ExtractionEngine...")
             self.extraction_engine = ExtractionEngine(
-                config=self.config.extraction,
                 db=self.db
             )
             self._service_init_order.append(self.extraction_engine)
 
             logger.debug("Initializing BatchCoordinator...")
             self.batch_coordinator = BatchCoordinator(
-                config=self.config.batching,
                 db=self.db,
                 anthropic_client=self._batch_anthropic_client
             )
@@ -198,8 +159,6 @@ class LTMemoryFactory:
                 db=self.db,
                 llm_provider=self._llm_provider,
                 batch_coordinator=self.batch_coordinator,
-                batching_config=self.config.batching,
-                extraction_config=self.config.extraction,
                 linking_service=self.linking
             )
             self._service_init_order.append(self.execution_strategy)
@@ -219,7 +178,6 @@ class LTMemoryFactory:
 
             logger.debug("Initializing ExtractionOrchestrator...")
             self.extraction_orchestrator = ExtractionOrchestrator(
-                config=self.config.batching,
                 extraction_engine=self.extraction_engine,
                 execution_strategy=self.execution_strategy,
                 continuum_repo=self._conversation_repo,
@@ -248,7 +206,6 @@ class LTMemoryFactory:
                 vector_ops=self.vector_ops,
                 db=self.db,
                 linking_service=self.linking,
-                batching_config=self.config.batching,
                 llm_provider=self._llm_provider,
                 batch_coordinator=self.batch_coordinator
             )
@@ -266,7 +223,6 @@ class LTMemoryFactory:
                 anthropic_client=self._batch_anthropic_client,
                 db=self.db,
                 consolidation_handler=self.consolidation_handler,
-                batching_config=self.config.batching
             )
             self._service_init_order.append(self.consolidation_result_handler)
 
@@ -287,7 +243,6 @@ class LTMemoryFactory:
             # Layer 4: Higher-level services (depend on multiple services)
             logger.debug("Initializing PostProcessingOrchestrator...")
             self.post_processing_orchestrator = PostProcessingOrchestrator(
-                config=self.config.batching,
                 refinement=self.refinement,
                 batch_coordinator=self.batch_coordinator,
                 consolidation_handler=self.consolidation_handler,
@@ -301,7 +256,6 @@ class LTMemoryFactory:
         try:
             logger.debug("Initializing ProactiveService...")
             self.proactive = ProactiveService(
-                config=self.config.proactive,
                 vector_ops=self.vector_ops,
                 linking_service=self.linking,
                 db=self.db,
@@ -314,11 +268,9 @@ class LTMemoryFactory:
         try:
             logger.debug("Initializing EntityGCService...")
             self.entity_gc = EntityGCService(
-                config=self.config.entity_gc,
                 db=self.db,
                 llm_provider=self._llm_provider,
                 batch_coordinator=self.batch_coordinator,
-                batching_config=self.config.batching,
             )
             self._service_init_order.append(self.entity_gc)
 
@@ -370,7 +322,6 @@ class LTMemoryFactory:
 
 
 def get_lt_memory_factory(
-    config: LTMemoryConfig = None,
     session_manager: LTMemorySessionManager = None,
     embeddings_provider = None,
     llm_provider = None,
@@ -380,27 +331,11 @@ def get_lt_memory_factory(
     """
     Get or create the singleton LTMemoryFactory instance.
 
-    ARCHITECTURAL NOTE - Initialization Contract:
-    =============================================
-    This singleton uses a simple (non-thread-safe) pattern that relies on
-    MIRA's sequential initialization contract:
-
-    1. All singletons are created during app startup (main.py:lifespan)
-    2. Initialization happens sequentially in a single thread
-    3. Server only accepts requests AFTER all singletons are initialized
-    4. After initialization, singletons are read-only (no concurrent writes)
-
-    This pattern is shared by most MIRA singletons (orchestrator, conversation_repo,
-    temporal_context) and is documented as intentional. Only database_session_manager
-    uses thread-safe double-check locking because it manages mutable connection pools
-    that could theoretically be accessed during initialization.
-
-    Thread Safety: NOT thread-safe during initialization. If MIRA's initialization
-    order changes (e.g., concurrent startup, dynamic plugin loading), this will need
-    double-check locking with threading.RLock() like database_session_manager.
+    Uses MIRA's sequential initialization contract: all singletons are created
+    during app startup (main.py:lifespan) in a single thread. Not thread-safe
+    during initialization.
 
     Args:
-        config: LT_Memory configuration (required on first call)
         session_manager: Database session manager (required on first call)
         embeddings_provider: Embeddings provider (required on first call)
         llm_provider: LLM provider (required on first call)
@@ -412,10 +347,6 @@ def get_lt_memory_factory(
 
     Raises:
         RuntimeError: If called without required arguments on first call
-
-    Note:
-        The Batch API client is created internally by the factory using the
-        api_key_name from config.batching (default: 'anthropic_batch_key').
     """
     global _lt_memory_factory_instance
 
@@ -425,18 +356,16 @@ def get_lt_memory_factory(
         _lt_memory_factory_instance = None
 
     if _lt_memory_factory_instance is None:
-        # First call - all arguments required
-        if not all([config, session_manager, embeddings_provider,
+        if not all([session_manager, embeddings_provider,
                     llm_provider, conversation_repo]):
             raise RuntimeError(
                 "First call to get_lt_memory_factory requires all arguments: "
-                "config, session_manager, embeddings_provider, llm_provider, "
+                "session_manager, embeddings_provider, llm_provider, "
                 "conversation_repo"
             )
 
         logger.info("Creating new LTMemoryFactory singleton")
         _lt_memory_factory_instance = LTMemoryFactory(
-            config=config,
             session_manager=session_manager,
             embeddings_provider=embeddings_provider,
             llm_provider=llm_provider,

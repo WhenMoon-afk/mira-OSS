@@ -97,9 +97,9 @@ GRANT ALL ON SCHEMA public TO mira_admin;
 -- USERS & AUTH TABLES
 -- =====================================================================
 
--- Account tiers table (defines available tiers and their LLM configs)
+-- Conversation LLM table (user-selectable models for conversations)
 -- Must be created before users table due to FK reference
-CREATE TABLE IF NOT EXISTS account_tiers (
+CREATE TABLE IF NOT EXISTS conversation_llm (
     name VARCHAR(20) PRIMARY KEY,
     model VARCHAR(100) NOT NULL,
     thinking_budget INT NOT NULL DEFAULT 0,
@@ -111,12 +111,12 @@ CREATE TABLE IF NOT EXISTS account_tiers (
     hidden BOOLEAN NOT NULL DEFAULT FALSE
 );
 
-INSERT INTO account_tiers (name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, hidden) VALUES
+INSERT INTO conversation_llm (name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, hidden) VALUES
     ('primary', 'claude-sonnet-4-6', 0, 'Primary', 1, 'anthropic', NULL, NULL, FALSE)
 ON CONFLICT (name) DO NOTHING;
 
 -- Internal LLM configurations for system operations (not user-facing)
--- Contrasts with account_tiers which handles user-facing tier selection
+-- Contrasts with conversation_llm which handles user-facing model selection
 -- Every config has two rows: 'free' (no card on file) and 'cof' (card on file)
 -- For cheap models, both rows point to the same model
 CREATE TABLE IF NOT EXISTS internal_llm (
@@ -133,7 +133,7 @@ CREATE TABLE IF NOT EXISTS internal_llm (
 
 INSERT INTO internal_llm (name, tier, model, endpoint_url, api_key_name, description, max_tokens, effort) VALUES
     -- COF configs: Anthropic models via direct API
-    ('summary', 'cof', 'claude-opus-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'Segment summary generation', 10000, 'high'),
+    ('summary', 'cof', 'google/gemma-4-31b-it', 'https://openrouter.ai/api/v1/chat/completions', 'openaicompat_key', 'Segment summary generation', 10000, NULL),
     ('assessment', 'cof', 'claude-opus-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'Assessment extraction', 10000, NULL),
     ('synthesis', 'cof', 'claude-opus-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'User model synthesis', 10000, NULL),
     ('extraction', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_batch_key', 'Memory extraction', 16000, 'high'),
@@ -144,8 +144,10 @@ INSERT INTO internal_llm (name, tier, model, endpoint_url, api_key_name, descrip
     ('critic', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'User model critic', 10000, NULL),
     -- Subcortical: same model for both tiers via Groq
     ('analysis', 'cof', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'subcortical_key', 'Subcortical analysis', 3072, NULL),
-    -- Forage: COF gets Sonnet for tool-calling, free gets OSS 120B via Groq
-    ('forage', 'cof', 'claude-sonnet-4-6', 'https://api.anthropic.com/v1/messages', 'anthropic_key', 'Forage agent tool-calling loop', 4096, NULL)
+    -- Forage: COF gets Kimi K2 via OpenRouter, free gets OSS 120B via Groq
+    ('forage', 'cof', 'moonshotai/kimi-k2-thinking', 'https://openrouter.ai/api/v1/chat/completions', 'openaicompat_key', 'Forage agent tool-calling loop', 4096, NULL),
+    -- Overwatch: passive agent iteration observer, same cheap model as subcortical
+    ('overwatch', 'cof', 'qwen/qwen3-32b', 'https://api.groq.com/openai/v1/chat/completions', 'subcortical_key', 'Passive agent iteration observer', 100, NULL)
 ON CONFLICT (name, tier) DO NOTHING;
 
 GRANT SELECT ON internal_llm TO mira_dbuser;
@@ -162,8 +164,9 @@ CREATE TABLE IF NOT EXISTS usage_pricing (
 );
 
 INSERT INTO usage_pricing (name) VALUES
-    -- Account tier
-    ('primary'),
+    -- Conversation LLMs (one model per config)
+    ('gemini-deep'), ('minimax'), ('claude-high'), ('claude-opus-3'),
+    ('gemma'), ('experimental'), ('gpt-legacy'), ('demo'),
     -- Internal LLM configs (tier-qualified: different models per free/cof)
     ('analysis:cof'), ('analysis:free'),
     ('consolidation:cof'), ('consolidation:free'),
@@ -196,8 +199,8 @@ CREATE TABLE IF NOT EXISTS users (
     cumulative_activity_days INT DEFAULT 0,
     last_activity_date DATE,
 
-    -- LLM tier preference
-    llm_tier VARCHAR(20) DEFAULT 'primary' REFERENCES account_tiers(name),
+    -- Conversation LLM preference
+    conversation_llm VARCHAR(20) DEFAULT 'gemma' REFERENCES conversation_llm(name),
 
     -- Balance in USD (OSS: seeded high since user brings own API key)
     balance_usd DECIMAL(12,6) NOT NULL DEFAULT 0.00,
@@ -215,8 +218,8 @@ CREATE TABLE IF NOT EXISTS users (
     portrait_generated_at TIMESTAMP WITH TIME ZONE
 );
 
--- Grant SELECT on account_tiers to application user
-GRANT SELECT ON account_tiers TO mira_dbuser;
+-- Grant SELECT on conversation_llm to application user
+GRANT SELECT ON conversation_llm TO mira_dbuser;
 
 COMMENT ON COLUMN users.cumulative_activity_days IS 'Total number of days user has sent at least one message (activity-based time metric)';
 COMMENT ON COLUMN users.last_activity_date IS 'Last date user sent a message (prevents double-counting same day)';
@@ -324,6 +327,28 @@ CREATE TABLE IF NOT EXISTS domain_knowledge_block_content (
 COMMENT ON TABLE domain_knowledge_block_content IS 'Actual content/value of domain knowledge blocks';
 COMMENT ON COLUMN domain_knowledge_block_content.block_value IS 'The knowledge content text';
 COMMENT ON COLUMN domain_knowledge_block_content.letta_block_id IS 'External Letta block ID for sync tracking';
+
+-- =====================================================================
+-- DOMAINDOC SHARING (cross-user domain document collaboration)
+-- =====================================================================
+
+CREATE TABLE IF NOT EXISTS domaindoc_shares (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    domaindoc_label TEXT NOT NULL,
+    collaborator_user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected', 'revoked')),
+    invited_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    accepted_at TIMESTAMP WITH TIME ZONE,
+    UNIQUE(owner_user_id, domaindoc_label, collaborator_user_id)
+);
+
+CREATE INDEX idx_domaindoc_shares_collaborator ON domaindoc_shares(collaborator_user_id, status);
+CREATE INDEX idx_domaindoc_shares_owner ON domaindoc_shares(owner_user_id, status);
+CREATE INDEX idx_domaindoc_shares_label ON domaindoc_shares(domaindoc_label);
+
+COMMENT ON TABLE domaindoc_shares IS 'Cross-user domaindoc sharing with consent flow (pending→accepted)';
+COMMENT ON COLUMN domaindoc_shares.status IS 'pending: awaiting acceptance, accepted: collaborator has access, rejected: collaborator declined, revoked: owner revoked access';
 
 -- =====================================================================
 -- CONTINUUM & MESSAGES (conversation architecture)
@@ -780,6 +805,7 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON
             users, users_trash, magic_links,
             user_activity_days, domain_knowledge_blocks, domain_knowledge_block_content,
+            domaindoc_shares,
             continuums, messages,
             memories, entities, extraction_batches, post_processing_batches,
             feedback_signals, feedback_synthesis_tracking,
@@ -868,6 +894,20 @@ ALTER TABLE billing_transactions ENABLE ROW LEVEL SECURITY;
 CREATE POLICY billing_transactions_user_policy ON billing_transactions
     FOR ALL TO PUBLIC
     USING (user_id = current_setting('app.current_user_id', true)::uuid);
+
+-- Domaindoc sharing: owner manages their own shares, collaborator views/accepts/rejects theirs
+ALTER TABLE domaindoc_shares ENABLE ROW LEVEL SECURITY;
+CREATE POLICY domaindoc_shares_owner_all ON domaindoc_shares
+    FOR ALL TO PUBLIC
+    USING (owner_user_id = current_setting('app.current_user_id')::uuid)
+    WITH CHECK (owner_user_id = current_setting('app.current_user_id')::uuid);
+CREATE POLICY domaindoc_shares_collaborator_select ON domaindoc_shares
+    FOR SELECT TO PUBLIC
+    USING (collaborator_user_id = current_setting('app.current_user_id')::uuid);
+CREATE POLICY domaindoc_shares_collaborator_update ON domaindoc_shares
+    FOR UPDATE TO PUBLIC
+    USING (collaborator_user_id = current_setting('app.current_user_id')::uuid)
+    WITH CHECK (collaborator_user_id = current_setting('app.current_user_id')::uuid);
 
 -- Note: extraction_batches and post_processing_batches do NOT have RLS
 -- These are system tracking tables accessed by admin polling jobs

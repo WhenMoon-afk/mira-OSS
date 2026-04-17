@@ -10,7 +10,7 @@ Every tool follows this exact four-part structure:
 
 Per-user credentials via `UserCredentialService().get_credential(type, service_name)`. Raise on missing — never fall back to a default or env var.
 
-User-scoped file storage: `data/users/{user_id}/tmp/{file_id}/{uuid4_hex}.bin` + `.meta` sidecar (`filename`, `mime_type`). Served by `/files/{file_id}` (download) or `/images/{file_id}` (inline).
+User-scoped file storage: `data/users/{user_id}/artifacts/{file_id}/{uuid4_hex}.bin` + `.meta` sidecar (`filename`, `mime_type`). Served by `/files/{file_id}` (download) or `/images/{file_id}` (inline). Persistent across segments — no segment-collapse cleanup.
 
 Tools returning images use two special result-dict keys: `_content_blocks` (list of Anthropic content blocks — `LLMProvider` pops and passes natively) and `_image_artifact` (`{file_id, alt_text}` — orchestrator emits `![alt](/v0/api/images/{file_id})` to stream).
 
@@ -20,9 +20,11 @@ Every `anthropic_schema` parameter description is an LLM caller contract. Use ex
 
 - `contacts_tool.py` — Contact CRUD, search, and group management; owns `contacts` SQLite schema
 - `continuum_tool.py` — Conversation and segment operations (search, navigation) against the CNS continuum
-- `domaindoc_tool.py` — Domain knowledge document management; always-active essential tool; `anthropic_schema` is a `@property` that builds a live catalog from SQLite at schema-read time; `request_create`/`request_delete` return UI guidance only (noops)
-- `email_tool.py` — Email send/read via user-configured provider credential
+- `domaindoc_tool.py` — Domain knowledge document management; always-active essential tool; `anthropic_schema` is a `@property` that builds a live catalog from SQLite at schema-read time; `request_create`/`request_delete` return UI guidance only (noops). Supports shared domaindocs via `utils.domaindoc_shares` — collaborators can edit sections, version history records actor info
+- `email_tool.py` — Email send/read via user-configured provider credential; `reasoning` param required on all mutating ops (send, reply, delete, move, mark, draft), logged to `email_action_audit` SQLite table with `encrypted__` fields for Stage 2 autonomy analysis
+- `homeassistant_tool.py` — Home Assistant smart home control via REST API; local SQLite entity registry for fuzzy name resolution; toggle states and query device data
 - `forage_tool.py` — Speculative background context gathering; fire-and-forget trigger that dispatches `ForageAgent` via `agents/implementations/forage_agent.py`; two params (`query` + `context`) to launch, `dismiss_task_id` to clear results; publishes to `ForageTrinket`
+- `whilethecatsaway_tool.py` — Curiosity-driven background research; fire-and-forget dispatch of `WhileTheCatsAwayAgent` in batch mode; two params (`topic` + `context`); findings stored as LT_Memory, summary published to `WhileTheCatsAwayTrinket`
 - `imagegen_tool.py` — Image generation/refinement via Google Gemini with Chat-based lineage; `generate` opens a new session, `refine` replays full history, `publish` emits `_image_artifact`; per-user API key via `UserCredentialService('google_genai')`; images uploaded to Anthropic Files API uncompressed
 - `invokeother_tool.py` — Meta-tool for on-demand loading of non-essential tools at runtime
 - `kasa_tool.py` — TP-Link Kasa smart home device control
@@ -33,7 +35,7 @@ Every `anthropic_schema` parameter description is an LLM caller contract. Use ex
 - `reminder_tool.py` — Reminder scheduling and management
 - `square_tool.py` — Square payment and POS integration
 - `weather_tool.py` — Weather data retrieval
-- `web_tool.py` — Web search (Kagi primary, DuckDuckGo fallback) and page scraping
+- `web_tool.py` — Web search (Kagi primary, DuckDuckGo fallback), page content extraction (trafilatura; HTTP first, Playwright escalation for JS-heavy pages), and HTTP requests
 - `sidebar_tool.py` — Sidebar agent lifecycle: scratchpad (write/read/clear notes) and `complete_task` (writes to `sidebar_activity` SQLite). Disabled (`enabled: False`) — sidebar agents only, not main conversation
 - `sidebaragents_tool.py` — Main conversation tool for managing sidebar activity: `list_activity`, `get_details`, `dismiss`, `resolve`. Reads from same `sidebar_activity`/`scratchpad` tables that `sidebar_tool` writes. Takes `WorkingMemory` for event_bus access
 - `schemas/contacts_tool.sql` — DDL for the contacts SQLite schema owned by `contacts_tool.py`

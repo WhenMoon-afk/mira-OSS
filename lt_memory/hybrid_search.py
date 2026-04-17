@@ -14,11 +14,29 @@ from typing import List, Tuple, Optional, TYPE_CHECKING
 from collections import defaultdict
 
 if TYPE_CHECKING:
-    from config.config import HybridSearchConfig
     from lt_memory.db_access import LTMemoryDB
     from lt_memory.models import Memory
 
 logger = logging.getLogger(__name__)
+
+# Search defaults
+HYBRID_DEFAULT_LIMIT = 20
+HYBRID_DEFAULT_SIMILARITY_THRESHOLD = 0.5
+HYBRID_DEFAULT_MIN_IMPORTANCE = 0.1
+HYBRID_OVERSAMPLE_MULTIPLIER = 2
+
+# Intent-based weights: (bm25_weight, vector_weight)
+INTENT_RECALL_BM25 = 0.6
+INTENT_RECALL_VECTOR = 0.4
+INTENT_EXPLORE_BM25 = 0.3
+INTENT_EXPLORE_VECTOR = 0.7
+INTENT_EXACT_BM25 = 0.8
+INTENT_EXACT_VECTOR = 0.2
+INTENT_GENERAL_BM25 = 0.4
+INTENT_GENERAL_VECTOR = 0.6
+
+# Reciprocal Rank Fusion
+RRF_K = 60
 
 
 class HybridSearcher:
@@ -32,16 +50,8 @@ class HybridSearcher:
     which provides a proper retrieval path rather than score boosting.
     """
 
-    def __init__(self, db_access: 'LTMemoryDB', config: Optional['HybridSearchConfig'] = None):
-        """
-        Initialize hybrid searcher.
-
-        Args:
-            db_access: LTMemoryDB instance for database operations
-            config: HybridSearchConfig instance (uses defaults if None)
-        """
+    def __init__(self, db_access: 'LTMemoryDB'):
         self.db = db_access
-        self.config = config
 
     def hybrid_search(
         self,
@@ -66,17 +76,10 @@ class HybridSearcher:
         Returns:
             List of Memory objects ranked by hybrid score
         """
-        # Resolve defaults from config
-        if self.config:
-            limit = limit if limit is not None else self.config.default_limit
-            similarity_threshold = similarity_threshold if similarity_threshold is not None else self.config.default_similarity_threshold
-            min_importance = min_importance if min_importance is not None else self.config.default_min_importance
-            oversample = self.config.oversample_multiplier
-        else:
-            limit = limit if limit is not None else 20
-            similarity_threshold = similarity_threshold if similarity_threshold is not None else 0.5
-            min_importance = min_importance if min_importance is not None else 0.1
-            oversample = 2
+        limit = limit if limit is not None else HYBRID_DEFAULT_LIMIT
+        similarity_threshold = similarity_threshold if similarity_threshold is not None else HYBRID_DEFAULT_SIMILARITY_THRESHOLD
+        min_importance = min_importance if min_importance is not None else HYBRID_DEFAULT_MIN_IMPORTANCE
+        oversample = HYBRID_OVERSAMPLE_MULTIPLIER
 
         # Run searches in parallel (would be async in production)
         bm25_results = self._bm25_search(
@@ -92,21 +95,12 @@ class HybridSearcher:
             min_importance=min_importance
         )
 
-        # Apply intent-based weighting (from config or defaults)
-        if self.config:
-            weights = {
-                "recall": (self.config.intent_recall_bm25, self.config.intent_recall_vector),
-                "explore": (self.config.intent_explore_bm25, self.config.intent_explore_vector),
-                "exact": (self.config.intent_exact_bm25, self.config.intent_exact_vector),
-                "general": (self.config.intent_general_bm25, self.config.intent_general_vector)
-            }
-        else:
-            weights = {
-                "recall": (0.6, 0.4),    # User trying to remember - favor exact matches
-                "explore": (0.3, 0.7),   # User exploring concepts - favor semantic similarity
-                "exact": (0.8, 0.2),     # User used specific phrases - strong BM25 preference
-                "general": (0.4, 0.6)    # Balanced approach for ambient understanding
-            }
+        weights = {
+            "recall": (INTENT_RECALL_BM25, INTENT_RECALL_VECTOR),
+            "explore": (INTENT_EXPLORE_BM25, INTENT_EXPLORE_VECTOR),
+            "exact": (INTENT_EXACT_BM25, INTENT_EXACT_VECTOR),
+            "general": (INTENT_GENERAL_BM25, INTENT_GENERAL_VECTOR),
+        }
 
         bm25_weight, vector_weight = weights.get(search_intent, weights["general"])
 
@@ -246,7 +240,7 @@ class HybridSearcher:
         discrimination. We apply sigmoid transformation to spread scores into
         a useful 0-1 range for meaningful thresholding and interpretability.
         """
-        k = self.config.rrf_k if self.config else 60  # RRF constant
+        k = RRF_K
 
         # Calculate raw RRF scores
         rrf_scores = defaultdict(float)

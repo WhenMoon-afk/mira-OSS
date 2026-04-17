@@ -15,11 +15,15 @@ from lt_memory.models import (
     ConsolidationCluster,
     ConsolidationPayload,
 )
-from config.config import RefinementConfig
 from lt_memory.vector_ops import VectorOps
 from lt_memory.db_access import LTMemoryDB
 
 logger = logging.getLogger(__name__)
+
+# Consolidation tuning
+CONSOLIDATION_SIMILARITY_THRESHOLD = 0.85
+MIN_CLUSTER_SIZE = 2
+MAX_CONSOLIDATION_REJECTION_COUNT = 3
 
 
 class RefinementService:
@@ -33,19 +37,9 @@ class RefinementService:
 
     def __init__(
         self,
-        config: RefinementConfig,
         vector_ops: VectorOps,
         db: LTMemoryDB
     ):
-        """
-        Initialize refinement service.
-
-        Args:
-            config: Refinement configuration
-            vector_ops: Vector operations for similarity search
-            db: Database access layer
-        """
-        self.config = config
         self.vector_ops = vector_ops
         self.db = db
         self._load_prompts()
@@ -88,12 +82,12 @@ class RefinementService:
             List of ConsolidationCluster objects
         """
         if min_cluster_size is None:
-            min_cluster_size = self.config.min_cluster_size
+            min_cluster_size = MIN_CLUSTER_SIZE
 
         all_memories = self.db.get_all_memories(include_archived=False)
         eligible = [
             m for m in all_memories
-            if m.consolidation_rejection_count < self.config.max_consolidation_rejection_count
+            if m.consolidation_rejection_count < MAX_CONSOLIDATION_REJECTION_COUNT
         ]
         eligible_ids = {m.id for m in eligible}
 
@@ -105,7 +99,7 @@ class RefinementService:
             neighbors = self.vector_ops.find_similar_by_embedding(
                 query_embedding=memory.embedding,
                 limit=21,  # +1 to account for self-match
-                similarity_threshold=self.config.consolidation_similarity_threshold,
+                similarity_threshold=CONSOLIDATION_SIMILARITY_THRESHOLD,
                 min_importance=0.001
             )
             for neighbor in neighbors:

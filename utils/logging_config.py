@@ -249,10 +249,13 @@ def setup_anthropic_sdk_logging(log_dir: str = "logs"):
 
 
 def instrument_anthropic_client(client: 'anthropic.Anthropic') -> None:
-    """Attach response hooks to an Anthropic client for request logging.
+    """Attach event hooks to an Anthropic client for request logging and traffic tap.
 
-    Adds an httpx response event hook that logs req_id → query content
-    for every API call. Call this after constructing the client.
+    Adds httpx event hooks for:
+    - Response: req_id → query content correlation (SDK log file)
+    - Request: full-body capture for the LLM traffic tap (llm_requests.jsonl)
+
+    Call this after constructing the client.
     """
     # Access the underlying httpx client to add event hooks
     http_client = getattr(client, '_client', None)
@@ -270,3 +273,7 @@ def instrument_anthropic_client(client: 'anthropic.Anthropic') -> None:
         return
 
     event_hooks.setdefault("response", []).append(_on_anthropic_response)
+
+    # Traffic tap: capture full request body when tap is active
+    from utils.llm_tap import httpx_request_hook
+    event_hooks.setdefault("request", []).append(httpx_request_hook)

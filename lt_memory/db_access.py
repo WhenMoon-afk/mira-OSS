@@ -162,41 +162,48 @@ class LTMemoryDB:
         from utils.user_context import get_user_cumulative_activity_days
         current_activity_days = get_user_cumulative_activity_days()
 
+        if embeddings is None:
+            embeddings = [None] * len(memories)
+
         with self.session_manager.get_session(resolved_user_id) as session:
             with session.transaction():
-                created_ids = []
+                params: Dict[str, Any] = {
+                    'user_id': resolved_user_id,
+                    'created_at': utc_now(),
+                    'activity_days_at_creation': current_activity_days,
+                    'activity_days_at_last_access': current_activity_days,
+                }
+                values_clauses = []
 
                 for idx, memory in enumerate(memories):
-                    insert_sql = """
-                    INSERT INTO memories (
-                        user_id, text, embedding, importance_score,
-                        expires_at, happens_at, created_at,
-                        activity_days_at_creation, activity_days_at_last_access,
-                        source_segment_id
-                    ) VALUES (
-                        %(user_id)s, %(text)s, %(embedding)s, %(importance_score)s,
-                        %(expires_at)s, %(happens_at)s, %(created_at)s,
-                        %(activity_days_at_creation)s, %(activity_days_at_last_access)s,
-                        %(source_segment_id)s
-                    ) RETURNING id
-                    """
+                    values_clauses.append(
+                        f"(%(user_id)s, %(text_{idx})s, %(embedding_{idx})s, "
+                        f"%(importance_score_{idx})s, %(expires_at_{idx})s, "
+                        f"%(happens_at_{idx})s, %(created_at)s, "
+                        f"%(activity_days_at_creation)s, %(activity_days_at_last_access)s, "
+                        f"%(source_segment_id_{idx})s)"
+                    )
+                    params[f'text_{idx}'] = memory.text
+                    params[f'embedding_{idx}'] = embeddings[idx]
+                    params[f'importance_score_{idx}'] = memory.importance_score
+                    params[f'expires_at_{idx}'] = memory.expires_at
+                    params[f'happens_at_{idx}'] = memory.happens_at
+                    params[f'source_segment_id_{idx}'] = (
+                        str(memory.source_segment_id) if memory.source_segment_id else None
+                    )
 
-                    insert_data = {
-                        'user_id': resolved_user_id,
-                        'text': memory.text,
-                        'embedding': embeddings[idx] if embeddings else None,
-                        'importance_score': memory.importance_score,
-                        'expires_at': memory.expires_at,
-                        'happens_at': memory.happens_at,
-                        'created_at': utc_now(),
-                        'activity_days_at_creation': current_activity_days,
-                        'activity_days_at_last_access': current_activity_days,
-                        'source_segment_id': str(memory.source_segment_id) if memory.source_segment_id else None
-                    }
+                insert_sql = f"""
+                INSERT INTO memories (
+                    user_id, text, embedding, importance_score,
+                    expires_at, happens_at, created_at,
+                    activity_days_at_creation, activity_days_at_last_access,
+                    source_segment_id
+                ) VALUES {', '.join(values_clauses)}
+                RETURNING id
+                """
 
-                    result = session.execute_single(insert_sql, insert_data)
-                    if result:
-                        created_ids.append(result['id'])
+                results = session.execute_query(insert_sql, params)
+                created_ids = [row['id'] for row in results]
 
                 logger.info(f"Created {len(created_ids)} memories for user {resolved_user_id}")
                 return created_ids

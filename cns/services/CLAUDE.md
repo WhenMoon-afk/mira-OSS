@@ -25,6 +25,8 @@
 - `portrait_service.py` — Synthesizes a prose user portrait (150–250 words) from collapsed segment summaries. Read-only at turn time via `read_portrait(user_id)`; synthesis triggered by segment collapse chain, gated by use-day modular arithmetic. Uses `internal_llm='portrait'`. Stores result on `users.portrait`.
 - `manifest_query_service.py` — Segment data retrieval for manifest display. Valkey-cached with event-driven invalidation on `ManifestUpdatedEvent`. Singleton via `initialize_manifest_query_service()` / `get_manifest_query_service()` split. Exports `ManifestSegment` TypedDict.
 - `domaindoc_summary_service.py` — One-sentence section summaries for DomainDoc via `internal_llm='analysis'`. Module-level singletons with lazy init.
+- `pollers/segment_poller.py` — `SegmentPoller` ABC: generic base for services that poll external sources during active conversation segments. Per-user daemon threads start on `ComposeSystemPromptEvent`, stop on `SegmentCollapsedEvent`. Subclasses implement `_try_load_config()` and `_poll_once(config)`.
+- `pollers/inbox_poller.py` — `InboxPollerService(SegmentPoller)`: IMAP subclass. Polls unread email headers every 3 minutes, publishes to `EmailTrinket` via `UpdateTrinketEvent`. Lightweight IMAP (readonly, PEEK, headers only). Credentials via `UserCredentialService("tool_config", "email_tool")`.
 
 ## Wiring
 

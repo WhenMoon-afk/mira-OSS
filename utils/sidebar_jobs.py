@@ -25,16 +25,8 @@ def register_sidebar_jobs(scheduler_service, tool_repo, event_bus) -> None:
         tool_repo=tool_repo,
         event_bus=event_bus,
         max_concurrent_agents=sidebar_config.max_concurrent_agents,
+        max_concurrent_batch_agents=sidebar_config.max_concurrent_batch_agents,
     )
-
-    # Register IMAP trigger if enabled
-    imap_config = config.imap_trigger
-    if imap_config.enabled:
-        from agents.triggers.imap_trigger import ImapTrigger
-        trigger = ImapTrigger(
-            max_age_hours=imap_config.max_age_hours,
-        )
-        dispatcher.register_trigger(trigger)
 
     scheduler_service.register_job(
         job_id="sidebar_dispatcher_poll",

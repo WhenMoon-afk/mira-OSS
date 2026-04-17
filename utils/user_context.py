@@ -166,7 +166,7 @@ def set_current_segment_id(segment_id: str) -> contextvars.Token:
 
 
 # ============================================================
-# AccountTiers - Database-backed tier definitions
+# ConversationLLM - Database-backed conversation LLM definitions
 # ============================================================
 
 class LLMProvider(str, Enum):
@@ -176,8 +176,8 @@ class LLMProvider(str, Enum):
 
 
 @dataclass(frozen=True)
-class TierConfig:
-    """LLM configuration for a tier."""
+class ConversationLLMConfig:
+    """LLM configuration for a user-facing conversation model."""
     name: str
     model: str
     thinking_budget: int
@@ -189,28 +189,28 @@ class TierConfig:
     hidden: bool = False
 
 
-# Module-level cache for tiers (loaded once per process)
-_tiers_cache: Optional[dict[str, TierConfig]] = None
+# Module-level cache for conversation LLMs (loaded once per process)
+_conversation_llm_cache: Optional[dict[str, ConversationLLMConfig]] = None
 
 
-def get_account_tiers() -> dict[str, TierConfig]:
+def get_conversation_llms() -> dict[str, ConversationLLMConfig]:
     """
-    Get all available account tiers from database.
-    Cached at module level (tiers rarely change).
+    Get all available conversation LLM configs from database.
+    Cached at module level (configs rarely change).
     """
-    global _tiers_cache
-    if _tiers_cache is not None:
-        return _tiers_cache
+    global _conversation_llm_cache
+    if _conversation_llm_cache is not None:
+        return _conversation_llm_cache
 
     from clients.postgres_client import PostgresClient
     db = PostgresClient('mira_service')
 
     results = db.execute_query(
-        "SELECT name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, hidden FROM account_tiers ORDER BY display_order"
+        "SELECT name, model, thinking_budget, description, display_order, provider, endpoint_url, api_key_name, hidden FROM conversation_llm ORDER BY display_order"
     )
 
-    _tiers_cache = {
-        row['name']: TierConfig(
+    _conversation_llm_cache = {
+        row['name']: ConversationLLMConfig(
             name=row['name'],
             model=row['model'],
             thinking_budget=row['thinking_budget'],
@@ -223,15 +223,15 @@ def get_account_tiers() -> dict[str, TierConfig]:
         )
         for row in results
     }
-    return _tiers_cache
+    return _conversation_llm_cache
 
 
-def resolve_tier(tier_name: str) -> TierConfig:
-    """Get LLM config for a tier name."""
-    tiers = get_account_tiers()
-    if tier_name not in tiers:
-        raise ValueError(f"Unknown tier: {tier_name}")
-    return tiers[tier_name]
+def resolve_conversation_llm(name: str) -> ConversationLLMConfig:
+    """Get LLM config for a conversation LLM name."""
+    conversation_llms = get_conversation_llms()
+    if name not in conversation_llms:
+        raise ValueError(f"Unknown conversation LLM: {name}")
+    return conversation_llms[name]
 
 
 
@@ -349,7 +349,7 @@ class UserPreferences(BaseModel):
     timezone: str = Field(default="America/Chicago")
     temperature_unit: str = Field(default="fahrenheit")
     memory_manipulation_enabled: bool = Field(default=True)
-    llm_tier: str = Field(default="primary")
+    conversation_llm: str = Field(default="primary")
     created_at: Optional[datetime] = None
 
 
@@ -381,7 +381,7 @@ def get_user_preferences() -> UserPreferences:
     # Cache miss - fetch from database
     db = PostgresClient('mira_service')
     result = db.execute_single(
-        """SELECT first_name, last_name, timezone, temperature_unit, memory_manipulation_enabled, llm_tier, created_at
+        """SELECT first_name, last_name, timezone, temperature_unit, memory_manipulation_enabled, conversation_llm, created_at
            FROM users WHERE id = %s""",
         (user_id,)
     )
@@ -392,7 +392,7 @@ def get_user_preferences() -> UserPreferences:
         timezone=result.get('timezone') or 'America/Chicago',
         temperature_unit=result.get('temperature_unit') or 'fahrenheit',
         memory_manipulation_enabled=result.get('memory_manipulation_enabled', True),
-        llm_tier=result.get('llm_tier') or 'minimax',
+        conversation_llm=result.get('conversation_llm') or 'minimax',
         created_at=result.get('created_at'),
     )
 
@@ -407,7 +407,7 @@ def update_user_preference(field: str, value: Any) -> UserPreferences:
     Update a single preference field in database and invalidate cache.
 
     Args:
-        field: Preference field name (timezone, llm_tier, etc.)
+        field: Preference field name (timezone, conversation_llm, etc.)
         value: New value for the field
 
     Returns:

@@ -20,7 +20,6 @@ from uuid import UUID
 from cns.core.message import preprocess_content_blocks
 from lt_memory.models import ProcessingChunk, MemoryContext
 from lt_memory.db_access import LTMemoryDB
-from config.config import ExtractionConfig
 from utils.tag_parser import format_memory_id
 
 logger = logging.getLogger(__name__)
@@ -70,15 +69,7 @@ class ExtractionEngine:
     Does NOT make LLM calls or process responses - that's for ExecutionStrategy and MemoryProcessor.
     """
 
-    def __init__(self, config: ExtractionConfig, db: LTMemoryDB):
-        """
-        Initialize extraction engine.
-
-        Args:
-            config: Extraction configuration parameters
-            db: Database access for memory queries
-        """
-        self.config = config
+    def __init__(self, db: LTMemoryDB):
         self.db = db
         self._load_prompts()
 

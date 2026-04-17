@@ -87,13 +87,16 @@ class SidebarDispatcher:
         tool_repo: 'ToolRepository',
         event_bus: 'EventBus',
         max_concurrent_agents: int = 3,
+        max_concurrent_batch_agents: int = 3,
     ):
         self.tool_repo = tool_repo
         self.event_bus = event_bus
         self.max_concurrent_agents = max_concurrent_agents
+        self.max_concurrent_batch_agents = max_concurrent_batch_agents
         self._triggers: list[SidebarTrigger] = []
         # Key: "interface_name:item_id", Value: Thread
         self._active_agents: dict[str, threading.Thread] = {}
+        self._active_batch_agents: dict[str, threading.Thread] = {}
         # Rate limiter for per-user cleanup (user_id → last cleanup timestamp)
         self._last_cleanup: dict[str, float] = {}
 
@@ -108,6 +111,9 @@ class SidebarDispatcher:
         # Prune finished agents
         self._active_agents = {
             key: t for key, t in self._active_agents.items() if t.is_alive()
+        }
+        self._active_batch_agents = {
+            key: t for key, t in self._active_batch_agents.items() if t.is_alive()
         }
 
         users = self._get_eligible_users()
@@ -141,52 +147,40 @@ class SidebarDispatcher:
         self._maybe_cleanup(db, user_id)
 
         for trigger in self._triggers:
-            try:
-                items = trigger.check_for_new_items(user_id)
-                if not items:
+            items = trigger.check_for_new_items(user_id)
+            if not items:
+                continue
+
+            dispatched = 0
+            for item in items:
+                if dispatched >= MAX_ITEMS_PER_USER_PER_POLL:
+                    break
+
+                dispatch_key = f"{item.interface_name}:{item.item_id}"
+
+                # In-flight check (covers both sync and batch)
+                if dispatch_key in self._active_agents or dispatch_key in self._active_batch_agents:
                     continue
 
-                dispatched = 0
-                for item in items:
-                    if dispatched >= MAX_ITEMS_PER_USER_PER_POLL:
-                        break
-                    if len(self._active_agents) >= self.max_concurrent_agents:
-                        logger.info(
-                            "Sidebar dispatcher: concurrent agent limit reached"
-                        )
-                        return
-
-                    dispatch_key = f"{item.interface_name}:{item.item_id}"
-
-                    # In-flight check
-                    if dispatch_key in self._active_agents:
-                        continue
-
-                    # Prior-run lookup + dispatch decision
-                    prior_run = self._get_prior_run(db, item)
-                    decision = self._dispatch_decision(
-                        prior_run, trigger.agent_class,
-                    )
-                    if decision == 'skip':
-                        continue
-
-                    # Set run context
-                    if decision == 'retry' and prior_run:
-                        item.context['run_count'] = prior_run.get('run_count', 1) + 1
-                        item.context['prior_run'] = dict(prior_run)
-                    else:
-                        item.context['run_count'] = 1
-
-                    self._spawn_agent(trigger, item, user_id, dispatch_key)
-                    trigger.on_dispatched(user_id, item.item_id)
-                    dispatched += 1
-
-            except Exception as e:
-                logger.error(
-                    f"Trigger {trigger.trigger_id} failed for user "
-                    f"{user_id}: {e}",
-                    exc_info=True,
+                # Prior-run lookup + dispatch decision
+                prior_run = self._get_prior_run(db, item)
+                decision = self._dispatch_decision(
+                    prior_run, trigger.agent_class,
                 )
+                if decision == 'skip':
+                    continue
+
+                # Set run context
+                if decision == 'retry' and prior_run:
+                    item.context['run_count'] = prior_run.get('run_count', 1) + 1
+                    item.context['prior_run'] = dict(prior_run)
+                else:
+                    item.context['run_count'] = 1
+
+                if not self._spawn_agent(trigger, item, user_id, dispatch_key):
+                    continue
+                trigger.on_dispatched(user_id, item.item_id)
+                dispatched += 1
 
     # ------------------------------------------------------------------
     # Dedup helpers
@@ -195,14 +189,14 @@ class SidebarDispatcher:
     def _get_prior_run(self, db, item: WorkItem) -> dict | None:
         """Look up existing activity record for this item."""
         rows = db.execute(
-            "SELECT * FROM sidebar_activity "
+            "SELECT status, run_count FROM sidebar_activity "
             "WHERE interface_name = :iface AND thread_id = :tid",
             {'iface': item.interface_name, 'tid': item.item_id},
         )
         return dict(rows[0]) if rows else None
 
-    @staticmethod
     def _dispatch_decision(
+        self,
         prior_run: dict | None,
         agent_class: type,
     ) -> str:
@@ -214,10 +208,9 @@ class SidebarDispatcher:
         if status in _TERMINAL_STATUSES:
             return 'skip'
 
-        # status == 'failed' -- check retry eligibility
         if status == 'failed':
             run_count = prior_run.get('run_count', 1)
-            max_retries = getattr(agent_class, 'max_retries', 0)
+            max_retries = agent_class.max_retries
             if run_count <= max_retries:
                 return 'retry'
 
@@ -233,24 +226,42 @@ class SidebarDispatcher:
         item: WorkItem,
         user_id: str,
         dispatch_key: str,
-    ) -> None:
-        """Spawn agent in background thread with copied user context."""
-        agent = trigger.agent_class()
+    ) -> bool:
+        """Spawn agent in background thread with copied user context.
+
+        Returns True if the agent was spawned, False if at cap.
+        """
+        agent = trigger.agent_class(self.tool_repo)
+
+        # Per-type cap check
+        if agent.use_batch:
+            if len(self._active_batch_agents) >= self.max_concurrent_batch_agents:
+                return False
+        else:
+            if len(self._active_agents) >= self.max_concurrent_agents:
+                return False
+
         ctx = copy_context()
 
         thread = threading.Thread(
             target=ctx.run,
-            args=(agent.run, item, self.tool_repo, self.event_bus),
+            args=(agent.run, item, self.event_bus),
             name=f"sidebar-{trigger.trigger_id}-{item.item_id[:8]}",
             daemon=True,
         )
         thread.start()
-        self._active_agents[dispatch_key] = thread
+
+        if agent.use_batch:
+            self._active_batch_agents[dispatch_key] = thread
+        else:
+            self._active_agents[dispatch_key] = thread
+
         run_count = item.context.get('run_count', 1)
         logger.info(
             f"Spawned {trigger.agent_class.agent_id} for "
             f"{item.interface_name}:{item.item_id[:8]} (run {run_count})"
         )
+        return True
 
     # ------------------------------------------------------------------
     # Cleanup

@@ -39,6 +39,7 @@ def create_segment_boundary_sentinel(
         'segment_start_time': first_message_time.isoformat(),
         'segment_end_time': first_message_time.isoformat(),  # Will update as messages arrive
         'segment_turn_count': 1,  # Initialized to 1 since creation happens on first turn
+        'last_turn_at': first_message_time.isoformat(),
         'tools_used': [],
         'memories_extracted': False,
         'domain_blocks_updated': False

@@ -34,18 +34,7 @@ registry.register("sidebar_tool", SidebarToolConfig)
 
 
 # -------------------- SCHEMAS --------------------
-
-SCRATCHPAD_TABLE_DDL = """\
-CREATE TABLE IF NOT EXISTS scratchpad (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    thread_id TEXT NOT NULL,
-    note TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-)"""
-
-SCRATCHPAD_INDEX_DDL = """\
-CREATE INDEX IF NOT EXISTS idx_scratchpad_thread
-ON scratchpad(thread_id)"""
+# Scratchpad + activity DDL live in agents.base.ensure_activity_schema()
 
 AUDIT_TABLE_DDL = """\
 CREATE TABLE IF NOT EXISTS sidebar_audit (
@@ -131,8 +120,6 @@ class SidebarTool(Tool):
     def _ensure_schema(self) -> None:
         if self._schema_ensured:
             return
-        self.db.execute(SCRATCHPAD_TABLE_DDL)
-        self.db.execute(SCRATCHPAD_INDEX_DDL)
         from agents.base import ensure_activity_schema
         ensure_activity_schema(self.db)
         self.db.execute(AUDIT_TABLE_DDL)

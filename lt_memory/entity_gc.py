@@ -19,15 +19,18 @@ from pathlib import Path
 from typing import Any, List, Dict, NamedTuple, Optional, TypedDict
 from uuid import UUID
 
-from config.config import EntityGarbageCollectionConfig, BatchingConfig
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.models import PostProcessingBatch, EntityPairRow, GCStats
-from lt_memory.processing.batch_coordinator import BatchCoordinator
+from lt_memory.processing.batch_coordinator import BatchCoordinator, BATCH_EXPIRY_HOURS
 from clients.llm_provider import LLMProvider, build_batch_params
 from utils.user_context import get_current_user_id, get_internal_llm
 from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
+
+# pg_trgm similarity threshold for entity name matching
+# Calibrated from production data (887 entities): 0.6 yields ~408 pairs
+ENTITY_GC_SIMILARITY_THRESHOLD = 0.6
 
 VALID_ACTIONS = {'canonical', 'merge', 'delete', 'keep'}
 
@@ -79,17 +82,13 @@ class EntityGCService:
 
     def __init__(
         self,
-        config: EntityGarbageCollectionConfig,
         db: LTMemoryDB,
         llm_provider: LLMProvider,
         batch_coordinator: BatchCoordinator,
-        batching_config: BatchingConfig,
     ):
-        self.config = config
         self.db = db
         self.llm_provider = llm_provider
         self.batch_coordinator = batch_coordinator
-        self.batching_config = batching_config
         self._load_prompts()
 
     def _load_prompts(self) -> None:
@@ -407,7 +406,7 @@ class EntityGCService:
 
         # 1. Find similar entity pairs
         pairs = self.db.find_similar_entity_pairs(
-            similarity_threshold=self.config.similarity_threshold,
+            similarity_threshold=ENTITY_GC_SIMILARITY_THRESHOLD,
             user_id=user_id
         )
 
@@ -471,7 +470,7 @@ class EntityGCService:
         )
 
         # 6. Store batch record for polling
-        expires_at = utc_now() + timedelta(hours=self.batching_config.batch_expiry_hours)
+        expires_at = utc_now() + timedelta(hours=BATCH_EXPIRY_HOURS)
         batch_record = PostProcessingBatch(
             batch_id=batch_id,
             batch_type="entity_gc",
@@ -545,7 +544,7 @@ class EntityGCService:
 
         # 1. Find similar entity pairs
         pairs = self.db.find_similar_entity_pairs(
-            similarity_threshold=self.config.similarity_threshold,
+            similarity_threshold=ENTITY_GC_SIMILARITY_THRESHOLD,
             user_id=user_id
         )
 

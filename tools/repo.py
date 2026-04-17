@@ -25,6 +25,12 @@ def get_config():
     return config
 
 
+ESSENTIAL_TOOLS = [
+    "web_tool", "invokeother_tool", "continuum_tool", "reminder_tool",
+    "memory_tool", "domaindoc_tool", "forage_tool", "sidebaragents_tool",
+    "email_tool"
+]
+
 # Anthropic beta feature constants
 CODE_EXECUTION_BETA_FLAG = "code-execution-2025-08-25"
 FILES_API_BETA_FLAG = "files-api-2025-04-14"
@@ -607,11 +613,10 @@ class ToolRepository:
     def enable_tools_from_config(self) -> None:
         """Enable essential tools at startup. Other tools loaded on-demand via invokeother_tool."""
         config = get_config()
-        essential_tools = config.tools.essential_tools
 
-        self.logger.info(f"Enabling essential tools at startup: {essential_tools}")
+        self.logger.info(f"Enabling essential tools at startup: {ESSENTIAL_TOOLS}")
 
-        for name in essential_tools:
+        for name in ESSENTIAL_TOOLS:
             # Check if tool is actually enabled in its config
             tool_config = getattr(config, name, None)
             if tool_config is None:

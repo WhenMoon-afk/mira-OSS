@@ -14,7 +14,6 @@ Handles SessionTimeoutEvent by:
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import List, Optional, TYPE_CHECKING
 from uuid import UUID
 
@@ -304,9 +303,6 @@ class SegmentCollapseHandler:
         # Cleanup Files API uploads for this segment
         self._cleanup_segment_files(event.segment_id)
 
-        # Flush local tmp directory (code execution file artifacts)
-        self._cleanup_local_tmp_files(str(get_current_user_id()))
-
         # DIY Reinforcement Loop: Extract feedback and run synthesis if due
         self._process_feedback_loop(
             messages=messages,
@@ -503,7 +499,7 @@ class SegmentCollapseHandler:
         # Skip memory extraction for demo users (ephemeral sessions)
         from utils.user_context import get_user_preferences
         prefs = get_user_preferences()
-        if prefs.llm_tier == 'demo':
+        if prefs.conversation_llm == 'demo':
             logger.info(f"Skipping memory extraction for demo user segment {segment_id}")
             return
 
@@ -518,10 +514,6 @@ class SegmentCollapseHandler:
 
             if not batch_submitted:
                 raise RuntimeError(f"Failed to submit segment {segment_id} for memory extraction - submission failed")
-
-            # ImmediateExecutionStrategy clears user context — restore it
-            if force_immediate:
-                set_current_user_id(user_id)
 
             logger.info(f"{'Immediate' if force_immediate else 'Batch'} extraction submitted for segment {segment_id}")
 
@@ -730,21 +722,6 @@ class SegmentCollapseHandler:
             # Log but don't fail segment collapse on cleanup errors
             logger.warning(f"Failed to cleanup Files API uploads for segment {segment_id}: {e}")
 
-    def _cleanup_local_tmp_files(self, user_id: str) -> None:
-        """Flush temporary code execution file artifacts for user.
-
-        Called at segment collapse to clean up files downloaded from Anthropic
-        during response processing. The entire tmp/ directory is removed.
-
-        Args:
-            user_id: User UUID string
-        """
-        import shutil
-        tmp_dir = Path("data/users") / user_id / "tmp"
-        if tmp_dir.exists():
-            shutil.rmtree(tmp_dir)
-            logger.info(f"Flushed local tmp directory for user {user_id}")
-
     def _count_user_segments(self) -> int:
         """
         Count total segments for user (for ManifestUpdatedEvent).
@@ -861,7 +838,7 @@ class SegmentCollapseHandler:
         from cns.services.portrait_service import should_synthesize_portrait, synthesize_and_store
 
         user_id = get_current_user_id()
-        threshold = config.lt_memory.scheduled_jobs.portrait_synthesis_use_days
+        threshold = config.scheduled_jobs.portrait_synthesis_use_days
 
         try:
             if not should_synthesize_portrait(user_id, threshold):

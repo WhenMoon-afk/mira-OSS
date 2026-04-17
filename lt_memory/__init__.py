@@ -5,7 +5,6 @@ Factory-based initialization with explicit dependency management.
 """
 import logging
 
-from config.config import LTMemoryConfig
 from lt_memory.factory import LTMemoryFactory, get_lt_memory_factory
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.vector_ops import VectorOps
@@ -58,7 +57,6 @@ __all__ = [
     'LinkingService',
     'RefinementService',
     'ProactiveService',
-    'LTMemoryConfig',
 
     # Models
     'Memory',

@@ -937,6 +937,41 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "required": ["label", "section", "version_num"],
             "optional": ["parent"],
             "types": {"label": str, "section": str, "version_num": int, "parent": str}
+        },
+        "share": {
+            "required": ["label", "email"],
+            "optional": [],
+            "types": {"label": str, "email": str}
+        },
+        "unshare": {
+            "required": ["label", "email"],
+            "optional": [],
+            "types": {"label": str, "email": str}
+        },
+        "list_shares": {
+            "required": ["label"],
+            "optional": [],
+            "types": {"label": str}
+        },
+        "accept_share": {
+            "required": ["share_id"],
+            "optional": [],
+            "types": {"share_id": str}
+        },
+        "reject_share": {
+            "required": ["share_id"],
+            "optional": [],
+            "types": {"share_id": str}
+        },
+        "list_pending_shares": {
+            "required": [],
+            "optional": [],
+            "types": {}
+        },
+        "list_shared_with_me": {
+            "required": [],
+            "optional": [],
+            "types": {}
         }
     }
 
@@ -945,12 +980,19 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
         from utils.userdata_manager import get_user_data_manager
         return get_user_data_manager(self.user_id)
 
+    def _get_pg(self):
+        from clients.postgres_client import PostgresClient
+        return PostgresClient("mira_service", user_id=str(self.user_id))
+
     def _validate_label(self, label: str) -> None:
         """Validate domaindoc label."""
         if not label:
             raise ValidationError("Label cannot be empty")
         if not label.replace("_", "").isalnum():
             raise ValidationError(f"Invalid label '{label}'. Use only letters, numbers, and underscores.")
+        from utils.domaindoc_shares import SHARED_SUFFIX
+        if label.endswith(SHARED_SUFFIX):
+            raise ValidationError(f"Labels cannot end with '{SHARED_SUFFIX}' — this suffix is reserved for shared documents")
 
     def _get_domaindoc(self, db: UserDataManager, label: str) -> dict[str, Any]:
         """Get domaindoc by label, raising ValidationError if not found."""
@@ -1047,13 +1089,34 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
         valkey.hdel_with_retry(hash_key, "domaindoc")
 
     # Read-only actions that don't require cache invalidation
-    _READ_ONLY_ACTIONS = {"list", "get", "list_sections", "get_section", "get_section_history"}
+    _READ_ONLY_ACTIONS = {"list", "get", "list_sections", "get_section", "get_section_history", "list_shares", "list_pending_shares", "list_shared_with_me"}
 
     def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
         """Execute domaindoc actions using SQLite storage."""
         import json
 
         db = self._get_db()
+
+        # Actions that operate on the owner's db for shared docs
+        _shared_edit_actions = {
+            "update_section", "create_section", "rename_section", "delete_section",
+            "reorder_sections", "expand_section", "collapse_section",
+            "get_section", "list_sections", "get_section_history", "rollback_section"
+        }
+
+        # Resolve once, reuse for both db routing and post-action cache invalidation
+        resolved = None
+        if action in _shared_edit_actions and data.get("label"):
+            try:
+                from utils.domaindoc_shares import resolve_domaindoc, is_shared_label, owner_label_from_shared
+                resolved = resolve_domaindoc(self.user_id, data["label"])
+                if resolved.is_shared:
+                    db = resolved.db
+                    # Downstream methods use data["label"] for DB lookups —
+                    # must be the owner's original label, not the suffixed one
+                    data["label"] = owner_label_from_shared(data["label"])
+            except (ValidationError, ValueError):
+                pass
 
         if action == "create":
             result = self._action_create(db, data)
@@ -1095,12 +1158,29 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             result = self._action_get_section_history(db, data)
         elif action == "rollback_section":
             result = self._action_rollback_section(db, data)
+        elif action == "share":
+            result = self._action_share(data)
+        elif action == "unshare":
+            result = self._action_unshare(data)
+        elif action == "list_shares":
+            result = self._action_list_shares(data)
+        elif action == "accept_share":
+            result = self._action_accept_share(data)
+        elif action == "reject_share":
+            result = self._action_reject_share(data)
+        elif action == "list_pending_shares":
+            result = self._action_list_pending_shares(data)
+        elif action == "list_shared_with_me":
+            result = self._action_list_shared_with_me(data)
         else:
             raise ValidationError(f"Unknown action: {action}")
 
         # Invalidate trinket cache after write operations
         if action not in self._READ_ONLY_ACTIONS:
             self._invalidate_trinket_cache()
+            if resolved and resolved.is_shared and resolved.owner_user_id:
+                from utils.domaindoc_shares import invalidate_domaindoc_cache
+                invalidate_domaindoc_cache(resolved.owner_user_id)
 
         return result
 
@@ -1732,16 +1812,228 @@ class DomainKnowledgeDomainHandler(BaseDomainHandler):
             "restored_chars": len(restored_content)
         }
 
+    def _action_share(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Share a domaindoc with another user by email."""
+        label = data["label"]
+        email = data["email"].strip().lower()
+        self._validate_label(label)
+
+        db = self._get_db()
+        doc = self._get_domaindoc(db, label)
+
+        pg = self._get_pg()
+        target_user = pg.execute_single(
+            "SELECT id, first_name, email FROM users WHERE email = %(email)s AND is_active = TRUE",
+            {"email": email}
+        )
+        if not target_user:
+            raise ValidationError(f"No active user found with email '{email}'")
+
+        target_user_id = target_user["id"]
+        if str(target_user_id) == str(self.user_id):
+            raise ValidationError("Cannot share a domaindoc with yourself")
+
+        existing = pg.execute_single(
+            "SELECT id, status FROM domaindoc_shares WHERE owner_user_id = %(uid)s AND domaindoc_label = %(label)s AND collaborator_user_id = %(cid)s",
+            {"uid": self.user_id, "label": label, "cid": target_user_id}
+        )
+        if existing:
+            if existing["status"] == "accepted":
+                raise ValidationError(f"Already sharing '{label}' with {email}")
+            elif existing["status"] == "pending":
+                raise ValidationError(f"Already invited {email} to '{label}'")
+            elif existing["status"] in ("revoked", "rejected"):
+                pg.execute_update(
+                    "UPDATE domaindoc_shares SET status = 'pending', invited_at = NOW(), accepted_at = NULL WHERE id = %(sid)s",
+                    {"sid": existing["id"]}
+                )
+                return {"shared": True, "label": label, "email": email, "status": "re-invited"}
+
+        pg.execute_insert(
+            "INSERT INTO domaindoc_shares (owner_user_id, domaindoc_label, collaborator_user_id, status) VALUES (%(uid)s, %(label)s, %(cid)s, 'pending')",
+            {"uid": self.user_id, "label": label, "cid": target_user_id}
+        )
+
+        return {"shared": True, "label": label, "email": email, "status": "pending"}
+
+    def _action_unshare(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Revoke sharing of a domaindoc with a user."""
+        label = data["label"]
+        email = data["email"].strip().lower()
+        self._validate_label(label)
+
+        pg = self._get_pg()
+        target_user = pg.execute_single(
+            "SELECT id FROM users WHERE email = %(email)s AND is_active = TRUE",
+            {"email": email}
+        )
+        if not target_user:
+            raise ValidationError(f"No active user found with email '{email}'")
+
+        share = pg.execute_single(
+            "SELECT id, status FROM domaindoc_shares WHERE owner_user_id = %(uid)s AND domaindoc_label = %(label)s AND collaborator_user_id = %(cid)s",
+            {"uid": self.user_id, "label": label, "cid": target_user["id"]}
+        )
+        if not share:
+            raise ValidationError(f"Not sharing '{label}' with {email}")
+
+        if share["status"] == "accepted":
+            pg.execute_update(
+                "UPDATE domaindoc_shares SET status = 'revoked' WHERE id = %(sid)s",
+                {"sid": share["id"]}
+            )
+        else:
+            # Pending/rejected shares can be fully deleted by the owner
+            pg.execute_update(
+                "DELETE FROM domaindoc_shares WHERE id = %(sid)s",
+                {"sid": share["id"]}
+            )
+
+        from utils.domaindoc_shares import invalidate_domaindoc_cache
+        invalidate_domaindoc_cache(target_user["id"])
+
+        return {"unshared": True, "label": label, "email": email}
+
+    def _action_list_shares(self, data: dict[str, Any]) -> dict[str, Any]:
+        """List all shares for a domaindoc owned by current user."""
+        label = data["label"]
+        self._validate_label(label)
+
+        pg = self._get_pg()
+        shares = pg.execute_query(
+            "SELECT ds.id, ds.domaindoc_label, ds.status, ds.invited_at, ds.accepted_at, "
+            "u.email, u.first_name FROM domaindoc_shares ds JOIN users u ON ds.collaborator_user_id = u.id "
+            "WHERE ds.owner_user_id = %(uid)s AND ds.domaindoc_label = %(label)s AND ds.status != 'rejected'",
+            {"uid": self.user_id, "label": label}
+        )
+
+        return {
+            "label": label,
+            "shares": [
+                {
+                    "id": str(s["id"]),
+                    "email": s["email"],
+                    "first_name": s["first_name"],
+                    "status": s["status"],
+                    "invited_at": s["invited_at"].isoformat() if s.get("invited_at") else None,
+                    "accepted_at": s["accepted_at"].isoformat() if s.get("accepted_at") else None,
+                }
+                for s in shares
+            ]
+        }
+
+    def _action_accept_share(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Accept a pending share invitation."""
+        share_id = data["share_id"]
+
+        pg = self._get_pg()
+        share = pg.execute_single(
+            "SELECT id, domaindoc_label, status FROM domaindoc_shares WHERE id = %(sid)s AND collaborator_user_id = %(uid)s",
+            {"sid": share_id, "uid": self.user_id}
+        )
+        if not share:
+            raise ValidationError("Share invitation not found")
+        if share["status"] != "pending":
+            raise ValidationError(f"Share is not pending (current status: {share['status']})")
+
+        # Check for label collision: the shared doc will appear as label_shared
+        from utils.domaindoc_shares import SHARED_SUFFIX
+        suffixed_label = f"{share['domaindoc_label']}{SHARED_SUFFIX}"
+        db = self._get_db()
+        collision = db.select("domaindocs", "label = :label", {"label": suffixed_label})
+        if collision:
+            raise ValidationError(
+                f"Cannot accept — you already have a domaindoc named '{suffixed_label}'. "
+                f"Rename or archive yours first."
+            )
+
+        pg.execute_update(
+            "UPDATE domaindoc_shares SET status = 'accepted', accepted_at = NOW() WHERE id = %(sid)s",
+            {"sid": share_id}
+        )
+
+        self._invalidate_trinket_cache()
+
+        return {"accepted": True, "label": suffixed_label}
+
+    def _action_reject_share(self, data: dict[str, Any]) -> dict[str, Any]:
+        """Reject a pending share invitation."""
+        share_id = data["share_id"]
+
+        pg = self._get_pg()
+        share = pg.execute_single(
+            "SELECT id, domaindoc_label, status FROM domaindoc_shares WHERE id = %(sid)s AND collaborator_user_id = %(uid)s",
+            {"sid": share_id, "uid": self.user_id}
+        )
+        if not share:
+            raise ValidationError("Share invitation not found")
+        if share["status"] != "pending":
+            raise ValidationError(f"Share is not pending (current status: {share['status']})")
+
+        pg.execute_update(
+            "UPDATE domaindoc_shares SET status = 'rejected' WHERE id = %(sid)s",
+            {"sid": share_id}
+        )
+
+        return {"rejected": True, "label": share["domaindoc_label"]}
+
+    def _action_list_pending_shares(self, data: dict[str, Any]) -> dict[str, Any]:
+        """List pending share invitations for current user."""
+        pg = self._get_pg()
+        shares = pg.execute_query(
+            "SELECT ds.id, ds.domaindoc_label, ds.invited_at, "
+            "u.email, u.first_name FROM domaindoc_shares ds JOIN users u ON ds.owner_user_id = u.id "
+            "WHERE ds.collaborator_user_id = %(uid)s AND ds.status = 'pending'",
+            {"uid": self.user_id}
+        )
+
+        return {
+            "pending_shares": [
+                {
+                    "id": str(s["id"]),
+                    "label": s["domaindoc_label"],
+                    "from_email": s["email"],
+                    "from_name": s["first_name"],
+                    "invited_at": s["invited_at"].isoformat() if s.get("invited_at") else None,
+                }
+                for s in shares
+            ]
+        }
+
+    def _action_list_shared_with_me(self, data: dict[str, Any]) -> dict[str, Any]:
+        """List all domaindocs shared with current user (accepted only)."""
+        pg = self._get_pg()
+        shares = pg.execute_query(
+            "SELECT ds.id, ds.domaindoc_label, ds.accepted_at, "
+            "u.email, u.first_name FROM domaindoc_shares ds JOIN users u ON ds.owner_user_id = u.id "
+            "WHERE ds.collaborator_user_id = %(uid)s AND ds.status = 'accepted'",
+            {"uid": self.user_id}
+        )
+
+        return {
+            "shared_with_me": [
+                {
+                    "id": str(s["id"]),
+                    "label": s["domaindoc_label"],
+                    "from_email": s["email"],
+                    "from_name": s["first_name"],
+                    "accepted_at": s["accepted_at"].isoformat() if s.get("accepted_at") else None,
+                }
+                for s in shares
+            ]
+        }
+
+
     def _expand_description(self, label: str, description: str) -> str:
         """Use LLM to expand a brief description into comprehensive guidance."""
         from clients.llm_provider import LLMProvider
-        from utils.user_context import get_user_preferences, resolve_tier
+        from utils.user_context import get_user_preferences, resolve_conversation_llm
 
         logger.info(f"_expand_description called for label='{label}', description='{description[:50]}...'")
 
         try:
-            tier_config = resolve_tier(get_user_preferences().llm_tier)
-            llm = LLMProvider(model=tier_config.model)
+            llm_config = resolve_conversation_llm(get_user_preferences().conversation_llm)
+            llm = LLMProvider(model=llm_config.model)
             logger.debug(f"LLMProvider created, model={llm.model}")
 
             prompt = f"""You are helping expand a brief description into comprehensive guidance for a knowledge document.
@@ -1781,19 +2073,19 @@ Example output: "Backyard garden management: current plantings with locations an
 
 
 class ContinuumDomainHandler(BaseDomainHandler):
-    """Handler for continuum-level configuration actions (LLM tier, segment collapse)."""
+    """Handler for continuum-level configuration actions (conversation LLM, segment collapse)."""
 
     ACTIONS = {
-        "get_llm_tier": {
+        "get_conversation_llm": {
             "required": [],
             "optional": [],
             "types": {}
         },
-        "set_llm_tier": {
-            "required": ["tier"],
+        "set_conversation_llm": {
+            "required": ["name"],
             "optional": [],
             "types": {
-                "tier": str
+                "name": str
             }
         },
         "collapse_segment": {
@@ -1819,50 +2111,50 @@ class ContinuumDomainHandler(BaseDomainHandler):
     }
 
     def execute_action(self, action: str, data: dict[str, Any]) -> dict[str, Any]:
-        """Execute LLM tier actions."""
-        if action == "get_llm_tier":
-            from utils.user_context import get_user_preferences, get_account_tiers
+        """Execute conversation LLM and segment actions."""
+        if action == "get_conversation_llm":
+            from utils.user_context import get_user_preferences, get_conversation_llms
 
             prefs = get_user_preferences()
-            all_tiers = get_account_tiers()
+            conversation_llms = get_conversation_llms()
 
-            # Return non-hidden tiers sorted by display_order
-            tier_list = []
-            for tier in sorted(all_tiers.values(), key=lambda t: t.display_order):
-                if not tier.hidden:
-                    tier_list.append({
-                        "name": tier.name,
-                        "model": tier.model,
-                        "description": tier.description,
+            # Return non-hidden LLMs sorted by display_order
+            llm_list = []
+            for llm in sorted(conversation_llms.values(), key=lambda t: t.display_order):
+                if not llm.hidden:
+                    llm_list.append({
+                        "name": llm.name,
+                        "model": llm.model,
+                        "description": llm.description,
                     })
 
             return {
                 "success": True,
-                "tier": prefs.llm_tier,
-                "available_tiers": tier_list
+                "name": prefs.conversation_llm,
+                "available": llm_list
             }
 
-        elif action == "set_llm_tier":
-            from utils.user_context import update_user_preference, get_account_tiers
+        elif action == "set_conversation_llm":
+            from utils.user_context import update_user_preference, get_conversation_llms
 
-            tier = data.get("tier")
-            tiers = get_account_tiers()
-            if tier not in tiers:
+            name = data.get("name")
+            conversation_llms = get_conversation_llms()
+            if name not in conversation_llms:
                 raise ValidationError(
-                    f"Invalid tier. Must be one of: {list(tiers.keys())}"
+                    f"Invalid conversation LLM. Must be one of: {list(conversation_llms.keys())}"
                 )
 
-            # Reject hidden tiers (admin-hidden from selector)
-            if tiers[tier].hidden:
+            # Reject hidden LLMs (admin-hidden from selector)
+            if conversation_llms[name].hidden:
                 raise ValidationError(
-                    f"Tier '{tier}' is not available."
+                    f"Conversation LLM '{name}' is not available."
                 )
 
-            update_user_preference('llm_tier', tier)
+            update_user_preference('conversation_llm', name)
             return {
                 "success": True,
-                "tier": tier,
-                "message": f"LLM tier set to {tier}"
+                "name": name,
+                "message": f"Conversation LLM set to {name}"
             }
 
         elif action == "collapse_segment":

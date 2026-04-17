@@ -150,8 +150,8 @@ class SubcorticalLayer:
         # Under memory pressure, narrow the conversation window so the model
         # scopes retention decisions to the most recent exchange — makes it
         # easier to identify and drop memories irrelevant to the immediate context
-        from config import config
-        max_pinned = config.lt_memory.proactive.max_pinned_memories
+        from lt_memory.proactive import MAX_PINNED_MEMORIES
+        max_pinned = MAX_PINNED_MEMORIES
         under_pressure = (
             previous_memories is not None
             and len(previous_memories) >= max_pinned
@@ -331,9 +331,9 @@ class SubcorticalLayer:
         lines = []
 
         # Graduated pressure alerts derived from max_pinned_memories
-        from config import config
+        from lt_memory.proactive import MAX_PINNED_MEMORIES
         import math
-        max_pinned = config.lt_memory.proactive.max_pinned_memories
+        max_pinned = MAX_PINNED_MEMORIES
         warning_threshold = max_pinned - 4
         count = len(memories)
 

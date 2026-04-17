@@ -17,13 +17,21 @@ from typing import List, Optional, Union
 from uuid import UUID
 
 from lt_memory.models import Memory, MemoryLink, ClassificationPayload, ClassificationResult, TraversalResult, VALID_RELATIONSHIP_TYPES
-from config.config import LinkingConfig
 from lt_memory.vector_ops import VectorOps
 from lt_memory.db_access import LTMemoryDB
 from clients.llm_provider import LLMProvider
 from utils.timezone_utils import utc_now, format_utc_iso
 
 logger = logging.getLogger(__name__)
+
+# Link discovery thresholds
+SIMILARITY_THRESHOLD_FOR_LINKING = 0.75
+MAX_CANDIDATES_PER_MEMORY = 20
+MAX_LINK_TRAVERSAL_DEPTH = 3
+CLASSIFICATION_MAX_TOKENS = 500
+ENTITY_SIMILARITY_FLOOR = 0.55     # pg_trgm floor for entity co-occurrence candidates
+TFIDF_SIMILARITY_THRESHOLD = 0.20  # TF-IDF cosine floor for term-based discovery
+TFIDF_MAX_CANDIDATES = 10
 
 
 def _cosine_similarity(vec_a: List[float], vec_b: List[float]) -> float:
@@ -47,21 +55,10 @@ class LinkingService:
 
     def __init__(
         self,
-        config: LinkingConfig,
         vector_ops: VectorOps,
         db: LTMemoryDB,
         llm_provider: Optional[LLMProvider] = None
     ):
-        """
-        Initialize linking service.
-
-        Args:
-            config: Linking configuration
-            vector_ops: Vector operations for similarity search
-            db: Database access layer
-            llm_provider: LLM provider for sync classification (optional)
-        """
-        self.config = config
         self.vector_ops = vector_ops
         self.db = db
         self.llm_provider = llm_provider
@@ -119,8 +116,8 @@ class LinkingService:
         # Axis 1: Vector similarity
         vector_candidates = self.vector_ops.find_similar_to_memory(
             memory_id=memory_id,
-            limit=self.config.max_candidates_per_memory,
-            similarity_threshold=self.config.similarity_threshold_for_linking,
+            limit=MAX_CANDIDATES_PER_MEMORY,
+            similarity_threshold=SIMILARITY_THRESHOLD_FOR_LINKING,
             min_importance=0.001  # Filter cold storage (0.0) memories
         )
 
@@ -174,7 +171,7 @@ class LinkingService:
 
         seen_ids = {memory_id}  # Exclude source
         candidates = []
-        floor = self.config.entity_similarity_floor
+        floor = ENTITY_SIMILARITY_FLOOR
 
         for entity_link in source_memory.entity_links:
             entity_id = entity_link.get("uuid")
@@ -263,8 +260,8 @@ class LinkingService:
         similarities = cosine_similarity(source_vector, self._tfidf_matrix).flatten()
 
         # Collect candidates above threshold, excluding source
-        threshold = self.config.tfidf_similarity_threshold
-        max_candidates = self.config.tfidf_max_candidates
+        threshold = TFIDF_SIMILARITY_THRESHOLD
+        max_candidates = TFIDF_MAX_CANDIDATES
         scored = []
 
         for idx, sim in enumerate(similarities):
@@ -576,7 +573,7 @@ Relationship types: corroborates, conflicts, supersedes, refines, precedes, cont
             ]
         """
         if depth is None:
-            depth = self.config.max_link_traversal_depth
+            depth = MAX_LINK_TRAVERSAL_DEPTH
 
         if depth < 1:
             return []

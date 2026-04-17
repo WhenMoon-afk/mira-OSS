@@ -21,9 +21,12 @@ from rapidfuzz import fuzz
 
 from lt_memory.models import ExtractedMemory, ExtractionResult, LinkingPair, MemoryContext, VALID_RELATIONSHIP_TYPES
 from lt_memory.vector_ops import VectorOps
-from config.config import ExtractionConfig
 
 logger = logging.getLogger(__name__)
+
+# Extraction deduplication tuning
+DEDUP_SIMILARITY_THRESHOLD = 0.92  # Cosine similarity for duplicate detection
+DEFAULT_IMPORTANCE_SCORE = 0.5     # Default importance for newly extracted memories
 
 
 class DuplicateCheckResult(NamedTuple):
@@ -55,15 +58,7 @@ class MemoryProcessor:
     No side effects - pure data processing that can be tested independently.
     """
 
-    def __init__(self, config: ExtractionConfig, vector_ops: VectorOps):
-        """
-        Initialize memory processor.
-
-        Args:
-            config: Extraction configuration
-            vector_ops: Vector operations for similarity search (deduplication)
-        """
-        self.config = config
+    def __init__(self, vector_ops: VectorOps):
         self.vector_ops = vector_ops
 
     def process_extraction_response(
@@ -121,7 +116,7 @@ class MemoryProcessor:
             # Temporal fields are validated by Pydantic model
             extracted_memory = ExtractedMemory(
                 text=memory_dict["text"],
-                importance_score=self.config.default_importance_score,
+                importance_score=DEFAULT_IMPORTANCE_SCORE,
                 expires_at=memory_dict.get("expires_at"),
                 happens_at=memory_dict.get("happens_at"),
                 relationship_type=memory_dict.get("relationship_type"),
@@ -525,7 +520,7 @@ class MemoryProcessor:
         similar_memories = self.vector_ops.find_similar_for_dedup(
             query_text=memory_text,
             limit=5,
-            similarity_threshold=self.config.dedup_similarity_threshold,
+            similarity_threshold=DEDUP_SIMILARITY_THRESHOLD,
             min_importance=0.001  # Filter cold storage (0.0) memories
         )
 
@@ -544,7 +539,7 @@ class MemoryProcessor:
 
         # Fallback if no scores extracted
         if best_score is None:
-            best_score = self.config.dedup_similarity_threshold
+            best_score = DEDUP_SIMILARITY_THRESHOLD
             if similar_memories:
                 best_memory_id = similar_memories[0].id
 

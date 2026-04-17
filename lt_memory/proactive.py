@@ -17,7 +17,6 @@ from contextvars import copy_context
 from typing import List, Optional, TYPE_CHECKING
 import numpy as np
 
-from config.config import ProactiveConfig
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.linking import LinkingService
 from lt_memory.models import Memory, MemoryDict, TraversalResult
@@ -27,6 +26,47 @@ if TYPE_CHECKING:
     from lt_memory.hub_discovery import HubDiscoveryService
 
 logger = logging.getLogger(__name__)
+
+# Similarity and search
+PROACTIVE_SIMILARITY_THRESHOLD = 0.42
+PROACTIVE_MAX_LINK_TRAVERSAL_DEPTH = 3
+PROACTIVE_MAX_MEMORIES = 10
+MIN_IMPORTANCE_SCORE = 0.1
+SEARCH_MAX_WORKERS = 2
+SEARCH_OVERSAMPLE_FACTOR = 2
+
+# Context window caps (cross-module: also imported by orchestrator, subcortical)
+MAX_SURFACED_MEMORIES = 20   # Max total primary memories (pinned + fresh)
+MAX_PINNED_MEMORIES = 15     # Hard cap on retained from previous turn
+MIN_FRESH_MEMORIES = 5       # Guaranteed fresh retrieval slots
+MAX_LINKED_PER_PRIMARY = 2
+
+# Assistant message embedding for memory surfacing
+NUM_ASSISTANT_MESSAGES = 2
+ASSISTANT_SIMILARITY_THRESHOLD = 0.75
+MAX_ASSISTANT_MEMORIES = 5
+
+# Debut boost: temporary ranking boost for new memories before they build hub connections
+DEBUT_FULL_BOOST_DAYS = 7    # Full boost for days 0-6 (activity days, not calendar)
+DEBUT_END_DAYS = 10           # Boost trails off completely by this day
+DEBUT_BOOST_AMOUNT = 0.15
+HUB_CONNECTION_THRESHOLD = 2  # Entity link count at which debut boost no longer applies
+
+# Supersedes penalty for soft demotion of superseded memories
+SUPERSEDES_PENALTY_MULTIPLIER = 0.3  # 0.3 = 70% reduction
+
+# Link type weights for reranking (higher = more important)
+LINK_WEIGHT_CONFLICTS = 1.0
+LINK_WEIGHT_CORROBORATES = 0.9
+LINK_WEIGHT_SUPERSEDES = 0.9
+LINK_WEIGHT_REFINES = 0.8
+LINK_WEIGHT_PRECEDES = 0.7
+LINK_WEIGHT_CONTEXTUALIZES = 0.7
+LINK_WEIGHT_EXEMPLIFIES = 0.75
+LINK_WEIGHT_SHARES_ENTITY = 0.4
+LINK_WEIGHT_DEFAULT = 0.5
+# Importance inheritance: (linked * weight) + (primary * (1 - weight))
+LINK_IMPORTANCE_INHERITANCE_WEIGHT = 0.7
 
 
 class ProactiveService:
@@ -40,23 +80,11 @@ class ProactiveService:
 
     def __init__(
         self,
-        config: ProactiveConfig,
         vector_ops: VectorOps,
         linking_service: LinkingService,
         db: LTMemoryDB,
         hub_discovery: 'HubDiscoveryService'
     ):
-        """
-        Initialize proactive service.
-
-        Args:
-            config: Proactive surfacing configuration
-            vector_ops: Vector operations service
-            linking_service: Memory linking service
-            db: Database access layer
-            hub_discovery: Hub discovery service for entity-driven retrieval
-        """
-        self.config = config
         self.vector_ops = vector_ops
         self.linking = linking_service
         self.db = db
@@ -89,7 +117,7 @@ class ProactiveService:
             Exception: If search operations fail
         """
         if limit is None:
-            limit = self.config.max_memories
+            limit = PROACTIVE_MAX_MEMORIES
 
         # Run both retrieval paths in parallel
         # Each thread gets its own DB connection and sets app.current_user_id via RLS
@@ -102,9 +130,9 @@ class ProactiveService:
                 query_text=query_expansion,
                 query_embedding=embedding,
                 search_intent="general",
-                limit=limit * self.config.search_oversample_factor,
-                similarity_threshold=self.config.similarity_threshold,
-                min_importance=self.config.min_importance_score
+                limit=limit * SEARCH_OVERSAMPLE_FACTOR,
+                similarity_threshold=PROACTIVE_SIMILARITY_THRESHOLD,
+                min_importance=MIN_IMPORTANCE_SCORE
             )
 
         def _fetch_hub_pool():
@@ -117,7 +145,7 @@ class ProactiveService:
             )
 
         # Execute both searches in parallel - each thread gets its own context copy
-        with ThreadPoolExecutor(max_workers=self.config.search_max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=SEARCH_MAX_WORKERS) as executor:
             ctx_similarity = copy_context()
             ctx_hub = copy_context()
             similarity_future = executor.submit(ctx_similarity.run, _fetch_similarity_pool)
@@ -130,7 +158,7 @@ class ProactiveService:
         # Filter similarity pool by minimum importance score
         similarity_pool = [
             memory for memory in similarity_pool
-            if memory.importance_score >= self.config.min_importance_score
+            if memory.importance_score >= MIN_IMPORTANCE_SCORE
         ]
 
         # Merge pools (deduplicate, similarity pool takes precedence for scores)
@@ -178,10 +206,10 @@ class ProactiveService:
             Merged, deduplicated list of Memory objects sorted by effective score
         """
         # Debut boost from config
-        debut_full_boost_days = self.config.debut_full_boost_days
-        debut_end_days = self.config.debut_end_days
-        debut_boost = self.config.debut_boost_amount
-        hub_connection_threshold = self.config.hub_connection_threshold
+        debut_full_boost_days = DEBUT_FULL_BOOST_DAYS
+        debut_end_days = DEBUT_END_DAYS
+        debut_boost = DEBUT_BOOST_AMOUNT
+        hub_connection_threshold = HUB_CONNECTION_THRESHOLD
 
         # Get user's current activity days for vacation-proof age calculation
         from utils.user_context import get_user_cumulative_activity_days
@@ -222,7 +250,7 @@ class ProactiveService:
                     for link in memory.inbound_links
                 )
                 if has_supersedes:
-                    score *= self.config.supersedes_penalty_multiplier
+                    score *= SUPERSEDES_PENALTY_MULTIPLIER
                     logger.debug(f"Supersedes penalty for memory {memory.id}")
 
             return score
@@ -273,7 +301,7 @@ class ProactiveService:
         for primary_memory in primary_memories:
             linked_with_metadata = self.linking.traverse_related(
                 memory_id=primary_memory.id,
-                depth=self.config.max_link_traversal_depth
+                depth=PROACTIVE_MAX_LINK_TRAVERSAL_DEPTH
             )
 
             primary_memory.linked_memories = []
@@ -303,17 +331,17 @@ class ProactiveService:
         """
         # Link type weights from config
         link_type_weights = {
-            "conflicts": self.config.link_weight_conflicts,
-            "corroborates": self.config.link_weight_corroborates,
-            "supersedes": self.config.link_weight_supersedes,
-            "refines": self.config.link_weight_refines,
-            "precedes": self.config.link_weight_precedes,
-            "contextualizes": self.config.link_weight_contextualizes,
-            "exemplifies": self.config.link_weight_exemplifies,
-            "shares_entity": self.config.link_weight_shares_entity,
+            "conflicts": LINK_WEIGHT_CONFLICTS,
+            "corroborates": LINK_WEIGHT_CORROBORATES,
+            "supersedes": LINK_WEIGHT_SUPERSEDES,
+            "refines": LINK_WEIGHT_REFINES,
+            "precedes": LINK_WEIGHT_PRECEDES,
+            "contextualizes": LINK_WEIGHT_CONTEXTUALIZES,
+            "exemplifies": LINK_WEIGHT_EXEMPLIFIES,
+            "shares_entity": LINK_WEIGHT_SHARES_ENTITY,
         }
-        default_weight = self.config.link_weight_default
-        inheritance_weight = self.config.link_importance_inheritance_weight
+        default_weight = LINK_WEIGHT_DEFAULT
+        inheritance_weight = LINK_IMPORTANCE_INHERITANCE_WEIGHT
 
         primary_ids = {m.id for m in primary_memories}
 
@@ -351,7 +379,7 @@ class ProactiveService:
                 scored_linked.append((linked, final_score))
 
             scored_linked.sort(key=lambda x: x[1], reverse=True)
-            max_linked = self.config.max_linked_per_primary
+            max_linked = MAX_LINKED_PER_PRIMARY
             primary_memory.linked_memories = [linked for linked, score in scored_linked[:max_linked]]
 
         return primary_memories

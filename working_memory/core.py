@@ -115,6 +115,12 @@ class WorkingMemory:
             "{relative time since account creation}", duration
         )
 
+        # Resolve current model substrate (re-resolved each turn so mid-chat model switches are visible)
+        from utils.user_context import resolve_conversation_llm
+        llm_config = resolve_conversation_llm(prefs.conversation_llm)
+        personalized_prompt = personalized_prompt.replace("{model_id}", llm_config.model)
+        personalized_prompt = personalized_prompt.replace("{model_name}", llm_config.description)
+
         # Set base prompt
         self.composer.set_base_prompt(personalized_prompt)
         

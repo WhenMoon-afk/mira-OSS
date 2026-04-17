@@ -58,6 +58,7 @@ class CNSIntegrationFactory:
         self._session_cache_loader: SegmentCacheLoader | None = None
         self._subcortical_layer: SubcorticalLayer | None = None
         self._peanutgallery_service: PeanutGalleryService | None = None
+        self._inbox_poller: object | None = None
         self._valkey_cache: ValkeyMessageCache | None = None
         self._memory_relevance_service: MemoryRelevanceService | None = None
         
@@ -82,7 +83,8 @@ class CNSIntegrationFactory:
         tool_repo = self._get_tool_repository(working_memory)
 
         # Wire ephemeral tool cleanup on turn end
-        essential_set = set(self.config.tools.essential_tools)
+        from tools.repo import ESSENTIAL_TOOLS
+        essential_set = set(ESSENTIAL_TOOLS)
         event_bus.subscribe('TurnCompletedEvent',
             lambda e: tool_repo.cleanup_ephemeral_tools(essential_set))
 
@@ -118,6 +120,9 @@ class CNSIntegrationFactory:
 
         # Initialize Peanut Gallery metacognitive observer service with event bus
         self._initialize_peanutgallery_service(event_bus, llm_provider)
+
+        # Initialize inbox poller for email awareness during active segments
+        self._initialize_inbox_poller(event_bus)
 
         # Create orchestrator with all dependencies
         orchestrator = ContinuumOrchestrator(
@@ -169,6 +174,7 @@ class CNSIntegrationFactory:
             from working_memory.trinkets.proactive_memory_trinket import ProactiveMemoryTrinket
             from working_memory.trinkets.domaindoc_trinket import DomaindocTrinket
             from working_memory.trinkets.forage_trinket import ForageTrinket
+            from working_memory.trinkets.whilethecatsaway_trinket import WhileTheCatsAwayTrinket
             from working_memory.trinkets.lora_trinket import LoraTrinket
             from working_memory.trinkets.location_trinket import LocationTrinket
             from working_memory.trinkets.asyncactivity_trinket import AsyncActivityTrinket
@@ -180,6 +186,7 @@ class CNSIntegrationFactory:
             ProactiveMemoryTrinket(event_bus, self._working_memory)
             DomaindocTrinket(event_bus, self._working_memory)
             ForageTrinket(event_bus, self._working_memory)
+            WhileTheCatsAwayTrinket(event_bus, self._working_memory)
             LoraTrinket(event_bus, self._working_memory)
             LocationTrinket(event_bus, self._working_memory)
             AsyncActivityTrinket(event_bus, self._working_memory)
@@ -379,8 +386,7 @@ class CNSIntegrationFactory:
         if self._peanutgallery_service is not None:
             return
 
-        # Check if peanutgallery is enabled
-        if not self.config.peanutgallery.enabled:
+        if not self.config.system.peanutgallery_enabled:
             logger.info("Peanut Gallery observer disabled in config")
             return
 
@@ -398,33 +404,47 @@ class CNSIntegrationFactory:
         # Get lt_memory factory for linking and proactive services
         lt_factory = get_lt_memory_factory()
 
-        # Create PeanutGallery model
+        from cns.services.peanutgallery_service import PG_TRIGGER_INTERVAL, PG_GUIDANCE_TTL_TURNS
+
         model = PeanutGalleryModel(
-            config=self.config.peanutgallery,
             llm_provider=llm_provider,
             linking_service=lt_factory.linking
         )
 
-        # Create PeanutGalleryTrinket for HUD guidance display
         PeanutGalleryTrinket(
             event_bus,
             self._working_memory,
-            default_ttl=self.config.peanutgallery.guidance_ttl_turns
+            default_ttl=PG_GUIDANCE_TTL_TURNS
         )
 
-        # Create and store Peanut Gallery service
         self._peanutgallery_service = PeanutGalleryService(
             model=model,
             valkey_cache=self._valkey_cache,
             event_bus=event_bus,
-            config=self.config.peanutgallery,
             proactive_service=lt_factory.proactive
         )
 
         logger.info(
             f"Peanut Gallery service initialized "
-            f"(trigger_interval={self.config.peanutgallery.trigger_interval})"
+            f"(trigger_interval={PG_TRIGGER_INTERVAL})"
         )
+
+    def _initialize_inbox_poller(self, event_bus: EventBus) -> None:
+        """Initialize inbox poller for email awareness during active segments.
+
+        The service polls IMAP for unread emails and publishes to EmailTrinket.
+        Gracefully no-ops if the user has no email credentials configured.
+        """
+        from cns.services.pollers.inbox_poller import InboxPollerService
+        from working_memory.trinkets.email_trinket import EmailTrinket
+
+        # Trinket self-registers with working memory
+        EmailTrinket(event_bus, self._working_memory)
+
+        # Service subscribes to lifecycle events in constructor
+        self._inbox_poller = InboxPollerService(event_bus)
+
+        logger.info("Inbox poller service initialized")
 
 
 def create_cns_orchestrator(config_instance: object = None) -> ContinuumOrchestrator:

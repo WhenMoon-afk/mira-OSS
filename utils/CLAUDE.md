@@ -11,13 +11,14 @@
 
 ## Files
 
-- `user_context.py` — Owns user identity contextvar (`set_current_user_id` / `get_current_user_id`), segment context, `UserPreferences` model + `get_user_preferences()`, `TierConfig` / `get_account_tiers()`, and `InternalLLMConfig` / `get_internal_llm()`.
+- `user_context.py` — Owns user identity contextvar (`set_current_user_id` / `get_current_user_id`), segment context, `UserPreferences` model + `get_user_preferences()`, `ConversationLLMConfig` / `get_conversation_llms()`, and `InternalLLMConfig` / `get_internal_llm()`.
 - `database_session_manager.py` — Singleton PostgreSQL connection pool (`get_shared_session_manager()`); `LTMemorySession` enforces RLS, `AdminSession` bypasses it.
 - `perf.py` — Performance instrumentation; monkey-patches `execute_*` methods at startup via `install_db_instrumentation()`. Gated by `mira.perf` logger level.
-- `logging_config.py` — TOAST custom log level (60), `UserContextFilter` (injects user_id into all log records), `ColoredFormatter`, `setup_anthropic_sdk_logging()`.
+- `logging_config.py` — TOAST custom log level (60), `UserContextFilter` (injects user_id into all log records), `ColoredFormatter`, `setup_anthropic_sdk_logging()`. `instrument_anthropic_client()` attaches httpx hooks for SDK log correlation and traffic tap.
+- `llm_tap.py` — Debugging firehose for sniffing all LLM request/response traffic. Toggle: `kill -USR1 <pid>`. Output: `llm_requests.jsonl`, `llm_responses.jsonl` (project root, append mode). Request capture via httpx hooks on Anthropic clients; response capture at 4 application-level sites in `llm_provider.py`. Generic provider requests logged explicitly in `generic_openai_client.py`.
 - `scheduled_tasks.py` — `get_users_due_for_job(interval)` use-day platform function; `initialize_all_scheduled_tasks()` entry point; `register_sidebar_dispatcher_job()` called separately after tool_repo init.
 - `lt_memory_jobs.py` — APScheduler job registration for all LT_Memory periodic work (extraction retry, batch polling, consolidation, score recalc, GC, cleanup).
-- `sidebar_jobs.py` — APScheduler registration for the sidebar dispatcher poll loop. Creates `SidebarDispatcher`, registers configured triggers (IMAP). Trigger enablement is in `ImapTriggerConfig`; which items to match is per-user via `trigger_rules` table.
+- `sidebar_jobs.py` — APScheduler registration for the sidebar dispatcher poll loop. Creates `SidebarDispatcher` and registers it on a configurable interval.
 - `scheduler_service.py` — APScheduler wrapper; `register_job()` is the only job registration path.
 - `scheduled_task_monitor.py` — Tracks scheduled job execution history, durations, and failures.
 - `thread_monitor.py` — `@monitored_operation` decorator and `MonitoredThreadPoolExecutor`; thresholds: 30s slow, 300s stuck.
@@ -26,6 +27,7 @@
 - `user_credentials.py` — `UserCredentialService` bridging tool credential storage to `UserDataManager`'s encrypted SQLite.
 - `user_activity.py` — `increment_user_activity_day()` (use-day clock); first-message-of-day hook point.
 - `userdata_manager.py` — Per-user encrypted SQLite (`UserDataManager`); one persistent connection per user, cached at module level. Owns `trigger_rules` table schema (sidebar trigger filter rules — trigger_id, scope, field, pattern, prompt, enabled).
+- `domaindoc_shares.py` — Cross-user domaindoc sharing resolution. Single source of truth for resolving domaindocs across user boundaries: `resolve_domaindoc()` (label → db + doc, own or shared), `get_accepted_shares()` (all accepted shares for a user), `invalidate_domaindoc_cache()` (Valkey trinket cache). All PostgresClient usage includes `user_id` for RLS enforcement.
 - `tag_parser.py` — Extracts structured tags from LLM responses; owns `format_memory_id()` / `parse_memory_id()` and the `mem_XXXXXXXX` short-ID format.
 - `text_sanitizer.py` — Text cleaning and sanitization utilities.
 - `document_processing.py` — Document parsing and text extraction.
@@ -34,7 +36,7 @@
 - `http_client.py` — Shared HTTP client utilities.
 - `generic_openai_client.py` — OpenAI-compatible API client (used by LLMProvider for non-Anthropic endpoints).
 - `mcp_client.py` — Model Context Protocol client integration.
-- `playwright_service.py` — Browser automation service for web tools.
+- `playwright_service.py` — Lazy-start Playwright service for JS-heavy pages: Chromium launches on first `fetch_rendered_html()`, auto-shuts down after `IDLE_TIMEOUT_SECONDS` (10 min) of inactivity. Used as escalation path by web_tool when HTTP+trafilatura produces insufficient content. Simplified rendering: `goto()` with `networkidle`/`domcontentloaded` fallback. No accordion expansion or progressive scroll.
 - `synthetic_toolexample_generator.py` — Generates synthetic tool usage examples for training data.
 
 ## Wiring

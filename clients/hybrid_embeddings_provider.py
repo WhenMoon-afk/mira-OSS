@@ -16,6 +16,8 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+EMBEDDINGS_BATCH_SIZE = 32  # Batch size for sentence-transformers encoding
+
 # Module-level singleton instance
 _hybrid_provider_instance = None
 
@@ -97,14 +99,12 @@ class HybridEmbeddingsProvider:
         self.logger = logging.getLogger("hybrid_embeddings")
         self.cache_enabled = cache_enabled
 
-        from config.config_manager import config
         from sentence_transformers import SentenceTransformer
 
-        # Load mdbr-leaf-ir-asym for asymmetric retrieval
         self.logger.debug("Loading mdbr-leaf-ir-asym model for asymmetric retrieval")
         self.model = SentenceTransformer(
             "MongoDB/mdbr-leaf-ir-asym",
-            cache_folder=config.embeddings.fast_model.cache_dir
+            cache_folder=None  # Uses default HuggingFace cache directory
         )
 
         # Initialize caches for query and document embeddings
@@ -130,9 +130,6 @@ class HybridEmbeddingsProvider:
         Returns:
             768-dimensional normalized embeddings
         """
-        from config.config_manager import config
-        batch_size = config.embeddings.fast_model.batch_size
-
         # Handle caching for single text
         if self.cache_enabled and isinstance(texts, str) and self.query_cache:
             cached = self.query_cache.get(texts)
@@ -143,7 +140,7 @@ class HybridEmbeddingsProvider:
         # Generate query embeddings (uses mdbr-leaf-ir internally)
         text_desc = f"{len(texts)} texts" if isinstance(texts, list) else f"text ({len(texts)} chars)"
         self.logger.debug(f"encode_realtime: generating embedding for {text_desc}")
-        embeddings = self.model.encode_query(texts, batch_size=batch_size)
+        embeddings = self.model.encode_query(texts, batch_size=EMBEDDINGS_BATCH_SIZE)
 
         embeddings = embeddings.astype(np.float16)
 
@@ -166,9 +163,6 @@ class HybridEmbeddingsProvider:
         Returns:
             768-dimensional normalized embeddings
         """
-        from config.config_manager import config
-        batch_size = config.embeddings.fast_model.batch_size
-
         # Handle caching for single text
         if self.cache_enabled and isinstance(texts, str) and self.doc_cache:
             cached = self.doc_cache.get(texts)
@@ -179,7 +173,7 @@ class HybridEmbeddingsProvider:
         # Generate document embeddings (uses snowflake-arctic-embed internally)
         text_desc = f"{len(texts)} texts" if isinstance(texts, list) else f"text ({len(texts)} chars)"
         self.logger.debug(f"encode_deep: generating embedding for {text_desc}")
-        embeddings = self.model.encode_document(texts, batch_size=batch_size)
+        embeddings = self.model.encode_document(texts, batch_size=EMBEDDINGS_BATCH_SIZE)
 
         embeddings = embeddings.astype(np.float16)
 

@@ -20,7 +20,6 @@ from lt_memory.models import ProcessingChunk, MemoryContextSnapshot
 from lt_memory.processing.extraction_engine import ExtractionEngine
 from lt_memory.processing.execution_strategy import ExecutionStrategy, ImmediateExecutionStrategy
 from lt_memory.db_access import LTMemoryDB
-from config.config import BatchingConfig
 from utils.user_context import set_current_user_id, get_current_user_id, clear_user_context, get_internal_llm
 
 if TYPE_CHECKING:
@@ -45,14 +44,12 @@ class ExtractionOrchestrator:
 
     def __init__(
         self,
-        config: BatchingConfig,
         extraction_engine: ExtractionEngine,
         execution_strategy: ExecutionStrategy,
         continuum_repo: 'ContinuumRepository',
         db: LTMemoryDB,
         immediate_strategy: ImmediateExecutionStrategy = None
     ):
-        self.config = config
         self.extraction_engine = extraction_engine
         self.execution_strategy = execution_strategy
         self.continuum_repo = continuum_repo

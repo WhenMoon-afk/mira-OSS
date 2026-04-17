@@ -3,6 +3,7 @@ Domain Document Tool - Section-aware editing with version control.
 
 Provides section-level management for domain knowledge documents stored in SQLite.
 Operations are section-scoped with expand/collapse support and full version history.
+Supports shared domaindocs via PostgreSQL domaindoc_shares table.
 """
 import json
 import logging
@@ -13,6 +14,7 @@ from tools.repo import Tool
 from tools.registry import registry
 from utils.timezone_utils import utc_now, format_utc_iso
 from utils.userdata_manager import UserDataManager
+from utils.domaindoc_shares import resolve_domaindoc, get_accepted_shares, invalidate_domaindoc_cache, ResolvedDomaindoc
 
 if TYPE_CHECKING:
     from working_memory.core import WorkingMemory
@@ -47,19 +49,28 @@ class DomaindocTool(Tool):
     simple_description = """Section-aware editing for domain knowledge documents with expand/collapse support."""
 
     def _build_domaindoc_catalog(self) -> List[str]:
-        """Query user's SQLite for all non-archived domaindoc labels.
+        """Query user's SQLite for all non-archived domaindoc labels, plus shared doc labels.
 
         Returns empty list on any failure (no user context, no domaindocs table, etc.)
         so the schema is always valid.
         """
+        labels: List[str] = []
         try:
             db = self.db
             results = db.fetchall(
                 "SELECT label FROM domaindocs WHERE archived = FALSE ORDER BY label"
             )
-            return [r["label"] for r in results]
+            labels.extend(r["label"] for r in results)
         except Exception:
-            return []
+            pass
+
+        try:
+            shares = get_accepted_shares(self.user_id)
+            labels.extend(s.collaborator_label for s in shares)
+        except Exception:
+            pass
+
+        return sorted(set(labels))
 
     def _build_schema(self, labels: List[str]) -> Dict[str, Any]:
         """Construct the full Anthropic schema with live domaindoc catalog."""
@@ -321,6 +332,21 @@ class DomaindocTool(Tool):
             {"now": now, "doc_id": domaindoc_id}
         )
 
+    def _invalidate_shared_doc_caches(self) -> None:
+        """Invalidate trinket caches for both collaborator and owner when editing shared docs."""
+        if not self._shared_doc_context:
+            return
+        invalidate_domaindoc_cache(self.user_id)
+        owner_user_id = self._shared_doc_context.owner_user_id
+        if owner_user_id:
+            invalidate_domaindoc_cache(owner_user_id)
+
+    def _actor_suffix(self) -> Dict[str, str]:
+        """Return actor info dict for version records when editing shared docs."""
+        if not self._shared_doc_context:
+            return {}
+        return {"actor": "collaborator", "actor_user_id": self.user_id}
+
     # =========================================================================
     # Tool Interface
     # =========================================================================
@@ -342,9 +368,9 @@ class DomaindocTool(Tool):
         expanded_by_default: Optional[bool] = None
     ) -> Dict[str, Any]:
         """Execute an operation on a domaindoc. Use parent param to target subsections."""
-        db = self.db  # Uses cached UserDataManager from Tool base class
+        self._shared_doc_context = None
+        db = self.db
 
-        # Operations that don't require an enabled domaindoc
         if operation == "search":
             return self._op_search(db, query, label)
         elif operation == "enable":
@@ -358,7 +384,7 @@ class DomaindocTool(Tool):
         elif operation == "overview":
             if not label:
                 raise ValueError("overview requires 'label' parameter")
-            return self._op_overview(db, label)
+            return self._op_overview(label)
         elif operation == "request_create":
             return self._op_request_create(label)
         elif operation == "request_delete":
@@ -366,40 +392,53 @@ class DomaindocTool(Tool):
                 raise ValueError("request_delete requires 'label' parameter")
             return self._op_request_delete(label)
 
-        # All other operations require a label and enabled domaindoc
         if not label:
             raise ValueError(f"{operation} requires 'label' parameter")
-        doc = self._get_domaindoc(db, label)
-        domaindoc_id = doc["id"]
 
-        if operation == "expand":
-            return self._op_expand(db, domaindoc_id, section, sections, parent)
-        elif operation == "collapse":
-            return self._op_collapse(db, domaindoc_id, section, sections, parent)
-        elif operation == "set_expanded_by_default":
-            return self._op_set_expanded_by_default(db, domaindoc_id, section, sections, parent, expanded_by_default)
-        elif operation == "pin":
-            return self._op_pin(db, domaindoc_id, section, parent)
-        elif operation == "unpin":
-            return self._op_unpin(db, domaindoc_id, section, parent)
-        elif operation == "create_section":
-            return self._op_create_section(db, domaindoc_id, section, content, insert_after, parent, expanded_by_default)
-        elif operation == "rename_section":
-            return self._op_rename_section(db, domaindoc_id, section, new_name, parent)
-        elif operation == "delete_section":
-            return self._op_delete_section(db, domaindoc_id, section, parent)
-        elif operation == "reorder_sections":
-            return self._op_reorder_sections(db, domaindoc_id, order, parent)
-        elif operation == "append":
-            return self._op_append(db, domaindoc_id, section, content, parent)
-        elif operation == "sed":
-            return self._op_sed(db, domaindoc_id, section, find, replace, global_replace=False, parent=parent)
-        elif operation == "sed_all":
-            return self._op_sed(db, domaindoc_id, section, find, replace, global_replace=True, parent=parent)
-        elif operation == "replace_section":
-            return self._op_replace_section(db, domaindoc_id, section, content, parent)
-        else:
-            raise ValueError(f"Unknown operation: {operation}")
+        resolved = resolve_domaindoc(self.user_id, label)
+        db = resolved.db
+        domaindoc_id = resolved.doc["id"]
+
+        if resolved.is_shared:
+            self._shared_doc_context = resolved
+            if operation in ("enable", "disable"):
+                raise ValueError(f"Cannot {operation} a shared domaindoc — only the owner can manage document lifecycle")
+
+        try:
+            if operation == "expand":
+                result = self._op_expand(db, domaindoc_id, section, sections, parent)
+            elif operation == "collapse":
+                result = self._op_collapse(db, domaindoc_id, section, sections, parent)
+            elif operation == "set_expanded_by_default":
+                result = self._op_set_expanded_by_default(db, domaindoc_id, section, sections, parent, expanded_by_default)
+            elif operation == "pin":
+                result = self._op_pin(db, domaindoc_id, section, parent)
+            elif operation == "unpin":
+                result = self._op_unpin(db, domaindoc_id, section, parent)
+            elif operation == "create_section":
+                result = self._op_create_section(db, domaindoc_id, section, content, insert_after, parent, expanded_by_default)
+            elif operation == "rename_section":
+                result = self._op_rename_section(db, domaindoc_id, section, new_name, parent)
+            elif operation == "delete_section":
+                result = self._op_delete_section(db, domaindoc_id, section, parent)
+            elif operation == "reorder_sections":
+                result = self._op_reorder_sections(db, domaindoc_id, order, parent)
+            elif operation == "append":
+                result = self._op_append(db, domaindoc_id, section, content, parent)
+            elif operation == "sed":
+                result = self._op_sed(db, domaindoc_id, section, find, replace, global_replace=False, parent=parent)
+            elif operation == "sed_all":
+                result = self._op_sed(db, domaindoc_id, section, find, replace, global_replace=True, parent=parent)
+            elif operation == "replace_section":
+                result = self._op_replace_section(db, domaindoc_id, section, content, parent)
+            else:
+                raise ValueError(f"Unknown operation: {operation}")
+        finally:
+            if self._shared_doc_context:
+                self._invalidate_shared_doc_caches()
+                self._shared_doc_context = None
+
+        return result
 
     # =========================================================================
     # Document Management Operations
@@ -557,14 +596,15 @@ class DomaindocTool(Tool):
     # Browsing & Lifecycle Guidance Operations
     # =========================================================================
 
-    def _op_overview(self, db: UserDataManager, label: str) -> Dict[str, Any]:
+    def _op_overview(self, label: str) -> Dict[str, Any]:
         """Return domaindoc description + section tree (headers and summaries, no full content).
 
-        Works on both enabled and disabled domaindocs — the "sample to taste" mechanism
-        for previewing what a domaindoc contains before deciding to enable it.
+        Works on both enabled and disabled domaindocs (own docs only).
+        Shared docs always require enabled+not-archived.
         """
-        doc = self._get_domaindoc(db, label, require_enabled=False)
-        domaindoc_id = doc["id"]
+        resolved = resolve_domaindoc(self.user_id, label, require_enabled=False)
+        db = resolved.db
+        domaindoc_id = resolved.doc["id"]
 
         # Get all sections with parent relationships
         all_sections = db.fetchall(
@@ -761,7 +801,7 @@ class DomaindocTool(Tool):
             {"now": now, "id": sec["id"]}
         )
 
-        self._record_version(db, domaindoc_id, "pin", {"section": sec["header"]}, sec["id"])
+        self._record_version(db, domaindoc_id, "pin", {"section": sec["header"], **self._actor_suffix()}, sec["id"])
         self._update_domaindoc_timestamp(db, domaindoc_id)
         return {"success": True, "pinned": sec["header"]}
 
@@ -787,7 +827,7 @@ class DomaindocTool(Tool):
             {"now": now, "id": sec["id"]}
         )
 
-        self._record_version(db, domaindoc_id, "unpin", {"section": sec["header"]}, sec["id"])
+        self._record_version(db, domaindoc_id, "unpin", {"section": sec["header"], **self._actor_suffix()}, sec["id"])
         self._update_domaindoc_timestamp(db, domaindoc_id)
         return {"success": True, "unpinned": sec["header"]}
 
@@ -893,7 +933,8 @@ class DomaindocTool(Tool):
             "content_length": len(content),
             "insert_after": insert_after,
             "parent": parent,
-            "expanded_by_default": start_expanded
+            "expanded_by_default": start_expanded,
+            **self._actor_suffix()
         }, int(section_id))
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
@@ -934,7 +975,8 @@ class DomaindocTool(Tool):
         self._record_version(db, domaindoc_id, "rename_section", {
             "old_name": old_name,
             "new_name": normalized_new,
-            "parent": parent
+            "parent": parent,
+            **self._actor_suffix()
         }, sec["id"])
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
@@ -973,23 +1015,23 @@ class DomaindocTool(Tool):
 
         deleted_children = []
         if subsections:
-            # Record and delete subsections first
             for sub in subsections:
                 self._record_version(db, domaindoc_id, "delete_section", {
                     "header": sub["header"],
                     "deleted_content": sub.get("encrypted__content", ""),
                     "sort_order": sub["sort_order"],
-                    "parent": sec["header"]
+                    "parent": sec["header"],
+                    **self._actor_suffix()
                 }, sub["id"])
                 deleted_children.append(sub["header"])
-            # Cascade delete handled by FK ON DELETE CASCADE
 
         self._record_version(db, domaindoc_id, "delete_section", {
             "header": sec["header"],
             "deleted_content": sec.get("encrypted__content", ""),
             "sort_order": sec["sort_order"],
             "parent": parent,
-            "deleted_children": deleted_children
+            "deleted_children": deleted_children,
+            **self._actor_suffix()
         }, sec["id"])
 
         db.execute(
@@ -1054,7 +1096,7 @@ class DomaindocTool(Tool):
                 {"order": new_order, "now": now, "id": sec["id"]}
             )
 
-        self._record_version(db, domaindoc_id, "reorder_sections", {"order": order, "parent": parent})
+        self._record_version(db, domaindoc_id, "reorder_sections", {"order": order, "parent": parent, **self._actor_suffix()})
         self._update_domaindoc_timestamp(db, domaindoc_id)
         return {"success": True, "new_order": order, "parent": parent}
 
@@ -1094,7 +1136,8 @@ class DomaindocTool(Tool):
             "section": sec["header"],
             "appended_content": content,
             "result_length": len(new_content),
-            "parent": parent
+            "parent": parent,
+            **self._actor_suffix()
         }, sec["id"])
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
@@ -1160,7 +1203,8 @@ class DomaindocTool(Tool):
             "find": find,
             "replace": replace,
             "replacements": count,
-            "parent": parent
+            "parent": parent,
+            **self._actor_suffix()
         }, sec["id"])
 
         self._update_domaindoc_timestamp(db, domaindoc_id)
@@ -1207,7 +1251,8 @@ class DomaindocTool(Tool):
             "old_length": len(previous_content),
             "new_length": len(content),
             "previous_content": previous_content,
-            "parent": parent
+            "parent": parent,
+            **self._actor_suffix()
         }, sec["id"])
 
         self._update_domaindoc_timestamp(db, domaindoc_id)

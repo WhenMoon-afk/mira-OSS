@@ -313,11 +313,15 @@ class ChatEndpoint(BaseHandler):
 
 
 @router.post("/chat")
-async def chat_endpoint(
+def chat_endpoint(
     request: ChatRequest,
     current_user: SessionData | APITokenContext = Depends(get_current_user)
 ):
-    """Send a message and receive assistant response as JSON."""
+    """Send a message and receive assistant response as JSON.
+
+    Deliberately sync (not async def) so Starlette runs it in a threadpool
+    instead of blocking the event loop during the multi-round tool execution.
+    """
     try:
         handler = ChatEndpoint()
         response = handler.handle_request(

@@ -37,13 +37,6 @@ class LatticeClient:
     """
 
     def __init__(self, base_url: str = config.lattice.service_url, timeout: int = config.lattice.timeout):
-        """
-        Initialize Lattice client.
-
-        Args:
-            base_url: Lattice service URL. Defaults to config.lattice.service_url
-            timeout: Request timeout. Defaults to config.lattice.timeout
-        """
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
 

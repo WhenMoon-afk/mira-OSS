@@ -10,7 +10,7 @@ Event handlers registered via `event_bus.subscribe()` must be synchronous. Excep
 
 Trinkets self-register: constructing `TimeManager(event_bus, working_memory)` is the registration. Add new trinkets in `_get_working_memory()`, after `tool_repo` if they depend on tools.
 
-Peripheral services (`SegmentCollapseHandler`, `ManifestQueryService`, `PeanutGalleryService`) are initialized via `_initialize_*()` methods that subscribe to events internally — do not subscribe to their event types from outside the factory.
+Peripheral services (`SegmentCollapseHandler`, `ManifestQueryService`, `PeanutGalleryService`, `InboxPollerService`) are initialized via `_initialize_*()` methods that subscribe to events internally — do not subscribe to their event types from outside the factory.
 
 ## Files
 

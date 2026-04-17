@@ -2,7 +2,8 @@
 
 ## Rules
 
-- All settings are Pydantic `BaseModel` schemas with hardcoded defaults in `config.py`. No required fields — the system must boot with zero external input.
+- `config.py` contains only **operational and infrastructure** settings — feature flags, infrastructure coordinates, scheduling cadences, deployment settings. Algorithm tuning constants live inline in their consumer modules as `UPPER_SNAKE_CASE` module-level constants.
+- All settings are Pydantic `BaseModel` schemas with hardcoded defaults. No required fields — the system must boot with zero external input.
 - Secrets (API keys, DB URLs) are never stored here. They are lazy Vault lookups via properties on `AppConfig` (e.g., `config.api_key` calls `get_api_key(self.api.api_key_name)`). No env-var fallbacks.
 - The `config` singleton is module-level state created at import time: `config = initialize_config()` in `config_manager.py`. Import it as `from config import config`. Never instantiate `AppConfig` directly in application code.
 - `__init__.py` imports `tools.registry` before `config_manager` — this import order is load-bearing for circular dependency avoidance. Do not reorder.
@@ -10,9 +11,34 @@
 - `ScheduledJobsConfig` fields ending in `_use_days` are modular activity-day intervals, not calendar intervals. `consolidation_use_days=7` means "run when `MOD(cumulative_activity_days, 7) = 0`", not "run every 7 calendar days".
 - `system_prompt.txt` is loaded once at startup by `AppConfig._load_system_prompt()`. Template variables `{first_name}`, `{user_context}`, and `{relative time since account creation}` are substituted by `working_memory/core.py`, not by config.
 
+## Config Models (6 total)
+
+- `ApiConfig` — Anthropic API: feature flags (`analysis_enabled`, `show_generic_thinking`, `emergency_fallback_enabled`), infrastructure coordinates (vault key names, endpoints), generation defaults (model, max_tokens, temperature), timeouts.
+- `ApiServerConfig` — Server deployment: host/port/workers, CORS, uvicorn log level, extended thinking toggle.
+- `SystemConfig` — System-level: `log_level`, `timezone`, `peanutgallery_enabled`.
+- `ScheduledJobsConfig` — Background job cadences: extraction retry, batch polling, consolidation, score recalc, entity GC, batch cleanup, portrait synthesis. All operational knobs.
+- `SidebarDispatcherConfig` — Sidebar agent: `enabled`, poll interval, max concurrent agents.
+
+## Where Algorithm Constants Live
+
+Algorithm tuning constants were moved from config.py to their consumer modules:
+- `lt_memory/proactive.py` — surfacing thresholds, link weights, debut boost, context window caps
+- `lt_memory/hybrid_search.py` — intent weights, RRF k, search defaults
+- `lt_memory/linking.py` — link discovery thresholds, TF-IDF settings
+- `lt_memory/refinement.py` — consolidation thresholds
+- `lt_memory/processing/batch_coordinator.py` — batch processing limits
+- `lt_memory/processing/memory_processor.py` — dedup thresholds
+- `lt_memory/entity_gc.py` — pg_trgm similarity threshold
+- `cns/services/orchestrator.py` — context overflow, topic drift, tool result limits
+- `cns/services/peanutgallery_service.py` — trigger interval, seed count, TTL
+- `cns/services/peanutgallery_model.py` — prerunner tokens, message window
+- `cns/core/segment_cache_loader.py` — session cache tier settings
+- `cns/services/manifest_query_service.py` — manifest depth, cache TTL
+- `cns/services/segment_timeout_service.py` — segment timeout minutes
+
 ## Files
 
-- `config.py` — Pure Pydantic schema definitions for every config section (`ApiConfig`, `LTMemoryConfig`, `ScheduledJobsConfig`, `SystemConfig`, `SidebarDispatcherConfig`, `ImapTriggerConfig`, etc.). `ImapTriggerConfig` controls whether IMAP polling is active and the discovery time window; which emails to act on is per-user via `trigger_rules` in the user's SQLite DB. `SystemConfig` includes two-tier session cache settings: `session_summary_complexity_limit` (Tier 1 extended), `session_precis_max_count` (Tier 2 precis). No logic, no side effects.
+- `config.py` — Pydantic schema definitions for the 6 config models. No logic, no side effects.
 - `config_manager.py` — `AppConfig` (root aggregate), `initialize_config()`, and the `config` singleton. Owns Vault property lookups and dynamic tool config via `__getattr__`.
 - `__init__.py` — Re-exports `config` and `AppConfig`; enforces registry-before-config import order.
 - `system_prompt.txt` — Mira's core identity prompt. Section order is semantics: foundational identity appears before behavioral directives because earlier tokens condition interpretation of later ones.

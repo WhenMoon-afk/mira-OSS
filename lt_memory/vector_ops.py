@@ -15,9 +15,12 @@ from lt_memory.hybrid_search import HybridSearcher
 
 if TYPE_CHECKING:
     from clients.embeddings_provider import HybridEmbeddingsProvider
-    from config.config import VectorSearchConfig, HybridSearchConfig
 
 logger = logging.getLogger(__name__)
+
+# Vector search defaults
+DEFAULT_VECTOR_SIMILARITY_THRESHOLD = 0.7
+DEFAULT_VECTOR_SEARCH_LIMIT = 10
 
 
 class VectorOps:
@@ -31,25 +34,10 @@ class VectorOps:
         self,
         embeddings_provider: 'HybridEmbeddingsProvider',
         db: LTMemoryDB,
-        vector_search_config: Optional['VectorSearchConfig'] = None,
-        hybrid_search_config: Optional['HybridSearchConfig'] = None
     ):
-        """
-        Initialize vector operations service.
-
-        Args:
-            embeddings_provider: Hybrid embeddings provider singleton
-            db: LTMemoryDB instance for database access
-            vector_search_config: VectorSearchConfig for search defaults (optional)
-            hybrid_search_config: HybridSearchConfig for hybrid search (optional)
-        """
         self.embeddings_provider = embeddings_provider
         self.db = db
-        self.vector_search_config = vector_search_config
-        self.hybrid_search_config = hybrid_search_config
-
-        # Initialize hybrid searcher with config
-        self.hybrid_searcher = HybridSearcher(db, config=hybrid_search_config)
+        self.hybrid_searcher = HybridSearcher(db)
 
     def generate_embedding(self, text: str) -> List[float]:
         """
@@ -162,8 +150,8 @@ class VectorOps:
         """
         # Apply config defaults if values not provided
         if self.vector_search_config:
-            limit = limit if limit is not None else self.vector_search_config.default_limit
-            similarity_threshold = similarity_threshold if similarity_threshold is not None else self.vector_search_config.default_similarity_threshold
+            limit = limit if limit is not None else DEFAULT_VECTOR_SEARCH_LIMIT
+            similarity_threshold = similarity_threshold if similarity_threshold is not None else DEFAULT_VECTOR_SIMILARITY_THRESHOLD
         else:
             limit = limit if limit is not None else 10
             similarity_threshold = similarity_threshold if similarity_threshold is not None else 0.7

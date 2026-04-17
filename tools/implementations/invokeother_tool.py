@@ -40,8 +40,8 @@ class InvokeOtherTool(Tool):
         super().__init__()
         self.tool_repo = tool_repo
 
-        from config import config
-        self.essential_tools = config.tools.essential_tools
+        from tools.repo import ESSENTIAL_TOOLS
+        self.essential_tools = ESSENTIAL_TOOLS
 
         # Build schema with tool catalog baked into description + enum
         catalog = self._build_catalog()

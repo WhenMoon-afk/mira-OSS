@@ -22,9 +22,9 @@ from lt_memory.vector_ops import VectorOps
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.linking import LinkingService
 from clients.llm_provider import LLMProvider, build_batch_params
-from config.config import BatchingConfig, ExtractionConfig
+from lt_memory.processing.batch_coordinator import BATCH_EXPIRY_HOURS
 from utils.timezone_utils import utc_now
-from utils.user_context import set_current_user_id, clear_user_context, get_internal_llm
+from utils.user_context import get_internal_llm
 
 logger = logging.getLogger(__name__)
 
@@ -223,13 +223,9 @@ class BatchExecutionStrategy(ExecutionStrategy):
         vector_ops: VectorOps,
         db: LTMemoryDB,
         batch_coordinator: 'BatchCoordinator',
-        batching_config: BatchingConfig,
-        extraction_config: ExtractionConfig
     ):
         super().__init__(extraction_engine, memory_processor, vector_ops, db)
         self.batch_coordinator = batch_coordinator
-        self.batching_config = batching_config
-        self.extraction_config = extraction_config
 
     def execute_extraction(
         self,
@@ -289,7 +285,7 @@ class BatchExecutionStrategy(ExecutionStrategy):
             batch_type="extraction",
             user_id=user_id,
         )
-        expires_at = utc_now() + timedelta(hours=self.batching_config.batch_expiry_hours)
+        expires_at = utc_now() + timedelta(hours=BATCH_EXPIRY_HOURS)
 
         # Store batch records with UUID mapping
         for chunk, request_idx, payload in chunk_request_mapping:
@@ -346,6 +342,9 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
         """
         Execute extraction immediately using OpenAI fallback.
 
+        Caller is responsible for user context lifecycle — this method
+        does not set or clear user context.
+
         Args:
             user_id: User ID
             chunks: Processing chunks
@@ -356,64 +355,59 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
         Raises:
             Exception: If LLM call or result processing fails
         """
-        set_current_user_id(user_id)
         total_memories_stored = 0
         all_memory_ids: List[UUID] = []
         all_linking_pairs: List[LinkingPair] = []
 
-        try:
-            for chunk in chunks:
-                # Build extraction payload
-                payload = self.extraction_engine.build_extraction_payload(
-                    chunk,
-                    for_batch=False  # Use immediate format (system + user prompt)
-                )
+        for chunk in chunks:
+            # Build extraction payload
+            payload = self.extraction_engine.build_extraction_payload(
+                chunk,
+                for_batch=False  # Use immediate format (system + user prompt)
+            )
 
-                if not payload.user_prompt:
-                    continue
+            if not payload.user_prompt:
+                continue
 
-                # Call LLM directly using extraction internal LLM config
-                response = self.llm_provider.generate_response(
-                    messages=[{"role": "user", "content": payload.user_prompt}],
-                    system_override=payload.system_prompt,
-                    internal_llm='extraction',
-                    allow_negative=True,  # System task — segment already paid for
-                )
+            # Call LLM directly using extraction internal LLM config
+            response = self.llm_provider.generate_response(
+                messages=[{"role": "user", "content": payload.user_prompt}],
+                system_override=payload.system_prompt,
+                internal_llm='extraction',
+                allow_negative=True,  # System task — segment already paid for
+            )
 
-                # Extract text from response
-                response_text = self.llm_provider.extract_text_content(response)
+            # Extract text from response
+            response_text = self.llm_provider.extract_text_content(response)
 
-                # Process and store memories (shared business logic)
-                memory_ids, linking_pairs = self._process_and_store_memories(
-                    user_id,
-                    response_text,
-                    payload
-                )
+            # Process and store memories (shared business logic)
+            memory_ids, linking_pairs = self._process_and_store_memories(
+                user_id,
+                response_text,
+                payload
+            )
 
-                total_memories_stored += len(memory_ids)
-                all_memory_ids.extend(memory_ids)
-                all_linking_pairs.extend(linking_pairs)
+            total_memories_stored += len(memory_ids)
+            all_memory_ids.extend(memory_ids)
+            all_linking_pairs.extend(linking_pairs)
 
-                logger.info(
-                    f"Immediate extraction chunk {chunk.chunk_index}: "
-                    f"{len(memory_ids)} memories stored"
-                )
+            logger.info(
+                f"Immediate extraction chunk {chunk.chunk_index}: "
+                f"{len(memory_ids)} memories stored"
+            )
 
-            # Post-storage processing: relationships
-            if all_memory_ids:
-                # Trigger relationship classification
-                self._trigger_relationship_classification(user_id, all_memory_ids, all_linking_pairs)
+        # Post-storage processing: relationships
+        if all_memory_ids:
+            # Trigger relationship classification
+            self._trigger_relationship_classification(user_id, all_memory_ids, all_linking_pairs)
 
-            if total_memories_stored > 0:
-                logger.info(
-                    f"Immediate extraction complete for user {user_id}: "
-                    f"{total_memories_stored} total memories"
-                )
+        if total_memories_stored > 0:
+            logger.info(
+                f"Immediate extraction complete for user {user_id}: "
+                f"{total_memories_stored} total memories"
+            )
 
-            return f"bypass_{uuid4()}"
-
-        finally:
-            clear_user_context()
+        return f"bypass_{uuid4()}"
 
     def _trigger_relationship_classification(
         self,
@@ -473,7 +467,12 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
             return
 
         # Execute classifications immediately (we're in failover mode)
+        # Circuit breaker: if the model returns garbage N times in a row,
+        # stop wasting LLM calls — the endpoint is broken.
+        MAX_CONSECUTIVE_FAILURES = 5
+
         links_created = 0
+        consecutive_failures = 0
         for pair in all_pairs:
             try:
                 # Build classification payload
@@ -499,6 +498,8 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
                 classification = json.loads(response_text)
                 rel_type = classification.get("relationship_type")
 
+                consecutive_failures = 0  # Reset on successful parse
+
                 if rel_type and rel_type != "null":
                     # Create bidirectional link
                     if self.linking.create_bidirectional_link(
@@ -511,11 +512,28 @@ class ImmediateExecutionStrategy(ExecutionStrategy):
                         links_created += 1
 
             except json.JSONDecodeError:
-                logger.error("Invalid JSON in relationship classification response")
-                continue
+                consecutive_failures += 1
+                logger.error(
+                    f"Invalid JSON in relationship classification response "
+                    f"({consecutive_failures}/{MAX_CONSECUTIVE_FAILURES}): "
+                    f"{response_text[:200]}"
+                )
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    logger.error(
+                        f"Circuit breaker tripped: {MAX_CONSECUTIVE_FAILURES} consecutive "
+                        f"JSON failures — aborting relationship classification for user {user_id}. "
+                        f"The relationship LLM endpoint is likely returning non-JSON responses."
+                    )
+                    break
             except Exception as e:
+                consecutive_failures += 1
                 logger.warning(f"Relationship classification failed for pair: {e}")
-                continue
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    logger.error(
+                        f"Circuit breaker tripped: {MAX_CONSECUTIVE_FAILURES} consecutive "
+                        f"failures — aborting relationship classification for user {user_id}."
+                    )
+                    break
 
         logger.info(
             f"Immediate: relationship classification complete for {len(all_pairs)} pairs, "
@@ -530,8 +548,6 @@ def create_execution_strategy(
     db: LTMemoryDB,
     llm_provider: LLMProvider,
     batch_coordinator: 'BatchCoordinator | None',
-    batching_config: BatchingConfig,
-    extraction_config: ExtractionConfig,
     linking_service: Optional[LinkingService] = None
 ) -> ExecutionStrategy:
     """
@@ -546,8 +562,6 @@ def create_execution_strategy(
         db: Database instance
         llm_provider: LLM provider instance
         batch_coordinator: BatchCoordinator (None if unavailable)
-        batching_config: Batching configuration
-        extraction_config: Extraction configuration
         linking_service: Linking service (required for immediate mode)
 
     Returns:
@@ -579,6 +593,4 @@ def create_execution_strategy(
             vector_ops,
             db,
             batch_coordinator,
-            batching_config,
-            extraction_config
         )

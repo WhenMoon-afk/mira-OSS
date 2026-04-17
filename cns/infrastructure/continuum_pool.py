@@ -51,8 +51,10 @@ class UnitOfWork:
         Args:
             *messages: One or more Message objects to persist
         """
-        from config import config
-        limit = config.context.message_max_chars
+        # Hard cap on any single message content before DB persistence.
+        # Larger than tool result truncation (100k) since assistant messages
+        # can legitimately be long.
+        limit = 150_000
 
         for msg in messages:
             content = msg.content

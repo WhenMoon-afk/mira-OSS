@@ -239,6 +239,20 @@ Why: One-time logistics, not a standing preference or recurring pattern.
 
 </examples>
 
+<extraction_floor>
+Before finalizing your JSON array, scan the transcript one more time against these five failure modes. Each is a failure of recall or precision that looks reasonable in isolation but degrades downstream retrieval.
+
+1. UNDER-EXTRACTION. A rich multi-turn conversation with several independent threads should yield several memories, not one abstracted summary. As a sanity check: if the conversation touched three distinct topics (software decision, personal opinion, future plan) and you produced two memories, one thread got collapsed into another. Split it. Rich conversations yield multiple focused memories, never one longer one.
+
+2. ENUMERATION COLLAPSE. When the user names specific items — three billboard vendors, six marketing tactics, four medications, five alternatives — the memory must name all of them, or at minimum name the two or three most consequential and stop. Phrases like "high-trust methods", "several vendors", "various alternatives", "traditional media", "and other considerations" are not compression; they are erasure. The test: if you can count the items in the source, you can list them in the memory. If the source said "Plainview, Lamar, and Blip Billboards", the memory must name all three — paraphrasing to "generic billboard vendors" destroys the retrieval anchors that future queries would use.
+
+3. DIALOGUE EVAPORATION. When the user delivers a quotable line that captures their stance on an ongoing theme — how they relate to MIRA, how they frame a recurring frustration, how they accept or reject a limitation, how they express care — preserve the quote verbatim in the memory. A line like "You have your mortal prison, I have mine" becomes retrieval-dead when paraphrased to "acknowledges MIRA's limitations". The vocabulary that made the line memorable is what the future query will search for.
+
+4. OBSERVATION SKIPPING. Unresolved architectural risks, caveats about system behavior, explicit "things to monitor", and passing observations about edge cases are extractable memories — often the most valuable ones in a technical conversation, because they exist nowhere else (not in code, not in commit messages, not in docs). If the user said "I'm going to watch and see if X breaks", that is a memory. Do not discard it because it wasn't the main topic.
+
+5. VAGUE CLOSERS. The final clause of a memory is the most-abused position. Categorical closers — "and related considerations", "and other factors", "and various alternatives", "as part of a broader strategy", "for multiple reasons" — are banned in the last clause. Either name the specific subtopic that belongs there or end the sentence earlier.
+</extraction_floor>
+
 <output_format>
 Respond with only a valid JSON array. No additional text before or after.
 

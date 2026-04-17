@@ -13,9 +13,12 @@ from clients.valkey_client import get_valkey_client
 from cns.core.events import ManifestUpdatedEvent
 from cns.integration.event_bus import EventBus
 from cns.infrastructure.continuum_repository import ContinuumRepository, get_continuum_repository
-from config import config
 
 logger = logging.getLogger(__name__)
+
+# Manifest display settings
+MANIFEST_DEPTH = 15       # Recent segments in manifest display
+MANIFEST_CACHE_TTL = 3600  # Valkey cache TTL in seconds (1 hour)
 
 
 class ManifestSegment(TypedDict):
@@ -83,7 +86,7 @@ class ManifestQueryService:
             continuum_repository: Continuum repository (uses singleton if not provided)
         """
         self.valkey = get_valkey_client()
-        self.cache_ttl = config.system.manifest_cache_ttl
+        self.cache_ttl = MANIFEST_CACHE_TTL
         self.continuum_repository = continuum_repository or get_continuum_repository()
 
         # Subscribe to manifest update events for cache invalidation
@@ -104,7 +107,7 @@ class ManifestQueryService:
         except Exception as e:
             logger.warning(f"Failed to invalidate manifest cache: {e}")
 
-    def get_segments(self, user_id: str, limit: int = config.system.manifest_depth) -> list[ManifestSegment]:
+    def get_segments(self, user_id: str, limit: int = MANIFEST_DEPTH) -> list[ManifestSegment]:
         """
         Get segment data for manifest display.
 
@@ -113,7 +116,7 @@ class ManifestQueryService:
 
         Args:
             user_id: User ID for query
-            limit: Maximum number of segments (uses config.system.manifest_depth if None)
+            limit: Maximum number of segments (default: MANIFEST_DEPTH)
 
         Returns:
             List of segment dictionaries with keys:

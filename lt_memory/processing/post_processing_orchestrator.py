@@ -16,11 +16,10 @@ from uuid import UUID, uuid4
 from json_repair import repair_json
 
 from clients.llm_provider import LLMProvider, build_batch_params
-from config.config import BatchingConfig
 from utils.user_context import get_internal_llm
 from lt_memory.db_access import LTMemoryDB
 from lt_memory.models import PostProcessingBatch, ConsolidationCluster
-from lt_memory.processing.batch_coordinator import BatchCoordinator
+from lt_memory.processing.batch_coordinator import BatchCoordinator, BATCH_EXPIRY_HOURS
 from lt_memory.processing.consolidation_handler import ConsolidationHandler
 from lt_memory.refinement import RefinementService
 from utils.timezone_utils import utc_now
@@ -40,25 +39,12 @@ class PostProcessingOrchestrator:
 
     def __init__(
         self,
-        config: BatchingConfig,
         refinement: RefinementService,
         batch_coordinator: BatchCoordinator,
         consolidation_handler: ConsolidationHandler,
         db: LTMemoryDB,
         llm_provider: LLMProvider
     ):
-        """
-        Initialize post-processing orchestrator.
-
-        Args:
-            config: Batching configuration (batch_expiry_hours, etc.)
-            refinement: Refinement service for candidate identification and payload building
-            batch_coordinator: Coordinator for Anthropic Batch API submission
-            consolidation_handler: Handler for immediate-mode consolidation with link transfer
-            db: Database access for batch record storage and memory queries
-            llm_provider: LLM provider for failover check and immediate-mode calls
-        """
-        self.config = config
         self.refinement = refinement
         self.batch_coordinator = batch_coordinator
         self.consolidation_handler = consolidation_handler
@@ -125,7 +111,7 @@ class PostProcessingOrchestrator:
         )
 
         # Store batch record for polling
-        expires_at = utc_now() + timedelta(hours=self.config.batch_expiry_hours)
+        expires_at = utc_now() + timedelta(hours=BATCH_EXPIRY_HOURS)
         batch_record = PostProcessingBatch(
             batch_id=batch_id,
             batch_type="consolidation",

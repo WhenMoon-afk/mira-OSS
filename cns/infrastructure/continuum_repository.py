@@ -919,30 +919,34 @@ class ContinuumRepository:
         """
         db = self._get_client(user_id)
 
-        # Atomically increment turn count and ensure status is 'active'.
-        # Matches both 'active' and 'paused' segments — a paused segment
-        # is auto-resumed when the user sends a message.
+        # Atomically increment turn count, ensure status is 'active', and stamp
+        # last_turn_at. Matches both 'active' and 'paused' segments — a paused
+        # segment is auto-resumed when the user sends a message.
+        # last_turn_at closes a race window: without it, the timeout service can
+        # see the reactivated segment and compute inactivity from the last
+        # *committed* message (which may be hours old). The stamp records fresh
+        # activity before the new message is committed via uow.commit().
+        now_iso = format_utc_iso(utc_now())
         query = """
             UPDATE messages
             SET metadata = jsonb_set(
                 metadata - 'paused_at',
                 '{segment_turn_count}',
                 to_jsonb((metadata->>'segment_turn_count')::int + 1)
-            ) || '{"status": "active"}'::jsonb
+            ) || jsonb_build_object('status', 'active', 'last_turn_at', %s::text)
             WHERE continuum_id = %s
                 AND metadata->>'is_segment_boundary' = 'true'
                 AND metadata->>'status' IN ('active', 'paused')
             RETURNING (metadata->>'segment_turn_count')::int as turn_count
         """
 
-        rows = db.execute_returning(query, (str(continuum_id),))
+        rows = db.execute_returning(query, (now_iso, str(continuum_id)))
 
         if rows and rows[0].get('turn_count'):
             return rows[0]['turn_count']
 
         # No active/paused segment exists - create one now.
         # This ensures find_active_segment() will succeed immediately after this call.
-        from utils.timezone_utils import utc_now
         self._ensure_active_segment(UUID(str(continuum_id)), user_id, utc_now(), db)
         return 1
 

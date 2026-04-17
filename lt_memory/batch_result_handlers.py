@@ -19,7 +19,7 @@ from lt_memory.processing.memory_processor import MemoryProcessor
 from lt_memory.vector_ops import VectorOps
 from lt_memory.linking import LinkingService
 from lt_memory.models import ExtractionBatch, PostProcessingBatch, ExtractedMemory, MemoryLink, LinkingPair, ClassificationPair
-from config.config import BatchingConfig
+from lt_memory.processing.batch_coordinator import BATCH_EXPIRY_HOURS
 from clients.llm_provider import LLMProvider, build_batch_params
 from utils.user_context import set_current_user_id, clear_user_context, get_internal_llm
 from utils.timezone_utils import utc_now
@@ -39,7 +39,6 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
         vector_ops: VectorOps,
         db: LTMemoryDB,
         linking_service: LinkingService,
-        batching_config: BatchingConfig,
         llm_provider: LLMProvider,
         batch_coordinator: 'BatchCoordinator'
     ):
@@ -48,7 +47,6 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
         self.vector_ops = vector_ops
         self.db = db
         self.linking = linking_service
-        self.batching_config = batching_config
         self.llm_provider = llm_provider
         self.batch_coordinator = batch_coordinator
 
@@ -361,7 +359,7 @@ class ExtractionBatchResultHandler(BatchResultProcessor):
             batch_type="relationship_classification",
             user_id=user_id,
         )
-        expires_at = utc_now() + timedelta(hours=self.batching_config.batch_expiry_hours)
+        expires_at = utc_now() + timedelta(hours=BATCH_EXPIRY_HOURS)
 
         # Store batch record
         batch_record = PostProcessingBatch(
@@ -585,12 +583,10 @@ class ConsolidationBatchResultHandler(BatchResultProcessor):
         anthropic_client: anthropic.Anthropic,
         db: LTMemoryDB,
         consolidation_handler: 'ConsolidationHandler',
-        batching_config: BatchingConfig
     ):
         self.anthropic_client = anthropic_client
         self.db = db
         self.consolidation_handler = consolidation_handler
-        self.batching_config = batching_config
 
     def process_result(self, batch_id: str, batch: PostProcessingBatch) -> bool:
         """

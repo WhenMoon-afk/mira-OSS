@@ -58,7 +58,7 @@ def ensure_single_user(app: FastAPI) -> None:
 
         # Detect offline tier (created by deploy when user chose offline mode)
         offline_tier = session.execute_single(
-            "SELECT name FROM account_tiers WHERE name = 'offline'"
+            "SELECT name FROM conversation_llm WHERE name = 'offline'"
         )
         oss_default_tier = 'offline' if offline_tier else 'primary'
 
@@ -75,7 +75,7 @@ def ensure_single_user(app: FastAPI) -> None:
             # OSS: user brings own API key, set balance high and default to correct tier
             session.execute_update(
                 """UPDATE users SET balance_usd = 999999.00,
-                   llm_tier = CASE WHEN llm_tier NOT IN (SELECT name FROM account_tiers) THEN %(tier)s ELSE llm_tier END
+                   conversation_llm = CASE WHEN conversation_llm NOT IN (SELECT name FROM conversation_llm) THEN %(tier)s ELSE conversation_llm END
                    WHERE id = %(id)s""",
                 {'id': str(user['id']), 'tier': oss_default_tier}
             )
@@ -102,7 +102,7 @@ def ensure_single_user(app: FastAPI) -> None:
         user_id = str(uuid.uuid4())
 
         session.execute_update("""
-            INSERT INTO users (id, email, is_active, memory_manipulation_enabled, balance_usd, llm_tier)
+            INSERT INTO users (id, email, is_active, memory_manipulation_enabled, balance_usd, conversation_llm)
             VALUES (%(id)s, %(email)s, true, true, 999999.00, %(tier)s)
         """, {'id': user_id, 'email': default_email, 'tier': oss_default_tier})
 
@@ -271,14 +271,11 @@ async def lifespan(app: FastAPI):
         # Create LLM provider for lt_memory (no tools needed for memory extraction)
         lt_memory_llm_provider = LLMProvider(tool_repo=None)
 
-        # Initialize lt_memory factory as singleton
-        # Note: Batch API client is created internally using config.batching.api_key_name
         lt_memory_factory = get_lt_memory_factory(
-            config=config.lt_memory,
             session_manager=get_shared_session_manager(),
-            embeddings_provider=embeddings_provider,  # Reuse from above
+            embeddings_provider=embeddings_provider,
             llm_provider=lt_memory_llm_provider,
-            conversation_repo=continuum_repo  # Reuse from above
+            conversation_repo=continuum_repo
         )
         logger.info("lt_memory factory initialized as singleton")
     except Exception as e:
@@ -303,13 +300,14 @@ async def lifespan(app: FastAPI):
     )
     logger.info(f"Flushed {flushed_count} cache keys from Valkey")
 
-    # Initialize PlaywrightService for JavaScript-rendered webpages
+    # PlaywrightService is lazy — Chromium launches on first web_tool fetch,
+    # auto-shuts down after idle timeout. Just verify the import works.
     try:
         from utils.playwright_service import PlaywrightService
-        playwright_service = PlaywrightService.get_instance()
-        logger.info("PlaywrightService initialized")
-    except Exception as e:
-        logger.warning(f"Failed to initialize PlaywrightService: {e}")
+        PlaywrightService.get_instance()  # Creates singleton, does NOT launch Chromium
+        logger.info("PlaywrightService ready (Chromium launches on first use)")
+    except ImportError as e:
+        logger.warning(f"Playwright not available: {e}")
         logger.warning("web_tool will not be able to render JavaScript-heavy pages")
 
     # Event bus is synchronous

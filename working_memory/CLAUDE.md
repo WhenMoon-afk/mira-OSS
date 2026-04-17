@@ -16,12 +16,14 @@ Portrait injection (`{user_context}`) and `{first_name}` / `{relative time since
 - `composer.py` — `SystemPromptComposer`: owns section routing via `SECTION_LAYOUT` and prompt assembly into `ComposedPrompt`; sections not in `SECTION_LAYOUT` land in `system` with a warning
 - `core.py` — `WorkingMemory`: owns trinket registration, event subscriptions, portrait cache (`_portrait_cache`), and `TrinketState` retrieval from Valkey
 - `trinkets/base.py` — `EventAwareTrinket` (ABC) and `StatefulTrinket`; owns Valkey persistence (`TRINKET_KEY_PREFIX`) and `_clear_from_valkey()`
-- `trinkets/domaindoc_trinket.py` — domain knowledge document injection with per-document collapse/expand state
+- `trinkets/domaindoc_trinket.py` — domain knowledge document injection with per-document collapse/expand state. Supports shared domaindocs via `utils.domaindoc_shares.get_accepted_shares()`, reads shared docs from owner's `UserDataManager`, renders with `shared_by` attribute
 - `trinkets/asyncactivity_trinket.py` — sidebar agent activity feed (`EventAwareTrinket`); SQLite-backed, reads from `sidebar_activity` on each render; items persist until dismissed via `sidebaragents_tool`
-- `trinkets/forage_trinket.py` — background forage agent results (`StatefulTrinket`, TTL-scoped errors, dismiss support)
+- `trinkets/forage_trinket.py` — background forage agent results (`StatefulTrinket`, TTL-scoped errors, dismiss support). Lifecycle: `pending → in_progress (stacked) → success|timeout|failed`. `in_progress` summaries from overwatch accumulate per-iteration so the primary LLM sees the full research arc; cleared when terminal state arrives.
+- `trinkets/whilethecatsaway_trinket.py` — curiosity research results (`StatefulTrinket`, all results auto-expire after `RESULT_TTL_TURNS=8`); surfaces what the agent learned and which memories were stored
 - `trinkets/location_trinket.py` — user location + weather from Valkey cache (`cache_policy=True`)
 - `trinkets/lora_trinket.py` — user model observations from the feedback synthesis pipeline
 - `trinkets/manifest_trinket.py` — conversation segment manifest (stable, cached content)
+- `trinkets/email_trinket.py` — unread email headers in HUD (`StatefulTrinket`). Thin renderer — receives inbox data from `InboxPollerService` via `UpdateTrinketEvent`, renders `<inbox_status>` XML with nudge instruction. Zero I/O.
 - `trinkets/peanutgallery_trinket.py` — metacognitive guidance with TTL expiry (`StatefulTrinket`)
 - `trinkets/proactive_memory_trinket.py` — surfaced long-term memories; exposes `get_cached_memories()` for orchestrator retention evaluation
 - `trinkets/reminder_manager.py` — active reminders fetched and formatted for notification center

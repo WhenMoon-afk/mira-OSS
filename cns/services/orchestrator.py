@@ -11,9 +11,12 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass, field
 from typing import Callable, Literal, TypedDict, TYPE_CHECKING
 from uuid import UUID
+import numpy as np
 
 if TYPE_CHECKING:
     from cns.infrastructure.continuum_repository import ContinuumRepository
@@ -37,7 +40,24 @@ from clients.llm_provider import LLMProvider, ContextOverflowError
 from clients.hybrid_embeddings_provider import get_hybrid_embeddings_provider
 from cns.services.subcortical import SubcorticalResult, SurfacedMemory
 from lt_memory.models import MemoryDict
+from lt_memory.proactive import (
+    MAX_PINNED_MEMORIES,
+    MAX_SURFACED_MEMORIES,
+    MIN_FRESH_MEMORIES,
+    NUM_ASSISTANT_MESSAGES,
+    ASSISTANT_SIMILARITY_THRESHOLD,
+    MAX_ASSISTANT_MEMORIES,
+)
 from utils.tag_parser import TagParser, match_memory_id
+
+# Context overflow remediation
+TOPIC_DRIFT_WINDOW_SIZE = 3
+TOPIC_DRIFT_THRESHOLD = 0.6
+OVERFLOW_FALLBACK_PRUNE_COUNT = 5
+TOOL_RESULT_MAX_CHARS = 100_000  # Max chars for single tool result before truncation
+
+# Tool result persistence
+TOMBSTONE_MODE = False  # When True, tool results not persisted to history
 from utils.timezone_utils import utc_now
 
 logger = logging.getLogger(__name__)
@@ -329,7 +349,7 @@ class ContinuumOrchestrator:
         messages.append(assistant_msg)
 
         # One tool message per interaction
-        limit = config.context.tool_result_max_chars
+        limit = TOOL_RESULT_MAX_CHARS
         for i, interaction in enumerate(interactions):
             result = interaction.result
             if isinstance(result, list):
@@ -688,15 +708,15 @@ class ContinuumOrchestrator:
             logger.info(f"Applying one-shot trim from async LLM judgment: {one_shot_trim} messages")
             messages_for_llm = _safe_slice(messages_for_llm, one_shot_trim + 1)
 
-        # Apply tier-based model and thinking configuration
-        from utils.user_context import get_user_preferences, resolve_tier, LLMProvider
+        # Apply conversation LLM model and thinking configuration
+        from utils.user_context import get_user_preferences, resolve_conversation_llm, LLMProvider
         from clients.vault_client import get_api_key
 
         llm_kwargs = {}
         prefs = get_user_preferences()
-        tier_config = resolve_tier(prefs.llm_tier)
+        llm_config = resolve_conversation_llm(prefs.conversation_llm)
 
-        llm_kwargs['model_preference'] = tier_config.model
+        llm_kwargs['model_preference'] = llm_config.model
         llm_kwargs['max_tokens'] = 31999  # Frontend generation ceiling
 
         # Extended thinking: enabled only when subcortical layer provides complexity assessment
@@ -706,16 +726,16 @@ class ContinuumOrchestrator:
             logger.info(f"Thinking: complexity={mem.subcortical_result.complexity} effort={effort_level}")
 
         # Provider routing for generic OpenAI-compatible endpoints (Groq, OpenRouter, etc.)
-        if tier_config.provider == LLMProvider.GENERIC:
-            llm_kwargs['endpoint_url'] = tier_config.endpoint_url
-            llm_kwargs['model_override'] = tier_config.model
-            if tier_config.api_key_name:
-                llm_kwargs['api_key_override'] = get_api_key(tier_config.api_key_name)
+        if llm_config.provider == LLMProvider.GENERIC:
+            llm_kwargs['endpoint_url'] = llm_config.endpoint_url
+            llm_kwargs['model_override'] = llm_config.model
+            if llm_config.api_key_name:
+                llm_kwargs['api_key_override'] = get_api_key(llm_config.api_key_name)
 
-        # MODEL_ADDENDA: Per-tier raw appends to the system message.
-        # If this grows beyond a single tier, extract to config/model_addenda.yaml
+        # MODEL_ADDENDA: Per-LLM raw appends to the system message.
+        # If this grows beyond a single LLM, extract to config/model_addenda.yaml
         # and load via a lookup function. Grep for MODEL_ADDENDA to find all related code.
-        if tier_config.name == "gpt-legacy":
+        if llm_config.name == "gpt-legacy":
             system_blocks.append({
                 "type": "text",
                 "text": (
@@ -880,9 +900,15 @@ class ContinuumOrchestrator:
 
         # Build tool history messages for persistence (before assistant message
         # so they appear in correct chronological order in the cache)
-        completed_interactions = [i for i in acc.tool_interactions if i.completed]
+        # Exclude code_execution: server tools can't be replayed to the API as
+        # forged client-side tool_use blocks. The streaming path persists the
+        # result inline in the assistant's text response and via container reuse.
+        completed_interactions = [
+            i for i in acc.tool_interactions
+            if i.completed and i.tool_name != "code_execution"
+        ]
         tool_history_messages: list[Message] = []
-        if completed_interactions and not config.tool_result_display.tombstone_mode:
+        if completed_interactions and not TOMBSTONE_MODE:
             tool_history_messages = self._build_tool_history_messages(completed_interactions)
             continuum.add_tool_history(tool_history_messages)
 
@@ -1020,9 +1046,9 @@ class ContinuumOrchestrator:
         Returns:
             MemorySurfacingResult with surfaced_memories, pinned_ids, and subcortical_result
         """
-        max_pinned = config.lt_memory.proactive.max_pinned_memories
-        max_surfaced = config.lt_memory.proactive.max_surfaced_memories
-        min_fresh = config.lt_memory.proactive.min_fresh_memories
+        max_pinned = MAX_PINNED_MEMORIES
+        max_surfaced = MAX_SURFACED_MEMORIES
+        min_fresh = MIN_FRESH_MEMORIES
 
         try:
             subcortical_result = self.subcortical_layer.generate(
@@ -1059,8 +1085,10 @@ class ContinuumOrchestrator:
         # Sliding fresh budget: as pinned grows, fresh compresses
         fresh_limit = max(min_fresh, max_surfaced - len(pinned_memories))
 
-        expansion_embedding = self.embeddings_provider.encode_realtime(
-            subcortical_result.query_expansion
+        assistant_text = self._format_assistant_messages(continuum, NUM_ASSISTANT_MESSAGES)
+
+        expansion_embedding, assistant_embedding = self._compute_embeddings_parallel(
+            subcortical_result.query_expansion, assistant_text
         )
 
         fresh_memories = self.memory_relevance_service.get_relevant_memories(
@@ -1069,6 +1097,25 @@ class ContinuumOrchestrator:
             limit=fresh_limit,
             extracted_entities=subcortical_result.entities
         )
+
+        assistant_memories: list[MemoryDict] = []
+        if assistant_text and assistant_embedding is not None:
+            assistant_memories = self.memory_relevance_service.get_relevant_memories(
+                query_expansion=assistant_text,
+                expansion_embedding=assistant_embedding,
+                limit=MAX_ASSISTANT_MEMORIES,
+                extracted_entities=None
+            )
+            assistant_memories = [
+                m for m in assistant_memories
+                if m.get('similarity_score', 0) >= ASSISTANT_SIMILARITY_THRESHOLD
+            ]
+            if assistant_memories:
+                logger.debug(
+                    f"Assistant surfacing: {len(assistant_memories)} passed "
+                    f"threshold ({ASSISTANT_SIMILARITY_THRESHOLD})"
+                )
+                fresh_memories = self._merge_assistant_memories(fresh_memories, assistant_memories)
 
         surfaced_memories = self._merge_memories(pinned_memories, fresh_memories)
 
@@ -1144,6 +1191,86 @@ class ContinuumOrchestrator:
 
         return merged
 
+    def _compute_embeddings_parallel(
+        self,
+        query_expansion: str,
+        assistant_text: str,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """
+        Compute embeddings for query expansion and assistant messages in parallel.
+
+        Returns:
+            Tuple of (expansion_embedding, assistant_embedding). Either may be None
+            if the corresponding text is empty.
+        """
+        if not assistant_text:
+            expansion_embedding = self.embeddings_provider.encode_realtime(query_expansion)
+            return expansion_embedding, None
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            ctx_expansion = copy_context()
+            ctx_assistant = copy_context()
+            expansion_future = executor.submit(
+                ctx_expansion.run,
+                lambda: self.embeddings_provider.encode_realtime(query_expansion)
+            )
+            assistant_future = executor.submit(
+                ctx_assistant.run,
+                lambda: self.embeddings_provider.encode_realtime(assistant_text)
+            )
+            expansion_embedding = expansion_future.result()
+            assistant_embedding = assistant_future.result()
+
+        return expansion_embedding, assistant_embedding
+
+    def _merge_assistant_memories(
+        self,
+        fresh_memories: list[MemoryDict],
+        assistant_memories: list[MemoryDict],
+    ) -> list[MemoryDict]:
+        """
+        Merge assistant memories into fresh memories with union deduplication.
+
+        Assistant memories that aren't already in fresh are appended, then the
+        combined list is sorted by similarity score descending.
+
+        Args:
+            fresh_memories: Primary retrieved memories
+            assistant_memories: Secondary memories from assistant text search (pre-filtered)
+
+        Returns:
+            Merged list sorted by similarity score
+        """
+        if not assistant_memories:
+            return fresh_memories
+
+        merged = list(fresh_memories)
+        seen_ids = {m.get('id') for m in fresh_memories if m.get('id')}
+
+        assistant_added = 0
+        for memory in assistant_memories:
+            memory_id = memory.get('id')
+            if memory_id and memory_id not in seen_ids:
+                merged.append(memory)
+                seen_ids.add(memory_id)
+                assistant_added += 1
+
+        merged.sort(key=lambda m: m.get('similarity_score', 0), reverse=True)
+
+        if assistant_added > 0:
+            logger.info(f"Assistant memories added to surfacing: {assistant_added}")
+
+        return merged
+
+    def _format_assistant_messages(self, continuum: Continuum, limit: int = 2) -> str:
+        """Extract and concatenate last N assistant messages."""
+        assistant_messages = [m for m in continuum.messages if m.role == "assistant"]
+        recent = assistant_messages[-limit:] if len(assistant_messages) >= limit else assistant_messages
+        return " ".join(
+            m.content if isinstance(m.content, str) else ""
+            for m in recent
+        )
+
     # =========================================================================
     # Context Overflow Detection and Remediation
     # =========================================================================
@@ -1215,9 +1342,9 @@ class ContinuumOrchestrator:
         import numpy as np
 
         # Config values
-        window_size = config.context.topic_drift_window_size
-        drift_threshold = config.context.topic_drift_threshold
-        fallback_prune_count = config.context.overflow_fallback_prune_count
+        window_size = TOPIC_DRIFT_WINDOW_SIZE
+        drift_threshold = TOPIC_DRIFT_THRESHOLD
+        fallback_prune_count = OVERFLOW_FALLBACK_PRUNE_COUNT
 
         # Need enough messages to analyze (window_size * 2 + 1 for system msg)
         if len(messages) < window_size * 2 + 1:
@@ -1318,8 +1445,8 @@ class ContinuumOrchestrator:
         content_messages = messages[1:]  # Exclude system message
 
         # First, find candidate cut points using embedding similarity
-        window_size = config.context.topic_drift_window_size
-        drift_threshold = config.context.topic_drift_threshold
+        window_size = TOPIC_DRIFT_WINDOW_SIZE
+        drift_threshold = TOPIC_DRIFT_THRESHOLD
 
         if len(content_messages) < window_size * 2:
             return None
@@ -1511,7 +1638,7 @@ Respond with ONLY the boundary number (1-{len(candidate_cuts)}) or "NONE" if no 
         else:
             # Remediation 2: Pure oldest-first fallback (maximum speed)
             logger.info("Remediation 2: Pure oldest-first fallback")
-            prune_count = config.context.overflow_fallback_prune_count
+            prune_count = OVERFLOW_FALLBACK_PRUNE_COUNT
             result = _safe_slice(messages_for_llm, prune_count + 1)
 
             logger.info(

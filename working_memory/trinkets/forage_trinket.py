@@ -3,7 +3,7 @@ Forage results trinket.
 
 Displays background forage agent results in the notification center.
 Handles multiple concurrent forages with status lifecycle:
-  pending -> success | timeout | failed
+  pending -> in_progress (stacked) -> success | timeout | failed
   success -> dismissed (via forage_tool dismiss action)
 
 Success results persist until explicitly dismissed or segment collapse.
@@ -79,6 +79,33 @@ class ForageTrinket(StatefulTrinket):
             super().handle_update_request(event)
             return
 
+        if status == 'in_progress':
+            # Don't downgrade terminal states (late overwatch thread)
+            existing = self.active_results.get(task_id)
+            if existing and existing['type'] in ('success', 'failed', 'timeout'):
+                return
+            # Stack summaries — accumulate per-iteration lines so Mira
+            # sees the full research arc on next working memory refresh
+            summary = context.get('summary', '')
+            iteration = context.get('iteration', 0)
+            if existing and existing['type'] == 'in_progress':
+                summaries = existing['data'].get('summaries', [])
+            else:
+                summaries = []
+            summaries.append({'iteration': iteration, 'text': summary})
+            self.active_results[task_id] = {
+                'type': 'in_progress',
+                'data': {
+                    'query': context.get('query', ''),
+                    'iteration': iteration,
+                    'max_iterations': context.get('max_iterations', 0),
+                    'summaries': summaries,
+                },
+                'received_turn': self.current_turn,
+            }
+            super().handle_update_request(event)
+            return
+
         if status == 'pending':
             self.active_results[task_id] = {
                 'type': 'pending',
@@ -118,7 +145,10 @@ class ForageTrinket(StatefulTrinket):
         for task_id, result in self.active_results.items():
             result_type = result['type']
 
-            if result_type == 'pending':
+            if result_type == 'in_progress':
+                parts.append(self._format_in_progress(task_id, result['data']))
+
+            elif result_type == 'pending':
                 parts.append(self._format_pending(task_id, result['data']))
 
             elif result_type == 'success':
@@ -131,6 +161,19 @@ class ForageTrinket(StatefulTrinket):
         if parts:
             return "<forage_results>\n" + "\n".join(parts) + "\n</forage_results>"
         return ""
+
+    def _format_in_progress(self, task_id: str, data: Dict[str, Any]) -> str:
+        query = data.get('query', '')
+        iteration = data.get('iteration', 0)
+        max_iter = data.get('max_iterations', 0)
+        summaries = data.get('summaries', [])
+        lines = [f"[{s['iteration']}] {s['text']}" for s in summaries]
+        return (
+            f'<result type="in_progress" task_id="{task_id}" query="{query}" '
+            f'iteration="{iteration}/{max_iter}">\n'
+            + "\n".join(lines) + "\n"
+            f"</result>"
+        )
 
     def _format_pending(self, task_id: str, data: Dict[str, Any]) -> str:
         query = data.get('query', '')

@@ -6,7 +6,7 @@ Handles schema evolution during MIRA migrations by:
 1. Creating a temp database to extract data from the backup dump
 2. Finding common columns between backup and current schema
 3. Copying only matching columns, respecting FK dependencies
-4. Detecting conflicts for config tables (account_tiers, internal_llm)
+4. Detecting conflicts for config tables (conversation_llm, internal_llm)
 
 Exit codes:
   0 - Success
@@ -41,7 +41,7 @@ def json_serializer(obj):
     raise TypeError(f"Object of type {type(obj)} is not JSON serializable")
 
 # Config tables that require conflict detection (contain application configuration, not user data)
-CONFIG_TABLES = {'account_tiers', 'internal_llm'}
+CONFIG_TABLES = {'conversation_llm', 'internal_llm'}
 
 
 def get_fk_ordered_tables(cursor, tables: set[str]) -> list[str]:

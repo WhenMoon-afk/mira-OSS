@@ -11,9 +11,14 @@ from pathlib import Path
 from cns.core.message import Message
 from cns.infrastructure.continuum_repository import ContinuumRepository
 from cns.services.segment_helpers import create_collapse_marker, create_session_boundary_marker
-from config import config
 
 logger = logging.getLogger(__name__)
+
+# Two-tier session cache settings
+SESSION_SUMMARY_COMPLEXITY_LIMIT = 4.5  # Max total complexity for Tier 1 extended summaries
+SESSION_SUMMARY_MAX_COUNT = 4           # Max Tier 1 extended summaries
+SESSION_SUMMARY_QUERY_WINDOW = 14       # Recent segments to query for selection
+SESSION_PRECIS_MAX_COUNT = 4            # Max Tier 2 precis-only summaries
 
 
 class SegmentCacheLoader:
@@ -141,7 +146,11 @@ class SegmentCacheLoader:
         marked_tier1 = [s.with_metadata(display_mode='extended') for s in tier1]
         marked_tier2 = [s.with_metadata(display_mode='precis') for s in tier2]
 
-        messages = marked_tier1 + marked_tier2
+        # Tier 2 holds older segments (precis), Tier 1 holds newer ones (extended).
+        # Concatenate oldest-first so the combined list is chronological end-to-end —
+        # downstream consumers (session boundary marker, LLM narrative reading) rely
+        # on segment_summaries[-1] being the most recent segment.
+        messages = marked_tier2 + marked_tier1
 
         logger.info(
             f"Loaded {len(tier1)} extended + {len(marked_tier2)} precis summaries "
@@ -173,10 +182,10 @@ class SegmentCacheLoader:
         Raises:
             DatabaseError: If database query fails
         """
-        complexity_limit = config.system.session_summary_complexity_limit
-        max_count = config.system.session_summary_max_count
-        precis_max = config.system.session_precis_max_count
-        query_window = config.system.session_summary_query_window
+        complexity_limit = SESSION_SUMMARY_COMPLEXITY_LIMIT
+        max_count = SESSION_SUMMARY_MAX_COUNT
+        precis_max = SESSION_PRECIS_MAX_COUNT
+        query_window = SESSION_SUMMARY_QUERY_WINDOW
 
         # Query window of recent segments (returns oldest first, we reverse for selection)
         candidates = self.repository.find_collapsed_segments(
